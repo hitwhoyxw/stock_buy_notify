@@ -101,6 +101,7 @@ def _get_tushare():
 def get_index_daily(code: str, start: str, end: str) -> pd.DataFrame:
     """指数日线。返回列：date, open, close, high, low, volume, amount。
     code 支持格式：000922 / 000922.SH / sh000922，内部统一处理。
+    akshare 主 → tushare 备。
     """
     import akshare as ak
 
@@ -108,17 +109,50 @@ def get_index_daily(code: str, start: str, end: str) -> pd.DataFrame:
     pure = code.split(".")[0]
     if pure.startswith(("sh", "sz")):
         symbol = pure
+        pure = symbol[2:]
     elif pure.startswith("0") or pure.startswith("399"):
-        # 000xxx 属沪深两市：000922/000300 归属上交所
         symbol = f"sh{pure}" if pure.startswith("000") else f"sz{pure}"
     else:
         symbol = f"sh{pure}"
 
+    df = pd.DataFrame()
+    # 尝试 akshare 方案 1: stock_zh_index_daily
     try:
         df = ak.stock_zh_index_daily(symbol=symbol)
     except Exception:
-        df = ak.index_zh_a_hist(symbol=pure, period="daily", start_date=start.replace("-", ""), end_date=end.replace("-", ""))
-        df = df.rename(columns={"日期": "date", "开盘": "open", "收盘": "close", "最高": "high", "最低": "low", "成交量": "volume", "成交额": "amount"})
+        pass
+
+    # 尝试 akshare 方案 2: index_zh_a_hist
+    if df is None or df.empty:
+        try:
+            df = ak.index_zh_a_hist(symbol=pure, period="daily",
+                                    start_date=start.replace("-", ""),
+                                    end_date=end.replace("-", ""))
+            df = df.rename(columns={"日期": "date", "开盘": "open", "收盘": "close",
+                                    "最高": "high", "最低": "low",
+                                    "成交量": "volume", "成交额": "amount"})
+        except Exception:
+            pass
+
+    # 尝试 tushare fallback
+    if df is None or df.empty:
+        pro = _get_tushare()
+        if pro is not None:
+            try:
+                ts_code = f"{pure}.{'SH' if pure.startswith(('000', '9', '5')) else 'SZ'}"
+                tdf = pro.index_daily(ts_code=ts_code,
+                                      start_date=start.replace("-", ""),
+                                      end_date=end.replace("-", ""))
+                if tdf is not None and not tdf.empty:
+                    tdf = tdf.rename(columns={
+                        "trade_date": "date", "vol": "volume", "amount": "amount",
+                    })
+                    tdf["date"] = pd.to_datetime(tdf["date"]).dt.date
+                    tdf = tdf[(tdf["date"] >= pd.to_datetime(start).date()) &
+                              (tdf["date"] <= pd.to_datetime(end).date())]
+                    return tdf.sort_values("date").reset_index(drop=True)
+            except Exception as e:
+                print(f"[data_fetch] tushare index_daily({pure}) 也失败：{e}", file=sys.stderr)
 
     if df is None or df.empty:
         return pd.DataFrame()
@@ -165,32 +199,60 @@ def get_stock_daily(code: str, start: str, end: str, adjust: str = "qfq") -> pd.
 def get_csi_dividend_yield_history(years: int = 6) -> pd.DataFrame:
     """中证红利指数近 N 年的股息率序列。返回列：date, dividend_yield。
 
-    数据来源：akshare stock_zh_index_value_csindex（中证指数官方接口）。
+    数据来源优先级：
+    1. akshare stock_zh_index_value_csindex (H30269 / 000922)
+    2. tushare index_dailybasic (000922.SH → dv_ratio 列)
+    3. 若全部失败返回空 DataFrame
     """
     import akshare as ak
 
-    try:
-        df = ak.stock_zh_index_value_csindex(symbol="H30269")  # 中证红利全收益
-    except Exception:
-        try:
-            df = ak.stock_zh_index_value_csindex(symbol="000922")
-        except Exception as e:
-            print(f"[data_fetch] 中证红利股息率拉取失败：{e}", file=sys.stderr)
-            return pd.DataFrame()
-
-    if df is None or df.empty:
-        return pd.DataFrame()
-    # 列名可能是 日期/股息率1 或 date/dividend_yield
-    col_date = next((c for c in df.columns if "日期" in c or "date" in c.lower()), df.columns[0])
-    col_dy = next((c for c in df.columns if "股息" in c or "dividend" in c.lower()), None)
-    if col_dy is None:
-        return pd.DataFrame()
-    out = pd.DataFrame({
-        "date": pd.to_datetime(df[col_date]).dt.date,
-        "dividend_yield": pd.to_numeric(df[col_dy], errors="coerce"),
-    }).dropna()
     cutoff = dt.date.today() - dt.timedelta(days=int(years * 366))
-    return out[out["date"] >= cutoff].reset_index(drop=True)
+    df = pd.DataFrame()
+
+    # akshare 方案 1
+    for sym in ("H30269", "000922"):
+        try:
+            raw = ak.stock_zh_index_value_csindex(symbol=sym)
+            if raw is not None and not raw.empty:
+                col_date = next((c for c in raw.columns if "日期" in c or "date" in c.lower()), raw.columns[0])
+                col_dy = next((c for c in raw.columns if "股息" in c or "dividend" in c.lower()), None)
+                if col_dy:
+                    df = pd.DataFrame({
+                        "date": pd.to_datetime(raw[col_date]).dt.date,
+                        "dividend_yield": pd.to_numeric(raw[col_dy], errors="coerce"),
+                    }).dropna()
+                    break
+        except Exception:
+            continue
+
+    # tushare 方案（index_dailybasic 含 dv_ratio = 股息率）
+    if df.empty:
+        pro = _get_tushare()
+        if pro is not None:
+            try:
+                start_d = cutoff.strftime("%Y%m%d")
+                end_d = dt.date.today().strftime("%Y%m%d")
+                tdf = pro.index_dailybasic(
+                    ts_code="000922.SH",
+                    start_date=start_d,
+                    end_date=end_d,
+                    fields="trade_date,ts_code,turnover_rate,pe,total_mv,float_mv,dv_ratio",
+                )
+                if tdf is not None and not tdf.empty and "dv_ratio" in tdf.columns:
+                    tdf = tdf.dropna(subset=["dv_ratio"])
+                    df = pd.DataFrame({
+                        "date": pd.to_datetime(tdf["trade_date"], format="%Y%m%d").dt.date,
+                        "dividend_yield": pd.to_numeric(tdf["dv_ratio"], errors="coerce"),
+                    }).dropna()
+            except Exception as e:
+                print(f"[data_fetch] tushare index_dailybasic(000922.SH) 失败：{e}", file=sys.stderr)
+
+    if df.empty:
+        print("[data_fetch] 中证红利股息率拉取全部失败", file=sys.stderr)
+        return pd.DataFrame()
+
+    df = df[df["date"] >= cutoff].sort_values("date").reset_index(drop=True)
+    return df
 
 
 def get_dividend_yield_percentile(years: int = 5) -> Optional[Dict[str, float]]:
@@ -249,37 +311,44 @@ def get_latest_10y_yield() -> Optional[float]:
 
 @disk_cache(ttl_hours=6)
 def get_market_turnover(days: int = 30) -> pd.DataFrame:
-    """全 A 每日成交额。返回 date, amount（单位：元）。"""
-    import akshare as ak
+    """全 A 每日成交额（上证综指+深证成指之和近似）。返回 date, amount（单位：元）。
+    akshare 主 → tushare 备。
+    """
+    end = dt.date.today()
+    start = end - dt.timedelta(days=days * 2)
+    start_s = start.strftime("%Y-%m-%d")
+    end_s = end.strftime("%Y-%m-%d")
 
-    try:
-        df = ak.stock_zh_a_spot_em()  # 无历史，这个只能拿当日 → 需要走指数
-    except Exception:
-        pass
+    # 复用已有 get_index_daily（已含 tushare fallback）
+    sh = get_index_daily("000001", start_s, end_s)
+    sz = get_index_daily("399001", start_s, end_s)
 
-    try:
-        # 用 Wind 全 A 指数（8841388.WI 无 akshare 接口），改用上证综指 + 深证成指之和近似
-        end = dt.date.today().strftime("%Y%m%d")
-        start = (dt.date.today() - dt.timedelta(days=days * 2)).strftime("%Y%m%d")
-        sh = ak.stock_zh_index_daily(symbol="sh000001")
-        sz = ak.stock_zh_index_daily(symbol="sz399001")
-    except Exception as e:
-        print(f"[data_fetch] 市场成交额拉取失败：{e}", file=sys.stderr)
+    if sh.empty or sz.empty:
+        print("[data_fetch] 市场成交额拉取失败：sh/sz 指数数据为空", file=sys.stderr)
         return pd.DataFrame()
 
-    for d in (sh, sz):
-        d["date"] = pd.to_datetime(d["date"]).dt.date
+    # amount 列名兼容
+    def _find_amt_col(df: pd.DataFrame) -> Optional[str]:
+        for c in ("amount", "成交额"):
+            if c in df.columns:
+                return c
+        return None
 
-    amount_col = "amount" if "amount" in sh.columns else "成交额"
-    if amount_col not in sh.columns:
+    sh_col = _find_amt_col(sh)
+    sz_col = _find_amt_col(sz)
+    if sh_col is None or sz_col is None:
+        print("[data_fetch] 市场成交额缺少 amount 列", file=sys.stderr)
         return pd.DataFrame()
 
     merged = pd.merge(
-        sh[["date", amount_col]].rename(columns={amount_col: "sh_amt"}),
-        sz[["date", amount_col]].rename(columns={amount_col: "sz_amt"}),
+        sh[["date", sh_col]].rename(columns={sh_col: "sh_amt"}),
+        sz[["date", sz_col]].rename(columns={sz_col: "sz_amt"}),
         on="date", how="inner",
     )
+    merged["sh_amt"] = pd.to_numeric(merged["sh_amt"], errors="coerce")
+    merged["sz_amt"] = pd.to_numeric(merged["sz_amt"], errors="coerce")
     merged["amount"] = merged["sh_amt"] + merged["sz_amt"]
+    merged = merged.dropna(subset=["amount"])
     return merged[["date", "amount"]].sort_values("date").tail(days).reset_index(drop=True)
 
 
