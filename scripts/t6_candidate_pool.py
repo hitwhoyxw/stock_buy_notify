@@ -117,6 +117,12 @@ def screen_bucket_a() -> pd.DataFrame:
         # 排序值：有股息率用 股息率×质量分，否则退化为 质量分
         sort_value = (dy_ttm * quality_score) if dy_ttm else quality_score
 
+        # 入选理由（每道门槛的实际值 vs 阈值，缺数据时明示放行）
+        reason_parts = []
+        reason_parts.append(f"股息率{dy_ttm:.2f}%≥{min_dy}%" if dy_ttm is not None else "股息率缺失放行")
+        reason_parts.append(f"PB {pb:.2f}≤{max_pb}" if pb is not None else "PB缺失放行")
+        reason_parts.append(f"ROE {roe:.1f}%≥{min_roe}%" if roe is not None else "ROE缺失放行")
+
         results.append({
             "code": code,
             "name": name,
@@ -131,6 +137,7 @@ def screen_bucket_a() -> pd.DataFrame:
             "dividend_years": div_years,
             "quality_score": round(quality_score, 3),
             "sort_value": round(sort_value, 3),
+            "pick_reason": " | ".join(reason_parts),
         })
 
         # 进度
@@ -219,8 +226,16 @@ def screen_bucket_b() -> pd.DataFrame:
         # 排序值：有 PE 用 ROE/PE（近似 PEG 逆），否则用低 PB 代理（PB 越低越靠前）
         if pe is not None:
             sort_val = (roe or 15) / max(pe, 1)
+            rank_basis = f"排序=ROE/PE近似"
         else:
             sort_val = 1.0 / max(pb or 3.0, 0.1) * 5  # 归一到相近量级
+            rank_basis = f"PE缺失按低PB排序"
+
+        # 入选理由（门槛实际值 vs 阈值，缺数据时明示放行）
+        reason_parts = []
+        reason_parts.append(f"PE(TTM) {pe:.1f}≤80" if pe is not None else "PE缺失放行(或亏损)")
+        reason_parts.append(f"ROE {roe:.1f}%≥8%" if roe is not None else "ROE缺失放行")
+        reason_parts.append(rank_basis)
 
         results.append({
             "code": code,
@@ -236,6 +251,7 @@ def screen_bucket_b() -> pd.DataFrame:
             "penetration_rate": "",
             "goodwill_ratio": "",
             "sort_value": round(sort_val, 4),
+            "pick_reason": " | ".join(reason_parts),
         })
 
         if (i + 1) % 50 == 0:
@@ -348,6 +364,35 @@ def _safe_float(row: Any, candidates: List[str]) -> Optional[float]:
 # 组装输出
 # ============================================================
 
+def _rules_note_a(df: pd.DataFrame) -> str:
+    """A 桶筛选规则与排序公式说明（阈值读配置，与筛选逻辑同源）。"""
+    try:
+        cfg = get_config().get("bucket_A", {}).get("stock_filters", {})
+    except Exception:
+        cfg = {}
+    lines = [
+        f"筛选规则: 中证红利成分 + 股息率TTM≥{cfg.get('dividend_yield_ttm_min_pct', 3.0)}% "
+        f"+ PB≤{cfg.get('pb_max', 2.0)} + ROE5年均值≥{cfg.get('roe_5y_avg_min_pct', 10.0)}%（数据缺失时放行，见 pick_reason）",
+        "排序公式: sort_value = 股息率TTM × quality_score",
+    ]
+    if not df.empty and "roe_5y_avg" in df.columns \
+            and df["roe_5y_avg"].astype(str).str.strip().eq("").all():
+        lines.append("注: 本次数据源无 ROE，quality_score 为同一默认值 → 排序实际按股息率降序")
+    return "\n".join(lines)
+
+
+def _rules_note_b(df: pd.DataFrame) -> str:
+    """B 桶筛选规则与排序公式说明。"""
+    lines = [
+        "筛选规则: 创业板指成分 + PE(TTM)≤80（负PE剔除；PE缺失放行，见 pick_reason）",
+        "排序公式: 有PE → ROE/PE（近似PEG逆）；PE缺失 → 按低PB代理排序",
+    ]
+    if not df.empty and "roe_ttm" in df.columns \
+            and df["roe_ttm"].astype(str).str.strip().eq("").all():
+        lines.append("注: 本次数据源无 ROE，ROE 按默认值 15 代入 → 排序实际按 1/PE 降序")
+    return "\n".join(lines)
+
+
 def assemble_output(bucket_a: pd.DataFrame, bucket_b: pd.DataFrame,
                     bucket_c: pd.DataFrame) -> str:
     """组装成 skills/t6_semantic_ranking.md 定义的输入格式。"""
@@ -356,11 +401,13 @@ def assemble_output(bucket_a: pd.DataFrame, bucket_b: pd.DataFrame,
 
     # A 桶
     parts.append("=== BUCKET: A ===")
+    parts.append(_rules_note_a(bucket_a))
     if bucket_a.empty:
         parts.append("（A 桶候选为空）")
     else:
         cols_a = ["code", "name", "industry", "price", "dividend_yield_ttm", "dividend_percentile_5y",
-                  "roe_5y_avg", "fcf_coverage", "pb", "pb_percentile", "dividend_years", "quality_score"]
+                  "roe_5y_avg", "fcf_coverage", "pb", "pb_percentile", "dividend_years", "quality_score",
+                  "sort_value", "pick_reason"]
         # 只取存在的列
         available = [c for c in cols_a if c in bucket_a.columns]
         parts.append(bucket_a[available].head(50).to_csv(index=False))
@@ -368,11 +415,13 @@ def assemble_output(bucket_a: pd.DataFrame, bucket_b: pd.DataFrame,
 
     # B 桶
     parts.append("=== BUCKET: B ===")
+    parts.append(_rules_note_b(bucket_b))
     if bucket_b.empty:
         parts.append("（B 桶候选为空）")
     else:
         cols_b = ["code", "name", "industry", "price", "revenue_cagr_3y", "profit_cagr_3y",
-                  "gross_margin_change", "ocf_to_np", "roe_ttm", "peg", "penetration_rate", "goodwill_ratio"]
+                  "gross_margin_change", "ocf_to_np", "roe_ttm", "peg", "penetration_rate", "goodwill_ratio",
+                  "sort_value", "pick_reason"]
         available = [c for c in cols_b if c in bucket_b.columns]
         parts.append(bucket_b[available].head(50).to_csv(index=False))
     parts.append("")
