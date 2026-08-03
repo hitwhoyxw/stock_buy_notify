@@ -21,6 +21,9 @@ concurrency:
   group: earnings-season
   cancel-in-progress: false
 
+permissions:
+  contents: write
+
 jobs:
   t4-prepare:
     runs-on: ubuntu-latest

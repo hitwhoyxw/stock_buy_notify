@@ -10,6 +10,9 @@ on:
         description: "t5 / t7ab"
         default: "t7ab"
 
+permissions:
+  contents: write
+
 jobs:
   run:
     runs-on: ubuntu-latest
