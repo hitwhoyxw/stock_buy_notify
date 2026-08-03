@@ -1,0 +1,162 @@
+name: T4 财报季扫描 + T6 候选池
+
+on:
+  schedule:
+    # UTC 11:00 = 19:00 北京，仅 4/8/10 月的周一执行（T4 输入准备）
+    - cron: "0 11 * * 1"
+    # UTC 12:00 = 20:00 北京，每周五跑 T6 候选池
+    - cron: "0 12 * * 5"
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "手动指定：t4_prepare / t4_ingest / t6"
+        default: "t6"
+        required: false
+      codes:
+        description: "T4 prepare 用的股票代码（逗号分隔）"
+        default: ""
+        required: false
+
+concurrency:
+  group: earnings-season
+  cancel-in-progress: false
+
+jobs:
+  t4-prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: |
+      (github.event.schedule == '0 11 * * 1' && contains(fromJSON('["04","08","10"]'), format('{0:02d}', github.run_number))) ||
+      github.event.inputs.task == 't4_prepare'
+    env:
+      PYTHONPATH: ${{ github.workspace }}/scripts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.REPO_WRITE_PAT || secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: scripts/requirements.txt
+
+      - run: pip install -r scripts/requirements.txt
+
+      - name: 校验当前月份是否为财报季
+        id: is_season
+        run: |
+          MONTH=$(date +%m)
+          if [[ "$MONTH" =~ ^(04|08|10)$ ]] || [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "is_season=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_season=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: T4 输入准备
+        if: steps.is_season.outputs.is_season == 'true'
+        env:
+          TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
+        run: |
+          CODES="${{ github.event.inputs.codes }}"
+          if [ -z "$CODES" ]; then
+            echo "未指定 codes，使用中证红利前 20 成分作为 C 桶候选扫描池"
+            python -c "
+          import sys; sys.path.insert(0,'scripts')
+          from lib.data_fetch import get_csi_dividend_constituents
+          df = get_csi_dividend_constituents()
+          if not df.empty:
+              print(','.join(df['code'].head(20).tolist()))
+          " > /tmp/codes.txt
+            CODES=$(cat /tmp/codes.txt)
+          fi
+          if [ -n "$CODES" ]; then
+            python scripts/t4_ingest.py --prepare --codes "$CODES"
+          else
+            echo "无可用代码，跳过"
+          fi
+
+      - name: 回写 T4 输入文件
+        if: steps.is_season.outputs.is_season == 'true'
+        run: |
+          git config user.name  "trading-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add data/skill_input_T4C.md || true
+          git diff --cached --quiet && echo "无变更" && exit 0
+          git commit -m "chore(t4): $(date +%F) prepare input for LLM"
+          git push
+
+  t4-ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event.inputs.task == 't4_ingest'
+    env:
+      PYTHONPATH: ${{ github.workspace }}/scripts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.REPO_WRITE_PAT || secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: scripts/requirements.txt
+
+      - run: pip install -r scripts/requirements.txt
+
+      - name: T4 Ingest（消费 LLM 输出写入台账）
+        env:
+          TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
+          WECOM_BOT_KEY: ${{ secrets.WECOM_BOT_KEY }}
+          LARK_WEBHOOK:  ${{ secrets.LARK_WEBHOOK }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          SMTP_TO:   ${{ secrets.SMTP_TO }}
+        run: python scripts/t4_ingest.py
+
+      - name: 回写台账
+        run: |
+          git config user.name  "trading-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add data/live_signal_log.csv data/report_*.md || true
+          git diff --cached --quiet && echo "无变更" && exit 0
+          git commit -m "chore(t4): $(date +%F) ingest LLM output → signal log"
+          git push
+
+  t6-pool:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: |
+      github.event.schedule == '0 12 * * 5' ||
+      github.event.inputs.task == 't6'
+    env:
+      PYTHONPATH: ${{ github.workspace }}/scripts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.REPO_WRITE_PAT || secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: scripts/requirements.txt
+
+      - run: pip install -r scripts/requirements.txt
+
+      - name: T6 候选池静态筛选
+        env:
+          TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
+        run: python scripts/t6_candidate_pool.py
+
+      - name: 回写候选池
+        run: |
+          git config user.name  "trading-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add data/skill_input_T6.md data/candidates_*.csv || true
+          git diff --cached --quiet && echo "无变更" && exit 0
+          git commit -m "chore(t6): $(date +%F) candidate pool refresh"
+          git push

@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# 运行时产物：缓存不入库
+data/cache/
+# report_*.md / skill_input_*.md / skill_output_*.md / candidates_*.csv
+# 这些由 Actions commit 回来，不忽略
+# live_signal_log.csv / live_trade_log.csv 是否入库由用户决定
+# 默认加密方案未落地前，先不忽略，让 Actions 能 commit 回来
+
+.workbuddy/
+
+.DS_Store
+Thumbs.db
+*.log
+
+# IDE
+.vscode/
+.idea/

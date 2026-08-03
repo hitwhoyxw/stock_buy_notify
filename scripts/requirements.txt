@@ -1,0 +1,14 @@
+# 三桶策略系统 · Python 依赖
+# 版本策略：pin 主版本，允许 patch 升级
+
+akshare>=1.13.0,<2.0
+tushare>=1.4.0,<2.0
+pandas>=2.0,<3.0
+numpy>=1.24,<3.0
+PyYAML>=6.0,<7.0
+requests>=2.31,<3.0
+python-dateutil>=2.8,<3.0
+pyarrow>=14.0,<20.0
+
+# 邮件（用 stdlib smtplib，无额外依赖）
+# LLM 客户端在 skills 阶段暂不接入，无需额外包

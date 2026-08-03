@@ -1,0 +1,391 @@
+# ============================================================
+# 三桶资产交易策略系统 - 机器可读配置
+# version: 1.0
+# 用途: 供脚本 / Agent 定期读取并执行监控与信号判定
+# 所有阈值可调; 任何修改必须先过 T7 参数回测验证,
+#   并将证据追加到 05_个股筛选与回测验证.md 第 3.5 节 changelog.
+# ============================================================
+
+meta:
+  version: "1.0"
+  risk_profile: "balanced"        # conservative | balanced | aggressive
+  base_currency: "CNY"
+  markets: ["A", "HK"]            # 港股通标的可纳入 A/B 桶
+  review_cycle_days: 90
+
+# ------------------------------------------------------------
+# 1. 四状态仓位表
+# ------------------------------------------------------------
+allocation:
+  states:
+    S0:
+      label: "常态"
+      buckets: { A: 0.20, B: 0.25, C: 0.10, D: 0.45 }
+    S1:
+      label: "偏低估"
+      buckets: { A: 0.30, B: 0.25, C: 0.10, D: 0.35 }
+    S2:
+      label: "显著低估"
+      buckets: { A: 0.40, B: 0.27, C: 0.08, D: 0.25 }
+    S3:
+      label: "极端恐慌"
+      buckets: { A: 0.55, B: 0.30, C: 0.00, D: 0.15 }
+
+  alternative_profiles:
+    conservative:
+      S0: { A: 0.20, B: 0.15, C: 0.05, D: 0.60 }
+    aggressive:
+      S0: { A: 0.25, B: 0.32, C: 0.15, D: 0.28 }
+
+  rebalance:
+    check_frequency: "monthly"
+    deviation_trigger_pct: 5.0     # 单桶偏离目标 >5pct 触发再平衡建议
+    d_bucket_floor: 0.15           # D 桶绝对地板
+
+  concentration_limits:
+    single_stock_max_pct: 8.0      # 占总资产
+    single_sw_l1_industry_max_pct: 20.0
+    bucket_single_stock_max_pct:
+      A: 8.0
+      B: 6.0
+      C: 4.0
+
+# ------------------------------------------------------------
+# 2. A 桶: 红利逆向
+# ------------------------------------------------------------
+bucket_A:
+  name: "红利逆向仓"
+  holdings_count: [5, 8]
+  ladder: [0.30, 0.30, 0.40]       # 三档金字塔投入比例
+  same_tier_cooldown_days: 90
+
+  # --- 市场级择时: 任意 2 项达标即入该档 ---
+  market_signals:
+    min_conditions_met: 2
+    benchmark_index: "000922.SH"   # 中证红利
+    conditions:
+      dividend_yield_percentile_5y:
+        S1: 70
+        S2: 80
+        S3: 90
+      equity_risk_premium_pct:      # 红利股息率 - 10Y国债收益率
+        S1: 3.0
+        S2: 4.0
+        S3: 5.0
+      relative_excess_60d_pct:      # 相对 Wind全A, 越负越好
+        S1: -5
+        S2: -8
+        S3: -12
+      top3_industry_turnover_share_pct:   # 拥挤度反向指标
+        S1: 35
+        S2: 42
+        S3: 48
+      hs300_drawdown:
+        S1: { single_day_pct: -2, drawdown_20d_pct: -8 }
+        S2: { single_day_pct: -3, drawdown_20d_pct: -12 }
+        S3: { single_day_pct: -5, drawdown_20d_pct: -18 }
+
+  # --- 个股硬门槛: 全部满足 ---
+  stock_filters:
+    dividend_yield_ttm_min_pct: 5.0
+    consecutive_dividend_years_min: 5
+    payout_ratio_range_pct: [30, 70]
+    roe_5y_avg_min_pct: 8.0
+    fcf_positive_years_min: 3
+    interest_bearing_debt_ratio_max_pct: 60   # 非金融
+    pb_percentile_max: 30
+    revenue_no_consecutive_decline: true
+    no_major_shareholder_reduction_6m: true
+
+  value_trap_veto:                  # 三条同时命中即一票否决
+    - "main_business_revenue_decline_2y"
+    - "dividend_funded_by_asset_sale_or_debt"
+    - "industry_permanent_overcapacity"
+
+  exit_rules:
+    - id: "A-E1"
+      condition: "dividend_yield_percentile_5y < 30"
+      action: "reduce_50"
+      priority: "P1"
+    - id: "A-E2"
+      condition: "dividend_yield_pct < cn10y_yield_pct + 1.5"
+      action: "exit_all"
+      priority: "P1"
+    - id: "A-E3"
+      condition: "payout_ratio_collapse OR dividend_cancelled"
+      action: "exit_all_same_day"
+      priority: "P0"
+    - id: "A-E4"
+      condition: "recurring_net_profit_decline_pct > 15 for 2 consecutive years"
+      action: "exit_all"
+      priority: "P0"
+    - id: "A-E5"
+      condition: "position_weight_pct > 10"
+      action: "trim_to_8pct"
+      priority: "P2"
+  stop_loss: null                   # A 桶不设价格止损, 仅逻辑止损
+
+# ------------------------------------------------------------
+# 3. B 桶: 成长
+# ------------------------------------------------------------
+bucket_B:
+  name: "成长仓"
+  holdings_count: [4, 6]
+  ladder: [0.25, 0.25, 0.25, 0.25]
+
+  quality_filters:                  # 全部满足
+    revenue_cagr_3y_min_pct: 20
+    recurring_profit_cagr_3y_min_pct: 20
+    gross_margin_stable_or_up: true
+    gross_margin_volatility_max_pct: 3
+    ocf_to_netprofit_3y_avg_min: 0.7
+    rnd_ratio_industry_rank: "top_third"
+    ar_growth_vs_revenue_growth_max_ratio: 1.2
+    goodwill_to_equity_max_pct: 20
+
+  industry_filters:                 # 全部满足
+    penetration_rate_range_pct: [5, 40]     # 关键: S 曲线加速段
+    industry_space_cagr_3y_min_pct: 15
+    company_share_stable_or_rising: true
+    no_disruptive_substitute_within_years: 2
+
+  valuation_filters:                # 满足任一
+    any_of:
+      - peg_max: 1.0                # 理想 <=0.8
+      - pe_ttm_percentile_since_ipo_max: 40
+      - ps_percentile_max: 35       # 仅高研发型适用
+
+  add_position_triggers:
+    price_drop_step_pct: 12         # 每跌 12% 加一批
+    fundamental_must_be_intact: true
+    time_based_fallback_quarters: 1 # 不跌但持续满足估值, 每季补一批
+
+  add_position_circuit_breaker:
+    condition: "quarterly_growth_pct < 15 OR miss_consensus_pct > 20"
+    action: "halt_all_adds_and_review_exit"
+
+  exit_rules:
+    - id: "B-E1"
+      condition: "recurring_growth_pct < 15 for 2 consecutive quarters"
+      action: "exit_all"
+      priority: "P0"
+    - id: "B-E2"
+      condition: "miss_consensus_pct > 20 AND guidance_cut"
+      action: "exit_all"
+      priority: "P0"
+    - id: "B-E3"
+      condition: "ocf_to_netprofit < 0.5"
+      action: "reduce_50"
+      priority: "P1"
+    - id: "B-E4"
+      condition: "peg > 1.8 OR pe_percentile > 85"
+      action: "reduce_50"
+      priority: "P1"
+    - id: "B-E5"
+      condition: "industry_penetration_pct > 60 AND price_war_detected"
+      action: "exit_all"
+      priority: "P1"
+    - id: "B-E6"
+      condition: "key_management_or_cto_departure"
+      action: "reduce_50"
+      priority: "P1"
+  stop_loss:
+    hard_stop_pct: -25
+    cooldown_days_after_stop: 60
+
+# ------------------------------------------------------------
+# 4. C 桶: 热点周期
+# ------------------------------------------------------------
+bucket_C:
+  name: "热点周期仓"
+  holdings_count: [2, 4]
+  ladder: [0.60, 0.40]
+  max_annual_turnover: 8            # 超过说明在追涨杀跌
+
+  # --- 文本信号层 ---
+  text_signal:
+    sources:
+      - "annual_report"
+      - "quarterly_report"
+      - "earnings_call_transcript"
+      - "institutional_research_minutes"   # 调研纪要
+      - "prospectus"
+      - "industry_association_release"
+    require_all_categories: true     # 三类必须均有命中
+    min_weighted_score: 6.0
+    categories:
+      demand:
+        weight: 1.2
+        keywords: ["供不应求", "订单饱满", "在手订单充足", "需求旺盛",
+                   "下游排产满负荷", "市场超预期拓展", "新品上市持续超预期",
+                   "产能已排至", "交付周期延长", "客户提前锁量"]
+      price:
+        weight: 1.5                  # 最硬信号
+        keywords: ["产品价格中枢持续上涨", "价格中枢上移", "提价", "涨价函",
+                   "价差扩大", "议价能力提升", "长协价上调", "合同价高于现货价"]
+      supply:
+        weight: 1.3
+        keywords: ["供给偏紧", "产能紧张", "行业出清", "新增产能有限",
+                   "扩产周期长", "限产", "老旧产能退出", "牌照受限", "有效运力下降"]
+    negative_keywords:               # 命中扣 3 分
+      penalty: -3.0
+      keywords: ["积极扩产", "新增产能投放", "行业竞争加剧", "以价换量",
+                 "控制库存", "下游观望情绪", "价格承压", "需求偏弱"]
+
+  # --- 数据验证层: 至少 2 条成立 ---
+  data_validation:
+    min_conditions_met: 2
+    conditions:
+      price_index_uptrend:
+        desc: "产品/运价指数近3月上行且创1年新高"
+        examples: ["BDI", "BDTI", "VLCC-TCE", "克拉克森新船价格指数",
+                   "中国出口集装箱运价指数CCFI", "百川盈孚现货价"]
+      earnings_acceleration:
+        recurring_yoy_min_pct: 50
+        qoq_must_be_positive: true
+      gross_margin_qoq_min_pct: 2.0
+      contract_liability_yoy_min_pct: 30
+      capacity_utilization_min_pct: 90
+      industry_monthly_data_accelerating_months: 3
+
+  # --- 顶部反指: 命中任一即清仓 ---
+  top_reversal_signals:
+    - id: "C-T1"
+      condition: "pe_ttm < 8 AND quarterly_profit_at_all_time_high"
+      desc: "低PE+高利润 = 典型周期顶"
+    - id: "C-T2"
+      condition: "industry_capex_yoy_surge OR new_expansion_orders_surge"
+      desc: "供给端反转"
+    - id: "C-T3"
+      condition: "price_index < ma60 OR price_index_drawdown_from_high_pct > 15"
+    - id: "C-T4"
+      condition: "sellside_report_count_1y_high AND institutional_visit_count_1y_high"
+      desc: "拥挤度见顶"
+
+  exit_rules:
+    - id: "C-E1"
+      condition: "price_index_cross_below_ma60"
+      action: "reduce_50_same_day"
+      priority: "P0"
+    - id: "C-E2"
+      condition: "drawdown_from_high_pct > 15"
+      action: "exit_all"
+      priority: "P0"
+    - id: "C-E3"
+      condition: "any top_reversal_signals"
+      action: "exit_all"
+      priority: "P0"
+    - id: "C-E4"
+      condition: "unrealized_gain_pct >= 40"
+      action: "reduce_50_then_trailing_stop_10pct"
+      priority: "P1"
+    - id: "C-E5"
+      condition: "unrealized_gain_pct >= 80"
+      action: "reduce_50_again"
+      priority: "P1"
+    - id: "C-E6"
+      condition: "holding_days > 180 AND profit_not_accelerating"
+      action: "exit_all"
+      priority: "P1"
+    - id: "C-E7"
+      condition: "portfolio_state == S3"
+      action: "exit_all"
+      priority: "P0"
+  stop_loss:
+    hard_stop_pct: -15
+    industry_cooldown_days: 90
+
+  profit_withdrawal:
+    ratio_to_D_bucket: 0.50          # 每次兑现利润的 50% 永久转入 D 桶
+
+# ------------------------------------------------------------
+# 5. D 桶: 弹药库
+# ------------------------------------------------------------
+bucket_D:
+  name: "弹药库"
+  composition:
+    money_market_or_reverse_repo: 0.40
+    short_duration_bond_fund: 0.40
+    ncd_index_fund: 0.20
+  rules:
+    - "D 桶只能向 A 桶输血"
+    - "禁止 D -> C 直接流转"
+    - "股息收入与 C 桶提现利润默认先进 D 桶"
+
+# ------------------------------------------------------------
+# 6. 组合级风控
+# ------------------------------------------------------------
+portfolio_risk:
+  drawdown_circuit_breakers:
+    level_1:
+      trigger_pct: -15
+      actions: ["halt_new_positions_7d", "full_review", "sells_still_allowed"]
+    level_2:
+      trigger_pct: -20
+      actions: ["C_bucket_to_zero", "B_bucket_reduce_50", "A_bucket_continue_per_signal"]
+
+  prohibitions:
+    - "leverage_for_B_or_C"
+    - "average_down_on_C_losses"
+    - "divert_A_or_D_funds_to_C"
+    - "open_position_without_signal"
+    - "all_in_single_stock"
+    - "rebuy_within_cooldown"
+
+# ------------------------------------------------------------
+# 7. 调度与提醒
+# ------------------------------------------------------------
+schedule:
+  daily:
+    time: "16:00"
+    tasks: ["C_price_index_and_ma60", "all_bucket_stop_loss_check",
+            "concentration_limit_check"]
+  weekly:
+    cron: "MON 08:30"
+    tasks: ["A_market_signal_scoring", "state_transition_check",
+            "B_valuation_percentile_update"]
+  monthly:
+    day: "first_trading_day"
+    tasks: ["bucket_weight_vs_target", "rebalance_proposal"]
+  earnings_season:
+    months: [4, 8, 10]
+    tasks: ["B_quality_full_review", "C_text_signal_scan",
+            "A_dividend_policy_check"]
+  quarterly:
+    tasks: ["attribution_review", "rule_violation_count", "param_backtest_T7"]
+
+alerts:
+  levels:
+    P0: { label: "立即行动", channel: ["push", "email"], desc: "止损/逻辑证伪/顶部反指" }
+    P1: { label: "24h内决策", channel: ["push"], desc: "买入信号/状态切换" }
+    P2: { label: "本周关注", channel: ["digest"], desc: "接近阈值/再平衡" }
+    P3: { label: "记录", channel: ["log"], desc: "常规指标播报" }
+  message_template: |
+    [{level}] 规则 {rule_id} 触发
+    标的/对象: {target}
+    当前值: {current_value}  |  阈值: {threshold}
+    建议动作: {action}
+    涉及金额: {amount}  股数: {shares}
+    依据数据源: {data_source}  时间: {timestamp}
+
+# ------------------------------------------------------------
+# 8. 数据源映射 (按可得性替换)
+# ------------------------------------------------------------
+data_sources:
+  quotes_and_fundamentals: ["westock-mcp", "akshare", "tushare", "wind"]
+  dividend_index: "000922.SH"
+  bond_yield_10y: "CN10Y"
+  shipping_indices: ["BDI", "BDTI", "CCFI", "clarksons_newbuilding_price"]
+  commodity_spot: ["baiinfo", "wind_commodity"]
+  filings_and_minutes: ["cninfo_巨潮", "交易所互动易", "券商调研纪要"]
+  consensus_estimates: ["wind_consensus", "choice"]
+
+# ------------------------------------------------------------
+# 9. 分桶评估基准（signal_log 与 T7 用）
+# ------------------------------------------------------------
+bucket_benchmarks:
+  A: "000922.SH"           # 中证红利
+  B: "399006.SZ"           # 创业板指（备选 931643.SH 双创50，二选一）
+  C: "dynamic_sw_l1"       # 动态取该股申万一级行业指数
+  portfolio: "weighted"    # 按当前 allocation.states 权重加权四桶基准
+  cross_reference: "000300.SH"  # 沪深300 只作跨风格对照，不作 alpha 判定门槛
