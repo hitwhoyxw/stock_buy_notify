@@ -735,13 +735,87 @@ def _fetch_fundamentals_snapshot() -> pd.DataFrame:
     return pd.DataFrame()
 
 
+# ============================================================
+# 全市场 ROE 快照（财报指标，行情源没有）
+# ROE 按季度发布 → 24h 缓存 + 进程内缓存，每个报告期只拉一次。
+# 源：tushare fina_indicator(period=...) 批量 → akshare stock_yjbb_em 全市场业绩报表。
+# ============================================================
+
+def _report_period_candidates(today: dt.date) -> List[str]:
+    """按披露截止日推断最新已完整披露的报告期，返回尝试顺序。
+    年报/一季报 4-30 披露完，中报 8-31，三季报 10-31。"""
+    y, m = today.year, today.month
+    if m >= 11:
+        first = f"{y}0930"
+    elif m >= 9:
+        first = f"{y}0630"
+    elif m >= 5:
+        first = f"{y}0331"
+    else:
+        first = f"{y - 1}1231"
+    pool = [f"{y}0930", f"{y}0630", f"{y}0331", f"{y - 1}1231", f"{y - 1}0930"]
+    try:
+        return pool[pool.index(first):]
+    except ValueError:
+        return pool
+
+
+def get_roe_snapshot() -> pd.DataFrame:
+    """全市场 ROE 快照（进程内只拉一次）。列：code, roe（%，最新报告期）。"""
+    return _memo("roe_snapshot", _fetch_roe_snapshot)
+
+
+@disk_cache(ttl_hours=24)
+def _fetch_roe_snapshot() -> pd.DataFrame:
+    """实际拉取。tushare fina_indicator 批量 → akshare stock_yjbb_em 兜底。"""
+    import akshare as ak
+
+    for period in _report_period_candidates(dt.date.today()):
+        # 源 1: tushare fina_indicator（period 参数一次返回全市场）
+        pro = _get_tushare()
+        if pro is not None:
+            try:
+                raw = pro.fina_indicator(period=period, fields="ts_code,roe")
+                if raw is not None and not raw.empty:
+                    out = pd.DataFrame({
+                        "code": raw["ts_code"].str.split(".").str[0],
+                        "roe": pd.to_numeric(raw["roe"], errors="coerce"),
+                        "period": period,
+                    }).dropna(subset=["roe"]).drop_duplicates("code")
+                    if not out.empty:
+                        return out.reset_index(drop=True)
+            except Exception as e:
+                print(f"[data_fetch] tushare fina_indicator({period}) 失败：{e}", file=sys.stderr)
+
+        # 源 2: akshare stock_yjbb_em（东财业绩报表，一次调用全市场）
+        try:
+            raw = ak.stock_yjbb_em(date=period)
+            if raw is not None and not raw.empty:
+                c_code = next((c for c in raw.columns if "股票代码" in c), None)
+                c_roe = next((c for c in raw.columns if "净资产收益率" in c), None)
+                if c_code and c_roe:
+                    out = pd.DataFrame({
+                        "code": raw[c_code].astype(str).str.zfill(6),
+                        "roe": pd.to_numeric(raw[c_roe], errors="coerce"),
+                        "period": period,
+                    }).dropna(subset=["roe"]).drop_duplicates("code")
+                    # 披露期可能只有部分公司出数据，太稀疏就换更早的报告期
+                    if len(out) >= 500:
+                        return out.reset_index(drop=True)
+        except Exception as e:
+            print(f"[data_fetch] stock_yjbb_em({period}) 失败：{e}", file=sys.stderr)
+
+    return pd.DataFrame()
+
+
 def get_batch_fundamentals(codes: List[str]) -> pd.DataFrame:
     """批量获取一组股票的基本面，返回以 code 为索引的 DataFrame。
 
     数据源优先级：
       1. tushare 全市场快照（含 dv_ttm 股息率）
       2. 腾讯批量行情（pe/pb/市值/现价，无股息率，但绝不逐票、频率极低）
-    列：pe_ttm, pb, dv_ttm, dv_ratio, total_mv, price, name（视来源而定）。
+    ROE（财报指标，行情源无）单独由 get_roe_snapshot 批量补充。
+    列：pe_ttm, pb, dv_ttm, dv_ratio, total_mv, price, name, roe（视来源而定）。
     """
     codes = [c.split(".")[0].zfill(6) for c in codes]
     codes = list(dict.fromkeys(codes))
@@ -754,13 +828,46 @@ def get_batch_fundamentals(codes: List[str]) -> pd.DataFrame:
         sub = snap[snap["code"].isin(wanted)]
         # 覆盖率够就用快照（可能缺个别停牌票，交给腾讯补）
         if len(sub) >= max(1, int(len(codes) * 0.6)):
-            return sub.set_index("code")
+            return _attach_roe(sub).set_index("code")
 
     # 降级：腾讯批量行情
     tq = get_tencent_batch_quotes(codes)
     if not tq.empty:
-        return tq.set_index("code")
+        return _attach_roe(tq).set_index("code")
     return pd.DataFrame()
+
+
+def _annualize_roe(roe_df: pd.DataFrame) -> pd.DataFrame:
+    """单季 ROE → 年化近似（策略阈值是年度口径）。Q1×4、中报×2、三季报×4/3、年报×1。"""
+    df = roe_df.copy()
+    if "period" in df.columns:
+        def _factor(p: str) -> float:
+            p = str(p)
+            if p.endswith("0331"):
+                return 4.0
+            if p.endswith("0630"):
+                return 2.0
+            if p.endswith("0930"):
+                return 4.0 / 3.0
+            return 1.0
+        df["roe"] = df["roe"] * df["period"].map(_factor)
+    return df[["code", "roe"]]
+
+
+def _attach_roe(df: pd.DataFrame) -> pd.DataFrame:
+    """给基本面表补上 ROE 列（财报快照，批量一次，年化近似；失败时保持原样）。"""
+    if df.empty or "roe" in df.columns:
+        return df
+    roe_df = get_roe_snapshot()
+    if roe_df.empty:
+        return df
+    roe_ann = _annualize_roe(roe_df)
+    merged = df.merge(roe_ann, on="code", how="left")
+    # 快照路径回填缓存，两桶共用（快照可能为空表：无列，须判断）
+    snap = _RUNTIME_CACHE.get("fundamentals_snapshot")
+    if not (snap is None or snap.empty) and "code" in snap.columns and "roe" not in snap.columns:
+        _RUNTIME_CACHE["fundamentals_snapshot"] = snap.merge(roe_ann, on="code", how="left")
+    return merged
 
 
 def get_stock_fundamentals(code: str) -> pd.DataFrame:

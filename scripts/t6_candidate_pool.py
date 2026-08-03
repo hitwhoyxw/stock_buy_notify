@@ -121,7 +121,7 @@ def screen_bucket_a() -> pd.DataFrame:
         reason_parts = []
         reason_parts.append(f"股息率{dy_ttm:.2f}%≥{min_dy}%" if dy_ttm is not None else "股息率缺失放行")
         reason_parts.append(f"PB {pb:.2f}≤{max_pb}" if pb is not None else "PB缺失放行")
-        reason_parts.append(f"ROE {roe:.1f}%≥{min_roe}%" if roe is not None else "ROE缺失放行")
+        reason_parts.append(f"ROE年化{roe:.1f}%≥{min_roe}%" if roe is not None else "ROE缺失放行")
 
         results.append({
             "code": code,
@@ -234,7 +234,7 @@ def screen_bucket_b() -> pd.DataFrame:
         # 入选理由（门槛实际值 vs 阈值，缺数据时明示放行）
         reason_parts = []
         reason_parts.append(f"PE(TTM) {pe:.1f}≤80" if pe is not None else "PE缺失放行(或亏损)")
-        reason_parts.append(f"ROE {roe:.1f}%≥8%" if roe is not None else "ROE缺失放行")
+        reason_parts.append(f"ROE年化{roe:.1f}%≥8%" if roe is not None else "ROE缺失放行")
         reason_parts.append(rank_basis)
 
         results.append({
@@ -372,8 +372,9 @@ def _rules_note_a(df: pd.DataFrame) -> str:
         cfg = {}
     lines = [
         f"筛选规则: 中证红利成分 + 股息率TTM≥{cfg.get('dividend_yield_ttm_min_pct', 3.0)}% "
-        f"+ PB≤{cfg.get('pb_max', 2.0)} + ROE5年均值≥{cfg.get('roe_5y_avg_min_pct', 10.0)}%（数据缺失时放行，见 pick_reason）",
-        "排序公式: sort_value = 股息率TTM × quality_score",
+        f"+ PB≤{cfg.get('pb_max', 2.0)} + ROE≥{cfg.get('roe_5y_avg_min_pct', 10.0)}%"
+        f"（ROE 为最新报告期年化近似，非5年均值；数据缺失时放行，见 pick_reason）",
+        "排序公式: sort_value = 股息率TTM × quality_score（quality_score 含 ROE 权重）",
     ]
     if not df.empty and "roe_5y_avg" in df.columns \
             and df["roe_5y_avg"].astype(str).str.strip().eq("").all():
