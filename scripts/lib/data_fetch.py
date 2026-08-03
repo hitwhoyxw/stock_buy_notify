@@ -526,22 +526,49 @@ def get_csi_dividend_constituents() -> pd.DataFrame:
     """中证红利指数成分股。返回 code, name, weight。"""
     import akshare as ak
 
+    df = pd.DataFrame()
+    weight_col = None
+
+    # 优先用带权重的接口
     try:
-        df = ak.index_stock_cons_csindex(symbol="000922")
-    except Exception as e:
-        print(f"[data_fetch] 中证红利成分股拉取失败：{e}", file=sys.stderr)
-        return pd.DataFrame()
-    if df is None or df.empty:
+        raw = ak.index_stock_cons_weight_csindex(symbol="000922")
+        if raw is not None and not raw.empty:
+            df = raw
+            weight_col = next((c for c in raw.columns if "权重" in c or "weight" in c.lower()), None)
+    except Exception:
+        pass
+
+    if df.empty:
+        try:
+            raw = ak.index_stock_cons_csindex(symbol="000922")
+            if raw is not None and not raw.empty:
+                df = raw
+        except Exception as e:
+            print(f"[data_fetch] 中证红利成分股拉取失败：{e}", file=sys.stderr)
+            return pd.DataFrame()
+
+    if df.empty:
         return pd.DataFrame()
 
-    col_code = next((c for c in df.columns if "代码" in c or "code" in c.lower()), df.columns[0])
-    col_name = next((c for c in df.columns if "名称" in c or "name" in c.lower()), df.columns[1])
-    col_w = next((c for c in df.columns if "权重" in c or "weight" in c.lower()), None)
+    # 注意：列名同时含"指数代码"和"成分券代码"，必须精确匹配成分券
+    col_code = next((c for c in df.columns if "成分券代码" in c), None)
+    col_name = next((c for c in df.columns if "成分券名称" in c), None)
+    if col_code is None:
+        candidates = [c for c in df.columns if "代码" in c and "指数" not in c]
+        col_code = candidates[0] if candidates else None
+    if col_name is None:
+        candidates = [c for c in df.columns if "名称" in c and "指数" not in c and "英文" not in c]
+        col_name = candidates[0] if candidates else None
+    if col_code is None:
+        print(f"[data_fetch] 成分股列名解析失败：{list(df.columns)}", file=sys.stderr)
+        return pd.DataFrame()
+
     out = pd.DataFrame({
-        "code": df[col_code].astype(str).str.zfill(6),
-        "name": df[col_name],
-        "weight": pd.to_numeric(df[col_w], errors="coerce") if col_w else None,
+        "code": df[col_code].astype(str).str.strip().str.zfill(6),
+        "name": df[col_name].astype(str) if col_name else "",
+        "weight": pd.to_numeric(df[weight_col], errors="coerce") if weight_col else None,
     })
+    out = out.drop_duplicates(subset=["code"]).reset_index(drop=True)
     return out
 
 
@@ -550,20 +577,80 @@ def get_csi_dividend_constituents() -> pd.DataFrame:
 # ============================================================
 
 @disk_cache(ttl_hours=12)
-def get_stock_fundamentals(code: str) -> pd.DataFrame:
-    """单票关键指标：股息率 TTM、PB、PE-TTM、ROE、总市值。返回单行 DataFrame。"""
+def get_fundamentals_snapshot() -> pd.DataFrame:
+    """全市场基本面快照（一次调用）。返回列：code, pe_ttm, pb, dv_ttm, dv_ratio, total_mv。
+    数据源：tushare daily_basic（需 TUSHARE_TOKEN）→ akshare stock_zh_a_spot_em 兜底。
+    """
     import akshare as ak
+    from lib.trading_day import is_trading_day, prev_trading_day
 
-    pure = code.split(".")[0]
+    today = dt.date.today()
+    # 找最近交易日（非交易日往前推）
+    td = today if is_trading_day(today) else prev_trading_day(today, 1)
+    td_str = td.strftime("%Y%m%d")
+
+    # 方案 1: tushare daily_basic
+    pro = _get_tushare()
+    if pro is not None:
+        try:
+            raw = pro.daily_basic(trade_date=td_str)
+            if raw is None or raw.empty:
+                # 可能当天数据未发布，回退一个交易日
+                td2 = prev_trading_day(td, 1)
+                raw = pro.daily_basic(trade_date=td2.strftime("%Y%m%d"))
+            if raw is not None and not raw.empty:
+                out = pd.DataFrame({
+                    "code": raw["ts_code"].str.split(".").str[0],
+                    "pe_ttm": pd.to_numeric(raw.get("pe_ttm"), errors="coerce"),
+                    "pb": pd.to_numeric(raw.get("pb"), errors="coerce"),
+                    "dv_ttm": pd.to_numeric(raw.get("dv_ttm"), errors="coerce"),
+                    "dv_ratio": pd.to_numeric(raw.get("dv_ratio"), errors="coerce"),
+                    "total_mv": pd.to_numeric(raw.get("total_mv"), errors="coerce"),
+                })
+                return out.dropna(subset=["code"]).reset_index(drop=True)
+        except Exception as e:
+            print(f"[data_fetch] tushare daily_basic 失败：{e}", file=sys.stderr)
+
+    # 方案 2: akshare stock_zh_a_spot_em（含 PE/PB/总市值，无股息率）
     try:
-        df = ak.stock_a_indicator_lg(symbol=pure)
+        raw = ak.stock_zh_a_spot_em()
+        if raw is not None and not raw.empty:
+            def _col(name_candidates):
+                for c in name_candidates:
+                    if c in raw.columns:
+                        return c
+                return None
+            c_code = _col(["代码", "code"])
+            c_pe = _col(["市盈率-动态", "市盈率(动态)", "pe"])
+            c_pb = _col(["市净率", "pb"])
+            c_mv = _col(["总市值", "total_mv"])
+            if c_code:
+                out = pd.DataFrame({
+                    "code": raw[c_code].astype(str).str.zfill(6),
+                    "pe_ttm": pd.to_numeric(raw[c_pe], errors="coerce") if c_pe else None,
+                    "pb": pd.to_numeric(raw[c_pb], errors="coerce") if c_pb else None,
+                    "total_mv": pd.to_numeric(raw[c_mv], errors="coerce") if c_mv else None,
+                })
+                return out.reset_index(drop=True)
     except Exception as e:
-        print(f"[data_fetch] {code} 指标拉取失败：{e}", file=sys.stderr)
+        print(f"[data_fetch] akshare spot_em 失败：{e}", file=sys.stderr)
+
+    return pd.DataFrame()
+
+
+@disk_cache(ttl_hours=12)
+def get_stock_fundamentals(code: str) -> pd.DataFrame:
+    """单票关键指标：股息率 TTM、PB、PE-TTM、总市值。返回单行 DataFrame。
+    从全市场快照中查找（避免逐票调接口）。
+    """
+    pure = code.split(".")[0].zfill(6)
+    snap = get_fundamentals_snapshot()
+    if snap.empty:
         return pd.DataFrame()
-    if df is None or df.empty:
+    row = snap[snap["code"] == pure]
+    if row.empty:
         return pd.DataFrame()
-    df["date"] = pd.to_datetime(df.iloc[:, 0]).dt.date
-    return df.sort_values("date").tail(1).reset_index(drop=True)
+    return row.head(1).reset_index(drop=True)
 
 
 # ============================================================

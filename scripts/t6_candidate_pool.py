@@ -162,20 +162,25 @@ def screen_bucket_b() -> pd.DataFrame:
     """
     print("[T6-B] B 桶成长筛选（简化版：基于创业板指成分 + 基本面）...")
 
-    # 使用创业板指成分作为候选池
+    # 使用创业板指成分作为候选池（399006 是深证指数，用 index_stock_cons）
+    cons = pd.DataFrame()
     try:
         import akshare as ak
-        cons = ak.index_stock_cons_csindex(symbol="399006")
+        raw = ak.index_stock_cons(symbol="399006")
+        if raw is not None and not raw.empty:
+            cons = raw
     except Exception as e:
         print(f"[T6-B] ⚠️ 创业板指成分拉取失败：{e}", file=sys.stderr)
-        return pd.DataFrame()
 
-    if cons is None or cons.empty:
+    if cons.empty:
         print("[T6-B] ⚠️ 创业板指成分为空", file=sys.stderr)
         return pd.DataFrame()
 
-    col_code = next((c for c in cons.columns if "代码" in c or "code" in c.lower()), cons.columns[0])
-    col_name = next((c for c in cons.columns if "名称" in c or "name" in c.lower()), cons.columns[1])
+    col_code = next((c for c in cons.columns if "代码" in c and "指数" not in c), None)
+    col_name = next((c for c in cons.columns if "名称" in c and "指数" not in c and "英文" not in c), None)
+    if col_code is None:
+        print(f"[T6-B] ⚠️ 成分列名解析失败：{list(cons.columns)}", file=sys.stderr)
+        return pd.DataFrame()
 
     results: List[Dict[str, Any]] = []
     total = min(len(cons), 100)  # 限制处理数量避免超时
