@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: |
-      (github.event.schedule == '0 11 * * 1' && contains(fromJSON('["04","08","10"]'), format('{0:02d}', github.run_number))) ||
+      github.event.schedule == '0 11 * * 1' ||
       github.event.inputs.task == 't4_prepare'
     env:
       PYTHONPATH: ${{ github.workspace }}/scripts
