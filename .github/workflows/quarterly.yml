@@ -1,20 +1,14 @@
-name: T5 季度归因 + T7-AB 季末回测
+name: T5 quarterly attribution + T7-AB
 
 on:
   schedule:
-    # UTC 13:00 = 21:00 北京，每季末 28 号跑 T7-AB
     - cron: "0 13 28 3,6,9,12 *"
-    # UTC 12:00 = 20:00 北京，每季末 28 号准备 T5 输入
     - cron: "0 12 28 3,6,9,12 *"
   workflow_dispatch:
     inputs:
       task:
-        description: "手动指定：t5 / t7ab"
+        description: "t5 / t7ab"
         default: "t7ab"
-
-concurrency:
-  group: quarterly
-  cancel-in-progress: false
 
 jobs:
   run:
@@ -25,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.REPO_WRITE_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-python@v5
         with:
@@ -35,27 +29,21 @@ jobs:
 
       - run: pip install -r scripts/requirements.txt
 
-      - name: 运行 T7-AB · 季末回测
-        if: |
-          github.event.schedule == '0 13 28 3,6,9,12 *' ||
-          github.event.inputs.task == 't7ab'
+      - name: T7-AB quarterly backtest
         env:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
         run: python scripts/t7_backtest.py --bucket AB
 
-      - name: 运行 T5 · 季度归因数据准备
-        if: |
-          github.event.schedule == '0 12 28 3,6,9,12 *' ||
-          github.event.inputs.task == 't5'
+      - name: T5 attribution prepare
         env:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
         run: python scripts/t5_prepare.py
 
-      - name: 回写产物
+      - name: commit results
         run: |
-          git config user.name  "trading-bot"
+          git config user.name "trading-bot"
           git config user.email "bot@users.noreply.github.com"
           git add data/report_*.md data/skill_input_T5.md trading-system/06_backtest_*_result.csv || true
-          git diff --cached --quiet && echo "无变更" && exit 0
+          git diff --cached --quiet && echo "no changes" && exit 0
           git commit -m "chore(quarterly): $(date +%F) T5-prepare + T7-AB"
           git push

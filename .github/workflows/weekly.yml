@@ -1,32 +1,25 @@
-name: T2 周度红利判定 + T6 候选池
+name: T2 weekly dividend + T6 pool
 
 on:
   schedule:
-    # UTC 00:30 = 北京时间 08:30，周一（T2）
     - cron: "30 0 * * 1"
-    # UTC 12:00 = 北京时间 20:00，周五（T6）
     - cron: "0 12 * * 5"
   workflow_dispatch:
     inputs:
       task:
-        description: "手动指定：t2 / t6 / both"
+        description: "t2 / t6 / both"
         default: "both"
-        required: false
-
-concurrency:
-  group: weekly-t2
-  cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       PYTHONPATH: ${{ github.workspace }}/scripts
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.REPO_WRITE_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-python@v5
         with:
@@ -36,36 +29,28 @@ jobs:
 
       - run: pip install -r scripts/requirements.txt
 
-      - name: 运行 T2 · 周度红利判定
-        if: |
-          github.event.schedule == '30 0 * * 1' ||
-          github.event.inputs.task == 't2' ||
-          github.event.inputs.task == 'both'
+      - name: T2 weekly dividend
         env:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
           WECOM_BOT_KEY: ${{ secrets.WECOM_BOT_KEY }}
-          LARK_WEBHOOK:  ${{ secrets.LARK_WEBHOOK }}
+          LARK_WEBHOOK: ${{ secrets.LARK_WEBHOOK }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          SMTP_TO:   ${{ secrets.SMTP_TO }}
+          SMTP_TO: ${{ secrets.SMTP_TO }}
         run: python scripts/t2_weekly_dividend.py
 
-      - name: 运行 T6 · 候选池静态筛选
-        if: |
-          github.event.schedule == '0 12 * * 5' ||
-          github.event.inputs.task == 't6' ||
-          github.event.inputs.task == 'both'
+      - name: T6 candidate pool
         env:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
         run: python scripts/t6_candidate_pool.py
 
-      - name: 回写产物
+      - name: commit results
         run: |
-          git config user.name  "trading-bot"
+          git config user.name "trading-bot"
           git config user.email "bot@users.noreply.github.com"
           git add data/live_signal_log.csv data/report_*.md data/skill_input_T6.md data/candidates_*.csv || true
-          git diff --cached --quiet && echo "无变更" && exit 0
+          git diff --cached --quiet && echo "no changes" && exit 0
           git commit -m "chore(weekly): $(date +%F) run"
           git push

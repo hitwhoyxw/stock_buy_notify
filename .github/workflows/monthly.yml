@@ -1,20 +1,14 @@
-name: T3 月度再平衡 + T7-C 月度回测
+name: T3 monthly rebalance
 
 on:
   schedule:
-    # UTC 01:30 = 09:30 北京，每月 1 号跑 T3
     - cron: "30 1 1 * *"
-    # UTC 13:00 = 21:00 北京，每月 28 号跑 T7-C
     - cron: "0 13 28 * *"
   workflow_dispatch:
     inputs:
       task:
-        description: "手动指定：t3 / t7c"
+        description: "t3 / t7c"
         default: "t3"
-
-concurrency:
-  group: monthly
-  cancel-in-progress: false
 
 jobs:
   run:
@@ -25,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.REPO_WRITE_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-python@v5
         with:
@@ -35,34 +29,28 @@ jobs:
 
       - run: pip install -r scripts/requirements.txt
 
-      - name: 运行 T3 · 月度再平衡
-        if: |
-          github.event.schedule == '30 1 1 * *' ||
-          github.event.inputs.task == 't3'
+      - name: T3 monthly rebalance
         env:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
           WECOM_BOT_KEY: ${{ secrets.WECOM_BOT_KEY }}
-          LARK_WEBHOOK:  ${{ secrets.LARK_WEBHOOK }}
+          LARK_WEBHOOK: ${{ secrets.LARK_WEBHOOK }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          SMTP_TO:   ${{ secrets.SMTP_TO }}
+          SMTP_TO: ${{ secrets.SMTP_TO }}
         run: python scripts/t3_monthly_rebalance.py
 
-      - name: 运行 T7-C · 热点桶月度回测
-        if: |
-          github.event.schedule == '0 13 28 * *' ||
-          github.event.inputs.task == 't7c'
+      - name: T7-C backtest
         env:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
         run: python scripts/t7_backtest.py --bucket C
 
-      - name: 回写产物
+      - name: commit results
         run: |
-          git config user.name  "trading-bot"
+          git config user.name "trading-bot"
           git config user.email "bot@users.noreply.github.com"
           git add data/live_signal_log.csv data/report_*.md trading-system/06_backtest_*_result.csv || true
-          git diff --cached --quiet && echo "无变更" && exit 0
+          git diff --cached --quiet && echo "no changes" && exit 0
           git commit -m "chore(monthly): $(date +%F) run"
           git push
