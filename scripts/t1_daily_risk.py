@@ -188,6 +188,60 @@ def check_portfolio_drawdown(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
 # 主流程
 # ============================================================
 
+def _fetch_market_overview() -> str:
+    """拉取市场概况数据，生成 markdown 表格。"""
+    from lib.data_fetch import (
+        get_hs300_drawdown,
+        get_market_turnover_percentile,
+        get_latest_10y_yield,
+        get_dividend_yield_percentile,
+        get_relative_excess,
+    )
+
+    rows: List[str] = []
+    rows.append("| 指标 | 当前值 | 备注 |")
+    rows.append("|------|--------|------|")
+
+    # 沪深300 回撤
+    dd = get_hs300_drawdown(days=20)
+    if dd:
+        rows.append(f"| 沪深300 20日最大回撤 | {dd['drawdown_pct']:.2f}% | 单日最大跌幅 {dd['single_day_pct']:.2f}% |")
+    else:
+        rows.append("| 沪深300 20日最大回撤 | N/A | 数据获取失败 |")
+
+    # 全 A 成交额分位
+    turnover_pct = get_market_turnover_percentile(window_days=20, lookback_days=250)
+    if turnover_pct is not None:
+        heat = "偏热" if turnover_pct > 80 else ("偏冷" if turnover_pct < 20 else "中性")
+        rows.append(f"| 全A 20日均量（250日分位） | {turnover_pct:.1f}% | {heat} |")
+    else:
+        rows.append("| 全A 20日均量分位 | N/A | 数据获取失败 |")
+
+    # 10 年国债收益率
+    y10 = get_latest_10y_yield()
+    if y10 is not None:
+        rows.append(f"| 10年期国债收益率 | {y10:.3f}% | {'股债性价比偏低' if y10 > 3.5 else '股债性价比尚可'} |")
+    else:
+        rows.append("| 10年期国债收益率 | N/A | 数据获取失败 |")
+
+    # 中证红利股息率分位
+    div = get_dividend_yield_percentile(years=5)
+    if div:
+        position = "偏低(便宜)" if div["percentile"] < 30 else ("偏高(贵)" if div["percentile"] > 70 else "中位")
+        rows.append(f"| 中证红利股息率 | {div['current']:.2f}% (5年{div['percentile']:.0f}%分位) | {position} |")
+    else:
+        rows.append("| 中证红利股息率分位 | N/A | 数据获取失败 |")
+
+    # 红利 vs 全A 相对超额
+    excess = get_relative_excess(bucket_code="000922", benchmark_code="000985", days=60)
+    if excess is not None:
+        rows.append(f"| 红利60日相对超额(vs全A) | {excess:+.2f}% | {'红利占优' if excess > 0 else '红利落后'} |")
+    else:
+        rows.append("| 红利60日相对超额 | N/A | 数据获取失败 |")
+
+    return "\n".join(rows) + "\n"
+
+
 def main() -> int:
     paths.ensure_dirs()
     today = dt.date.today()
@@ -224,7 +278,11 @@ def main() -> int:
                 "是否实际执行": "否",
             })
 
-    # 快照
+    # 市场概况
+    print("[T1] 拉取市场概况数据...")
+    market_overview = _fetch_market_overview()
+
+    # 持仓快照
     snapshot_rows = []
     for _, row in positions.iterrows():
         snapshot_rows.append({
@@ -238,15 +296,26 @@ def main() -> int:
     weights = trade_log.bucket_weights()
     weights_md = " · ".join(f"{k}={v * 100:.1f}%" for k, v in weights.items())
 
+    # 组装报告
+    sections = [
+        ("市场概况", market_overview),
+        ("四桶权重", f"`{weights_md}`\n\n"
+                    f"持仓标的数：**{len(positions)}**\n"),
+        ("持仓明细", report.render_kv_table(snapshot_rows, ["代码", "名称", "桶", "净股数", "平均成本"])
+                    if snapshot_rows else "_当前空仓_\n"),
+        ("风控检查结论",
+         f"- C 桶回撤/MA60：{'无持仓' if positions.empty or not any(str(r.get('桶','')).upper()=='C' for _,r in positions.iterrows()) else '已检查'}\n"
+         f"- 止损线（B<-25%, C<-15%）：{'无持仓' if positions.empty else '已检查'}\n"
+         f"- 集中度（单票/行业）：{'无持仓' if positions.empty else '已检查'}\n"
+         f"- 组合级回撤：{'待净值接入' if True else '已检查'}\n"),
+        ("yaml 版本", f"`{yaml_tag}`\n"),
+    ]
+
     path = report.write_report(
         task="T1",
         title=f"T1 每日风控扫描 · {today.isoformat()}",
         alerts=alerts,
-        sections=[
-            ("四桶权重快照", f"`{weights_md}`\n"),
-            ("持仓快照", report.render_kv_table(snapshot_rows, ["代码", "名称", "桶", "净股数", "平均成本"])),
-            ("yaml 版本", f"`{yaml_tag}`\n"),
-        ],
+        sections=sections,
     )
     print(f"[T1] 报告已写入 {path}，触发 {len(alerts)} 项")
 

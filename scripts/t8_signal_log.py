@@ -250,10 +250,54 @@ def main() -> int:
                 "信号最终评价": "alpha decay",
             })
 
+    # 台账总览统计
+    total_signals = len(df)
+    executed = len(df[df["是否实际执行"] == "是"]) if not df.empty else 0
+    pending_backfill = 0
+    if not df.empty and executed > 0:
+        exec_df = df[df["是否实际执行"] == "是"]
+        for _, r in exec_df.iterrows():
+            if not str(r.get("事后60日收益%", "")).strip() or not str(r.get("事后120日收益%", "")).strip():
+                pending_backfill += 1
+
+    overview_md = (
+        f"| 维度 | 数值 |\n"
+        f"|------|------|\n"
+        f"| 台账总信号数 | {total_signals} |\n"
+        f"| 已实际执行 | {executed} |\n"
+        f"| 待回补收益 | {pending_backfill} |\n"
+        f"| 本次回补 | {n_updated} |\n"
+        f"| 失效预警 | {len(decay_alerts)} 条 |\n"
+    )
+
+    # 最近信号明细（最多 10 条）
+    recent_md = ""
+    if not df.empty:
+        recent = df.tail(10).iloc[::-1]  # 最新在前
+        recent_rows = []
+        for _, r in recent.iterrows():
+            recent_rows.append({
+                "signal_id": str(r.get("signal_id", "")),
+                "日期": str(r.get("触发日期", "")),
+                "桶": str(r.get("桶", "")),
+                "规则": str(r.get("规则ID", "")),
+                "标的": f"{r.get('标的代码', '')} {r.get('标的名称', '')}",
+                "方向": str(r.get("信号方向", "")),
+                "已执行": str(r.get("是否实际执行", "")),
+                "60d收益": str(r.get("事后60日收益%", "")) or "-",
+            })
+        recent_md = report.render_kv_table(
+            recent_rows, ["signal_id", "日期", "桶", "规则", "标的", "方向", "已执行", "60d收益"]
+        )
+    else:
+        recent_md = "_台账为空_\n"
+
     body_sections = [
-        ("回补统计", f"本次回补记录数：**{n_updated}**\n\n"
-                     f"涉及 signal_id：`{', '.join(updated_ids[:20])}"
-                     f"{'…' if len(updated_ids) > 20 else ''}`\n"),
+        ("台账总览", overview_md),
+        ("最近信号（倒序前 10）", recent_md),
+        ("回补明细", f"本次回补 signal_id：`{', '.join(updated_ids[:20])}"
+                     f"{'…' if len(updated_ids) > 20 else ''}`\n"
+                     if updated_ids else "本次无需回补。\n"),
         ("失效预警", report.render_alert_list(decay_alerts) if decay_alerts else "本次无失效预警。\n"),
         ("yaml 版本", f"`{yaml_tag}`\n"),
     ]
