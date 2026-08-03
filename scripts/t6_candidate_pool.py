@@ -31,6 +31,7 @@ from lib.config import get_config, get_yaml_tag
 from lib.data_fetch import (
     get_csi_dividend_constituents,
     get_batch_fundamentals,
+    get_profit_quality_snapshot,
     get_dividend_yield_percentile,
     get_index_daily,
 )
@@ -82,6 +83,11 @@ def screen_bucket_a() -> pd.DataFrame:
         print("[T6-A] ⚠️ 基本面数据为空，跳过 A 桶", file=sys.stderr)
         return pd.DataFrame()
 
+    # 盈利质量快照（近3年单季亏损次数 + 年报经营现金流，批量一次）
+    print("[T6-A] 拉取盈利质量快照（亏损季度/现金流，批量）...")
+    pq_df = get_profit_quality_snapshot()
+    pq_df = pq_df.set_index("code") if not pq_df.empty else pd.DataFrame()
+
     for i, row in cons.iterrows():
         code = str(row["code"])
         name = str(row.get("name", ""))
@@ -105,6 +111,17 @@ def screen_bucket_a() -> pd.DataFrame:
         if roe is not None and roe < min_roe:
             continue
 
+        # 盈利质量门槛：近3年出现过单季亏损 → 剔除；年报经营现金流为负 → 剔除（借钱分红）
+        loss_q = None
+        ocf_ps = None
+        if not pq_df.empty and code in pq_df.index:
+            loss_q = _safe_float(pq_df.loc[code], ["loss_q_3y"])
+            ocf_ps = _safe_float(pq_df.loc[code], ["ocf_ps_annual"])
+        if loss_q is not None and loss_q > 0:
+            continue
+        if ocf_ps is not None and ocf_ps < 0:
+            continue
+
         # quality_score 近似计算
         roe_score = min(roe or 10.0, 30.0) / 30.0  # 归一化到 [0,1]
         fcf_coverage = 1.0  # 简化：无 FCF 数据时默认 1
@@ -122,6 +139,8 @@ def screen_bucket_a() -> pd.DataFrame:
         reason_parts.append(f"股息率{dy_ttm:.2f}%≥{min_dy}%" if dy_ttm is not None else "股息率缺失放行")
         reason_parts.append(f"PB {pb:.2f}≤{max_pb}" if pb is not None else "PB缺失放行")
         reason_parts.append(f"ROE年化{roe:.1f}%≥{min_roe}%" if roe is not None else "ROE缺失放行")
+        reason_parts.append(f"近3年亏损季度{int(loss_q)}" if loss_q is not None else "亏损数据缺失放行")
+        reason_parts.append(f"年报经营现金流/股{ocf_ps:.2f}≥0" if ocf_ps is not None else "现金流数据缺失放行")
 
         results.append({
             "code": code,
@@ -135,6 +154,8 @@ def screen_bucket_a() -> pd.DataFrame:
             "pb": round(pb, 2) if pb else "",
             "pb_percentile": round(pb_percentile, 1),
             "dividend_years": div_years,
+            "loss_q_3y": int(loss_q) if loss_q is not None else "",
+            "ocf_ps_annual": round(ocf_ps, 2) if ocf_ps is not None else "",
             "quality_score": round(quality_score, 3),
             "sort_value": round(sort_value, 3),
             "pick_reason": " | ".join(reason_parts),
@@ -373,7 +394,9 @@ def _rules_note_a(df: pd.DataFrame) -> str:
     lines = [
         f"筛选规则: 中证红利成分 + 股息率TTM≥{cfg.get('dividend_yield_ttm_min_pct', 3.0)}% "
         f"+ PB≤{cfg.get('pb_max', 2.0)} + ROE≥{cfg.get('roe_5y_avg_min_pct', 10.0)}%"
-        f"（ROE 为最新报告期年化近似，非5年均值；数据缺失时放行，见 pick_reason）",
+        f"（ROE 为最新报告期年化近似，非5年均值）"
+        f" + 近3年无单季亏损 + 最新年报每股经营现金流≥0（自由现金流近似，剔除借钱分红）"
+        f"；数据缺失时放行，见 pick_reason",
         "排序公式: sort_value = 股息率TTM × quality_score（quality_score 含 ROE 权重）",
     ]
     if not df.empty and "roe_5y_avg" in df.columns \
@@ -407,7 +430,8 @@ def assemble_output(bucket_a: pd.DataFrame, bucket_b: pd.DataFrame,
         parts.append("（A 桶候选为空）")
     else:
         cols_a = ["code", "name", "industry", "price", "dividend_yield_ttm", "dividend_percentile_5y",
-                  "roe_5y_avg", "fcf_coverage", "pb", "pb_percentile", "dividend_years", "quality_score",
+                  "roe_5y_avg", "fcf_coverage", "pb", "pb_percentile", "dividend_years",
+                  "loss_q_3y", "ocf_ps_annual", "quality_score",
                   "sort_value", "pick_reason"]
         # 只取存在的列
         available = [c for c in cols_a if c in bucket_a.columns]

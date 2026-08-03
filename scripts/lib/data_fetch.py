@@ -808,6 +808,104 @@ def _fetch_roe_snapshot() -> pd.DataFrame:
     return pd.DataFrame()
 
 
+# ============================================================
+# 盈利质量快照：近3年单季亏损次数 + 最新年报每股经营现金流
+# （识别"借钱分红"：股息率高但经营现金流为负 / 利润不稳定的票）
+# 历史财报数据不会变 → 72h 缓存；每期一次全市场调用，绝不逐票。
+# ============================================================
+
+def _loss_check_periods(today: dt.date) -> List[str]:
+    """最新已完整披露报告期起往前数 12 个季度，再加 1 个推导基期，旧→新排列。"""
+    y, m = today.year, today.month
+    if m >= 11:
+        yy, qq = y, 3
+    elif m >= 9:
+        yy, qq = y, 2
+    elif m >= 5:
+        yy, qq = y, 1
+    else:
+        yy, qq = y - 1, 4
+    quarters = [(yy, qq)]
+    for _ in range(12):
+        qq -= 1
+        if qq == 0:
+            qq, yy = 4, yy - 1
+        quarters.append((yy, qq))
+    quarters.reverse()
+    suffix = {1: "0331", 2: "0630", 3: "0930", 4: "1231"}
+    return [f"{a}{suffix[b]}" for a, b in quarters]
+
+
+def get_profit_quality_snapshot() -> pd.DataFrame:
+    """每股盈利质量快照（进程内只拉一次）。
+    列：code, loss_q_3y（近12个季度单季亏损次数）,
+        ocf_ps_annual（最新年报每股经营现金流，自由现金流近似）。"""
+    return _memo("profit_quality", _fetch_profit_quality_snapshot)
+
+
+@disk_cache(ttl_hours=72)
+def _fetch_profit_quality_snapshot() -> pd.DataFrame:
+    """akshare stock_yjbb_em 按期批量拉取（每次调用全市场）。
+
+    单季净利 = 本期累计 − 上期累计（一季报即单季）。缺基期的季度跳过不判。
+    """
+    import akshare as ak
+    import time
+
+    today = dt.date.today()
+    periods = _loss_check_periods(today)
+    range_periods = periods[1:]  # 前 12 个季度（判亏损用）
+    annual_period = f"{today.year - 1}1231" if today.month >= 5 else f"{today.year - 2}1231"
+    prev_of = {periods[i]: periods[i - 1] for i in range(1, len(periods))}
+
+    cum_np: Dict[str, Dict[str, float]] = {}  # code -> period -> 累计净利
+    ocf_map: Dict[str, float] = {}
+    for p in periods:
+        try:
+            raw = ak.stock_yjbb_em(date=p)
+        except Exception as e:
+            print(f"[data_fetch] stock_yjbb_em({p}) 失败：{e}", file=sys.stderr)
+            time.sleep(1.0)
+            continue
+        if raw is None or raw.empty:
+            continue
+        c_code = next((c for c in raw.columns if "股票代码" in c), None)
+        c_np = next((c for c in raw.columns
+                     if "净利润" in c and "同比" not in c and "环比" not in c), None)
+        c_ocf = next((c for c in raw.columns if "经营现金流" in c), None)
+        if c_code is None or c_np is None:
+            continue
+        codes = raw[c_code].astype(str).str.zfill(6)
+        nps = pd.to_numeric(raw[c_np], errors="coerce")
+        for code, npv in zip(codes, nps):
+            if pd.notna(npv):
+                cum_np.setdefault(code, {})[p] = float(npv)
+        if p == annual_period and c_ocf is not None:
+            for code, ov in zip(codes, pd.to_numeric(raw[c_ocf], errors="coerce")):
+                if pd.notna(ov):
+                    ocf_map[code] = float(ov)
+        time.sleep(0.8)  # 期与期之间休眠，防限频
+
+    rows = []
+    for code, pmap in cum_np.items():
+        loss = 0
+        for p in range_periods:
+            if p not in pmap:
+                continue
+            if p.endswith("0331"):
+                single = pmap[p]  # 一季报累计即单季
+            else:
+                prev = prev_of.get(p)
+                if prev is None or prev not in pmap:
+                    continue  # 缺基期无法推导单季，跳过
+                single = pmap[p] - pmap[prev]
+            if single < 0:
+                loss += 1
+        rows.append({"code": code, "loss_q_3y": loss,
+                     "ocf_ps_annual": ocf_map.get(code)})
+    return pd.DataFrame(rows)
+
+
 def get_batch_fundamentals(codes: List[str]) -> pd.DataFrame:
     """批量获取一组股票的基本面，返回以 code 为索引的 DataFrame。
 
