@@ -30,7 +30,7 @@ from lib.paths import DATA_DIR, ensure_dirs
 from lib.config import get_config, get_yaml_tag
 from lib.data_fetch import (
     get_csi_dividend_constituents,
-    get_stock_fundamentals,
+    get_batch_fundamentals,
     get_dividend_yield_percentile,
     get_index_daily,
 )
@@ -74,32 +74,31 @@ def screen_bucket_a() -> pd.DataFrame:
 
     results: List[Dict[str, Any]] = []
     total = len(cons)
-    print(f"[T6-A] 逐票拉取基本面（共 {total} 只）...")
+
+    # 批量一次拉取全部成分股基本面（防限频：绝不逐票请求）
+    print(f"[T6-A] 批量拉取 {total} 只成分股基本面（单次调用）...")
+    fund_df = get_batch_fundamentals(cons["code"].tolist())
+    if fund_df.empty:
+        print("[T6-A] ⚠️ 基本面数据为空，跳过 A 桶", file=sys.stderr)
+        return pd.DataFrame()
 
     for i, row in cons.iterrows():
         code = str(row["code"])
         name = str(row.get("name", ""))
-        weight = row.get("weight")
 
-        # 拉取基本面
-        fund = get_stock_fundamentals(code)
-        if fund.empty:
+        if code not in fund_df.index:
             continue
+        fund_row = fund_df.loc[code]
 
-        # 提取指标（列名兼容）
-        try:
-            fund_row = fund.iloc[0]
-            # akshare stock_a_indicator_lg 列名可能包含中英文
-            dy_ttm = _safe_float(fund_row, ["dv_ttm", "股息率", "dividend_yield"])
-            pb = _safe_float(fund_row, ["pb", "市净率"])
-            pe = _safe_float(fund_row, ["pe_ttm", "市盈率"])
-            roe = _safe_float(fund_row, ["roe", "ROE"])
-            total_mv = _safe_float(fund_row, ["total_mv", "总市值"])
-        except Exception:
-            continue
+        # 提取指标（列名兼容 tushare/腾讯两种来源）
+        dy_ttm = _safe_float(fund_row, ["dv_ttm", "dv_ratio", "股息率"])
+        pb = _safe_float(fund_row, ["pb", "市净率"])
+        pe = _safe_float(fund_row, ["pe_ttm", "市盈率"])
+        roe = _safe_float(fund_row, ["roe", "ROE"])  # 快照源通常无 ROE → None
+        price = _safe_float(fund_row, ["price", "现价"])
 
-        # 硬门槛
-        if dy_ttm is None or dy_ttm < min_dy:
+        # 硬门槛（数据缺失时放行：成分股本身已由指数做过股息筛选）
+        if dy_ttm is not None and dy_ttm < min_dy:
             continue
         if pb is not None and pb > max_pb:
             continue
@@ -115,19 +114,23 @@ def screen_bucket_a() -> pd.DataFrame:
         # PB 分位（简化：使用当前 PB / 历史中位 PB 的逆）
         pb_percentile = min(100, max(0, (2.0 - (pb or 1.5)) / 2.0 * 100)) if pb else 50.0
 
+        # 排序值：有股息率用 股息率×质量分，否则退化为 质量分
+        sort_value = (dy_ttm * quality_score) if dy_ttm else quality_score
+
         results.append({
             "code": code,
             "name": name,
             "industry": "",  # 后续可补充
-            "dividend_yield_ttm": round(dy_ttm, 2),
+            "price": round(price, 2) if price else "",
+            "dividend_yield_ttm": round(dy_ttm, 2) if dy_ttm else "",
             "dividend_percentile_5y": "",  # 需要历史数据
-            "roe_5y_avg": round(roe or 0, 1),
+            "roe_5y_avg": round(roe, 1) if roe else "",
             "fcf_coverage": round(fcf_coverage, 2),
             "pb": round(pb, 2) if pb else "",
             "pb_percentile": round(pb_percentile, 1),
             "dividend_years": div_years,
             "quality_score": round(quality_score, 3),
-            "sort_value": round(dy_ttm * quality_score, 3),
+            "sort_value": round(sort_value, 3),
         })
 
         # 进度
@@ -182,52 +185,60 @@ def screen_bucket_b() -> pd.DataFrame:
         print(f"[T6-B] ⚠️ 成分列名解析失败：{list(cons.columns)}", file=sys.stderr)
         return pd.DataFrame()
 
+    codes = [str(c).zfill(6) for c in cons[col_code].tolist()]
+    name_map = {str(cons.iloc[i][col_code]).zfill(6): str(cons.iloc[i][col_name])
+                for i in range(len(cons))} if col_name else {}
+    total = len(codes)
+
+    # 批量一次拉取基本面（防限频：绝不逐票请求）
+    print(f"[T6-B] 批量拉取 {total} 只成分股基本面（单次调用）...")
+    fund_df = get_batch_fundamentals(codes)
+    if fund_df.empty:
+        print("[T6-B] ⚠️ 基本面数据为空，跳过 B 桶", file=sys.stderr)
+        return pd.DataFrame()
+
     results: List[Dict[str, Any]] = []
-    total = min(len(cons), 100)  # 限制处理数量避免超时
-    print(f"[T6-B] 逐票拉取基本面（前 {total} 只）...")
-
-    for i in range(total):
-        row = cons.iloc[i]
-        code = str(row[col_code]).zfill(6)
-        name = str(row.get(col_name, ""))
-
-        fund = get_stock_fundamentals(code)
-        if fund.empty:
+    for i, code in enumerate(codes):
+        name = name_map.get(code, "")
+        if code not in fund_df.index:
             continue
+        fund_row = fund_df.loc[code]
 
-        try:
-            fund_row = fund.iloc[0]
-            pe = _safe_float(fund_row, ["pe_ttm", "市盈率"])
-            roe = _safe_float(fund_row, ["roe", "ROE"])
-            total_mv = _safe_float(fund_row, ["total_mv", "总市值"])
-        except Exception:
-            continue
+        pe = _safe_float(fund_row, ["pe_ttm", "市盈率"])
+        roe = _safe_float(fund_row, ["roe", "ROE"])  # 快照源通常无 ROE → None
+        total_mv = _safe_float(fund_row, ["total_mv", "总市值"])
+        price = _safe_float(fund_row, ["price", "现价"])
+        pb = _safe_float(fund_row, ["pb", "市净率"])
 
-        # 简化筛选：PE 合理、ROE 较高
-        if pe is None or pe <= 0 or pe > 80:
+        # 简化筛选：PE 明显过高才剔除，缺失时放行留给 LLM 判定
+        if pe is not None and (pe <= 0 or pe > 80):
             continue
         if roe is not None and roe < 8:
             continue
 
-        # 简化排序值：ROE / PE（近似 PEG 逆）
-        sort_val = (roe or 15) / max(pe, 1)
+        # 排序值：有 PE 用 ROE/PE（近似 PEG 逆），否则用低 PB 代理（PB 越低越靠前）
+        if pe is not None:
+            sort_val = (roe or 15) / max(pe, 1)
+        else:
+            sort_val = 1.0 / max(pb or 3.0, 0.1) * 5  # 归一到相近量级
 
         results.append({
             "code": code,
             "name": name,
             "industry": "",
+            "price": round(price, 2) if price else "",
             "revenue_cagr_3y": "",  # 需要财报数据
             "profit_cagr_3y": "",
             "gross_margin_change": "",
             "ocf_to_np": "",
             "roe_ttm": round(roe, 1) if roe else "",
-            "peg": round(pe / max(roe or 15, 1), 2),
+            "peg": round(pe / max(roe or 15, 1), 2) if pe else "",
             "penetration_rate": "",
             "goodwill_ratio": "",
             "sort_value": round(sort_val, 4),
         })
 
-        if (i + 1) % 20 == 0:
+        if (i + 1) % 50 == 0:
             print(f"  已处理 {i + 1}/{total}，通过 {len(results)} 只")
 
     print(f"[T6-B] 完成：{len(results)} 只通过硬门槛")
@@ -348,7 +359,7 @@ def assemble_output(bucket_a: pd.DataFrame, bucket_b: pd.DataFrame,
     if bucket_a.empty:
         parts.append("（A 桶候选为空）")
     else:
-        cols_a = ["code", "name", "industry", "dividend_yield_ttm", "dividend_percentile_5y",
+        cols_a = ["code", "name", "industry", "price", "dividend_yield_ttm", "dividend_percentile_5y",
                   "roe_5y_avg", "fcf_coverage", "pb", "pb_percentile", "dividend_years", "quality_score"]
         # 只取存在的列
         available = [c for c in cols_a if c in bucket_a.columns]
@@ -360,7 +371,7 @@ def assemble_output(bucket_a: pd.DataFrame, bucket_b: pd.DataFrame,
     if bucket_b.empty:
         parts.append("（B 桶候选为空）")
     else:
-        cols_b = ["code", "name", "industry", "revenue_cagr_3y", "profit_cagr_3y",
+        cols_b = ["code", "name", "industry", "price", "revenue_cagr_3y", "profit_cagr_3y",
                   "gross_margin_change", "ocf_to_np", "roe_ttm", "peg", "penetration_rate", "goodwill_ratio"]
         available = [c for c in cols_b if c in bucket_b.columns]
         parts.append(bucket_b[available].head(50).to_csv(index=False))

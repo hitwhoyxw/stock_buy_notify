@@ -94,6 +94,96 @@ def _get_tushare():
 
 
 # ============================================================
+# 进程内缓存（关键：disk_cache 的 parquet 在缺 pyarrow 时静默失败，
+# 会导致同一快照被逐票重复拉取→触发限频。这里加一层内存缓存兜底。）
+# ============================================================
+
+_RUNTIME_CACHE: Dict[str, Any] = {}
+
+
+def _memo(key: str, fetch_fn: Callable[[], Any]) -> Any:
+    """进程内单次缓存：同一次运行里 fetch_fn 最多执行一次。"""
+    if key in _RUNTIME_CACHE:
+        return _RUNTIME_CACHE[key]
+    val = fetch_fn()
+    _RUNTIME_CACHE[key] = val
+    return val
+
+
+# ============================================================
+# 腾讯轻量批量行情（防限频主力源）
+# qt.gtimg.cn 单次请求可带 ~60 只代码，返回现价/PE(TTM)/PB/市值，
+# 无需 token、不依赖东财爬虫，是本地与被限频环境下的兜底。
+# ============================================================
+
+def _to_tencent_symbol(code: str) -> str:
+    pure = code.split(".")[0].zfill(6)
+    if pure.startswith(("6", "5", "9")):
+        return f"sh{pure}"
+    if pure.startswith(("4", "8")):
+        return f"bj{pure}"
+    return f"sz{pure}"
+
+
+def get_tencent_batch_quotes(codes: List[str], batch_size: int = 60) -> pd.DataFrame:
+    """批量拉取实时行情（腾讯源）。返回列：code, name, price, pe_ttm, pb, total_mv。
+    total_mv 单位：亿元。一次 HTTP 请求 ~60 只，频率极低。
+    """
+    import requests
+    import time
+
+    codes = [c.split(".")[0].zfill(6) for c in codes]
+    codes = list(dict.fromkeys(codes))  # 去重保序
+    if not codes:
+        return pd.DataFrame()
+
+    rows: Dict[str, Dict[str, Any]] = {}
+    for i in range(0, len(codes), batch_size):
+        chunk = codes[i:i + batch_size]
+        q = ",".join(_to_tencent_symbol(c) for c in chunk)
+        try:
+            resp = requests.get(
+                "http://qt.gtimg.cn/q=" + q,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=10,
+            )
+            resp.encoding = "gbk"
+        except Exception as e:
+            print(f"[data_fetch] 腾讯行情批次失败：{e}", file=sys.stderr)
+            continue
+
+        for line in resp.text.strip().split(";"):
+            line = line.strip()
+            if "=" not in line:
+                continue
+            _, val = line.split("=", 1)
+            f = val.strip('"').split("~")
+            if len(f) < 47:
+                continue
+            code = f[2]
+            def _num(x):
+                try:
+                    v = float(x)
+                    return v if v != 0 else None
+                except (ValueError, TypeError):
+                    return None
+            rows[code] = {
+                "code": code,
+                "name": f[1],
+                "price": _num(f[3]),
+                "pe_ttm": _num(f[39]),
+                "total_mv": _num(f[45]),  # 亿元
+                "pb": _num(f[46]),
+                "dv_ttm": _num(f[64]) if len(f) > 64 else None,  # 股息率 TTM(%)
+            }
+        time.sleep(0.3)  # 批次间轻休眠，防限频
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(list(rows.values()))
+
+
+# ============================================================
 # 指数行情
 # ============================================================
 
@@ -573,29 +663,36 @@ def get_csi_dividend_constituents() -> pd.DataFrame:
 
 
 # ============================================================
-# 单票基本面（股息率、PB、ROE）
+# 单票基本面（股息率、PB、PE、市值）
+# 防限频设计（参考 daily_stock_analysis）：
+#   - 全市场快照一次拉取（tushare daily_basic），进程内缓存，绝不逐票重复请求
+#   - 无 token / 失败时降级腾讯批量行情（单次 HTTP ~60 只）
 # ============================================================
 
-@disk_cache(ttl_hours=12)
 def get_fundamentals_snapshot() -> pd.DataFrame:
-    """全市场基本面快照（一次调用）。返回列：code, pe_ttm, pb, dv_ttm, dv_ratio, total_mv。
-    数据源：tushare daily_basic（需 TUSHARE_TOKEN）→ akshare stock_zh_a_spot_em 兜底。
-    """
+    """全市场基本面快照（进程内只拉一次）。列：code, pe_ttm, pb, dv_ttm, dv_ratio, total_mv。"""
+    return _memo("fundamentals_snapshot", _fetch_fundamentals_snapshot)
+
+
+@disk_cache(ttl_hours=12)
+def _fetch_fundamentals_snapshot() -> pd.DataFrame:
+    """实际拉取全市场快照。tushare daily_basic → akshare spot_em 兜底。"""
     import akshare as ak
     from lib.trading_day import is_trading_day, prev_trading_day
 
     today = dt.date.today()
-    # 找最近交易日（非交易日往前推）
-    td = today if is_trading_day(today) else prev_trading_day(today, 1)
+    try:
+        td = today if is_trading_day(today) else prev_trading_day(today, 1)
+    except Exception:
+        td = today
     td_str = td.strftime("%Y%m%d")
 
-    # 方案 1: tushare daily_basic
+    # 方案 1: tushare daily_basic（一次返回全市场，含股息率）
     pro = _get_tushare()
     if pro is not None:
         try:
             raw = pro.daily_basic(trade_date=td_str)
             if raw is None or raw.empty:
-                # 可能当天数据未发布，回退一个交易日
                 td2 = prev_trading_day(td, 1)
                 raw = pro.daily_basic(trade_date=td2.strftime("%Y%m%d"))
             if raw is not None and not raw.empty:
@@ -615,8 +712,8 @@ def get_fundamentals_snapshot() -> pd.DataFrame:
     try:
         raw = ak.stock_zh_a_spot_em()
         if raw is not None and not raw.empty:
-            def _col(name_candidates):
-                for c in name_candidates:
+            def _col(cands):
+                for c in cands:
                     if c in raw.columns:
                         return c
                 return None
@@ -638,19 +735,42 @@ def get_fundamentals_snapshot() -> pd.DataFrame:
     return pd.DataFrame()
 
 
-@disk_cache(ttl_hours=12)
-def get_stock_fundamentals(code: str) -> pd.DataFrame:
-    """单票关键指标：股息率 TTM、PB、PE-TTM、总市值。返回单行 DataFrame。
-    从全市场快照中查找（避免逐票调接口）。
+def get_batch_fundamentals(codes: List[str]) -> pd.DataFrame:
+    """批量获取一组股票的基本面，返回以 code 为索引的 DataFrame。
+
+    数据源优先级：
+      1. tushare 全市场快照（含 dv_ttm 股息率）
+      2. 腾讯批量行情（pe/pb/市值/现价，无股息率，但绝不逐票、频率极低）
+    列：pe_ttm, pb, dv_ttm, dv_ratio, total_mv, price, name（视来源而定）。
     """
-    pure = code.split(".")[0].zfill(6)
+    codes = [c.split(".")[0].zfill(6) for c in codes]
+    codes = list(dict.fromkeys(codes))
+    if not codes:
+        return pd.DataFrame()
+    wanted = set(codes)
+
     snap = get_fundamentals_snapshot()
-    if snap.empty:
+    if not snap.empty:
+        sub = snap[snap["code"].isin(wanted)]
+        # 覆盖率够就用快照（可能缺个别停牌票，交给腾讯补）
+        if len(sub) >= max(1, int(len(codes) * 0.6)):
+            return sub.set_index("code")
+
+    # 降级：腾讯批量行情
+    tq = get_tencent_batch_quotes(codes)
+    if not tq.empty:
+        return tq.set_index("code")
+    return pd.DataFrame()
+
+
+def get_stock_fundamentals(code: str) -> pd.DataFrame:
+    """单票关键指标（兼容旧调用）。内部走批量快照，不逐票请求。"""
+    pure = code.split(".")[0].zfill(6)
+    df = get_batch_fundamentals([pure])
+    if df.empty or pure not in df.index:
         return pd.DataFrame()
-    row = snap[snap["code"] == pure]
-    if row.empty:
-        return pd.DataFrame()
-    return row.head(1).reset_index(drop=True)
+    row = df.loc[[pure]].reset_index()
+    return row
 
 
 # ============================================================
