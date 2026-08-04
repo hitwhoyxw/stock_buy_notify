@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import pandas as pd
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.paths import DATA_DIR, SKILLS_DIR, ensure_dirs
@@ -46,44 +48,46 @@ SKILL_INPUT = DATA_DIR / "skill_input_T4C.md"
 # ============================================================
 
 def prepare_input(codes: List[str]) -> Path:
-    """为给定股票代码列表拉取财报关键段落，组装成 skill 需要的输入文件。"""
-    import akshare as ak
+    """为给定股票代码列表批量拉取财报关键数据，组装成 skill 需要的输入文件。
+
+    防超时设计：全程约 5 次 HTTP 调用（腾讯行情批量 + yjbb 全市场一次 +
+    yjyg 全市场至多两次），绝不逐票请求。
+    """
+    from lib.data_fetch import (get_tencent_batch_quotes, get_yjbb_snapshot,
+                                get_yjyg_snapshot)
+
+    codes = [c.strip().split(".")[0].zfill(6) for c in codes if c.strip()]
+    print(f"[T4-prepare] 批量拉取 {len(codes)} 只股票数据（行情+业绩报表+业绩预告）...")
+    quotes = get_tencent_batch_quotes(codes)
+    quotes = quotes.set_index("code") if not quotes.empty else pd.DataFrame()
+    yjbb = get_yjbb_snapshot()
+    yjbb = yjbb.set_index("code") if not yjbb.empty else pd.DataFrame()
+    yjyg = get_yjyg_snapshot()
+    yjyg = yjyg.set_index("code") if not yjyg.empty else pd.DataFrame()
+
+    period = str(yjbb["period"].iloc[0]) if (not yjbb.empty and "period" in yjbb.columns) else "未知"
 
     sections: List[str] = []
     for code in codes:
-        pure = code.strip().split(".")[0]
-        try:
-            # 拉取最新公告关键段落（使用 stock_notice_report）
-            # akshare 接口随版本变动，此处做 best-effort
-            info = _get_stock_info(pure)
-            name = info.get("name", pure)
-            industry = info.get("industry", "未知")
+        name = industry = ""
+        if not quotes.empty and code in quotes.index:
+            name = str(quotes.loc[code].get("name", "") or "")
+        if not yjbb.empty and code in yjbb.index:
+            industry = str(yjbb.loc[code].get("industry", "") or "")
 
-            # 尝试获取最近的业绩摘要/管理层讨论
-            text_block = _fetch_latest_report_excerpt(pure)
-            if not text_block:
-                text_block = f"（{name} 暂无可用财报摘要数据，请手动补充）"
+        text_block = _build_report_text(code, yjbb, yjyg)
+        if not text_block:
+            text_block = f"（{name or code} 暂无可用财报数据，请手动补充）"
 
-            section = (
-                f"=== {pure} · {name} · {industry} ===\n"
-                f"数据来源: 自动抓取（akshare）\n"
-                f"公开日期: {dt.date.today().isoformat()}\n"
-                f"------\n"
-                f"{text_block}\n"
-                f"------\n"
-            )
-            sections.append(section)
-            print(f"[T4-prepare] ✓ {pure} {name}")
-        except Exception as e:
-            print(f"[T4-prepare] ✗ {pure} 抓取失败：{e}", file=sys.stderr)
-            sections.append(
-                f"=== {pure} · ? · ? ===\n"
-                f"数据来源: 抓取失败\n"
-                f"公开日期: {dt.date.today().isoformat()}\n"
-                f"------\n"
-                f"（抓取失败：{e}，请手动补充）\n"
-                f"------\n"
-            )
+        sections.append(
+            f"=== {code} · {name or '?'} · {industry or '未知'} ===\n"
+            f"数据来源: 东财业绩报表/业绩预告（批量抓取）\n"
+            f"报告期: {period}；生成日期: {dt.date.today().isoformat()}\n"
+            f"------\n"
+            f"{text_block}\n"
+            f"------\n"
+        )
+        print(f"[T4-prepare] ✓ {code} {name}")
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     content = "\n\n".join(sections)
@@ -93,62 +97,50 @@ def prepare_input(codes: List[str]) -> Path:
     return SKILL_INPUT
 
 
-def _get_stock_info(code: str) -> Dict[str, str]:
-    """获取个股基本信息（名称、行业）。"""
+def _fmt_yi(v: Any) -> str:
+    """金额（元）→ 亿元，保留 2 位；非数值返回空串。"""
     try:
-        import akshare as ak
-        df = ak.stock_individual_info_em(symbol=code)
-        info = {}
-        if df is not None and not df.empty:
-            for _, row in df.iterrows():
-                key = str(row.iloc[0]) if len(row) > 0 else ""
-                val = str(row.iloc[1]) if len(row) > 1 else ""
-                if "名称" in key or "stock_name" in key.lower():
-                    info["name"] = val
-                elif "行业" in key or "industry" in key.lower():
-                    info["industry"] = val
-        return info
-    except Exception:
-        return {}
+        return f"{float(v) / 1e8:.2f}亿"
+    except (ValueError, TypeError):
+        return ""
 
 
-def _fetch_latest_report_excerpt(code: str) -> str:
-    """尝试抓取最新财报/公告的管理层讨论节选。
+def _build_report_text(code: str, yjbb: "pd.DataFrame", yjyg: "pd.DataFrame") -> str:
+    """从批量快照中拼出单只票的财报要点文本（无网络调用）。"""
+    import math
 
-    注意：akshare 的公告接口变动频繁；这里做 best-effort，
-    如果接口不可用返回空字符串由用户手动补充。
-    """
-    try:
-        import akshare as ak
-        # 尝试拉取最新业绩预告
-        df = ak.stock_yjyg_em(date=dt.date.today().strftime("%Y%m%d")[:6])
-        if df is not None and not df.empty:
-            row = df[df.iloc[:, 0].astype(str).str.contains(code)]
-            if not row.empty:
-                # 拼接预告内容
-                cols = [c for c in row.columns if "摘要" in c or "内容" in c or "变动" in c]
-                texts = [str(row.iloc[0][c]) for c in cols if str(row.iloc[0][c]) != "nan"]
-                if texts:
-                    return "\n".join(texts)
-    except Exception:
-        pass
+    lines: List[str] = []
+    if not yjbb.empty and code in yjbb.index:
+        r = yjbb.loc[code]
 
-    try:
-        import akshare as ak
-        # 尝试拉取最新研报摘要
-        df = ak.stock_research_report_em(symbol=code)
-        if df is not None and not df.empty:
-            # 取最新 3 条研报标题和观点
-            recent = df.head(3)
-            lines = []
-            for _, row in recent.iterrows():
-                title = str(row.get("报告名称", row.get("title", "")))
-                lines.append(title)
-            return "\n".join(lines) if lines else ""
-    except Exception:
-        pass
+        def _num(col):
+            try:
+                v = float(r.get(col))
+                return v if not math.isnan(v) else None
+            except (ValueError, TypeError):
+                return None
 
-    return ""
+        parts = []
+        if (rev := _fmt_yi(_num("revenue"))):
+            yoy = _num("rev_yoy")
+            parts.append(f"营业收入 {rev}" + (f"（同比 {yoy:+.1f}%）" if yoy is not None else ""))
+        if (np := _fmt_yi(_num("np"))):
+            yoy = _num("np_yoy")
+            parts.append(f"净利润 {np}" + (f"（同比 {yoy:+.1f}%）" if yoy is not None else ""))
+        if (roe := _num("roe")) is not None:
+            parts.append(f"ROE {roe:.2f}%")
+        if (gm := _num("gross_margin")) is not None:
+            parts.append(f"毛利率 {gm:.1f}%")
+        if (ocf := _num("ocf_ps")) is not None:
+            parts.append(f"每股经营现金流 {ocf:.2f}")
+        if parts:
+            lines.append("业绩报表: " + "；".join(parts))
+
+    if not yjyg.empty and code in yjyg.index:
+        excerpt = str(yjyg.loc[code].get("excerpt", "") or "")
+        if excerpt:
+            lines.append("业绩预告: " + excerpt)
+    return "\n".join(lines)
 
 
 # ============================================================

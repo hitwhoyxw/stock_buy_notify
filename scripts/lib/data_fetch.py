@@ -906,6 +906,112 @@ def _fetch_profit_quality_snapshot() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+# ============================================================
+# T4 输入准备用批量快照（业绩报表 + 业绩预告）
+# 无论多少只票：yjbb 一次全市场、yjyg 最多两次全市场，绝不逐票。
+# ============================================================
+
+def get_yjbb_snapshot() -> pd.DataFrame:
+    """最新已完整披露报告期的全市场业绩报表（进程内只拉一次）。
+    列：code, industry, revenue, rev_yoy, np, np_yoy, roe, ocf_ps,
+        gross_margin, period。"""
+    return _memo("yjbb_snapshot", _fetch_yjbb_snapshot)
+
+
+@disk_cache(ttl_hours=24)
+def _fetch_yjbb_snapshot() -> pd.DataFrame:
+    import akshare as ak
+
+    y, m = dt.date.today().year, dt.date.today().month
+    if m >= 11:
+        period = f"{y}0930"
+    elif m >= 9:
+        period = f"{y}0630"
+    elif m >= 5:
+        period = f"{y}0331"
+    else:
+        period = f"{y - 1}1231"
+    try:
+        raw = ak.stock_yjbb_em(date=period)
+    except Exception as e:
+        print(f"[data_fetch] stock_yjbb_em({period}) 失败：{e}", file=sys.stderr)
+        return pd.DataFrame()
+    if raw is None or raw.empty:
+        return pd.DataFrame()
+
+    def _col(*cands: str) -> Optional[str]:
+        for cand in cands:
+            hit = next((c for c in raw.columns if cand in c), None)
+            if hit:
+                return hit
+        return None
+
+    c_code = _col("股票代码")
+    if not c_code:
+        return pd.DataFrame()
+    out = pd.DataFrame({"code": raw[c_code].astype(str).str.zfill(6)})
+    for key, cands in [
+        ("industry", ("所处行业", "行业")),
+        ("revenue", ("营业收入-营业收入", "营业收入")),
+        ("rev_yoy", ("营业收入-同比增长",)),
+        ("np", ("净利润-净利润",)),
+        ("np_yoy", ("净利润-同比增长",)),
+        ("roe", ("净资产收益率",)),
+        ("ocf_ps", ("经营现金流",)),
+        ("gross_margin", ("销售毛利率",)),
+    ]:
+        c = _col(*cands)
+        if c:
+            out[key] = raw[c] if key == "industry" \
+                else pd.to_numeric(raw[c], errors="coerce")
+    out["period"] = period
+    return out.drop_duplicates("code").reset_index(drop=True)
+
+
+def get_yjyg_snapshot() -> pd.DataFrame:
+    """最新业绩预告（进程内只拉一次）。列：code, excerpt（预告要点拼接文本）。"""
+    return _memo("yjyg_snapshot", _fetch_yjyg_snapshot)
+
+
+@disk_cache(ttl_hours=24)
+def _fetch_yjyg_snapshot() -> pd.DataFrame:
+    import akshare as ak
+
+    y, m = dt.date.today().year, dt.date.today().month
+    if m >= 11:
+        cands = [f"{y}0930", f"{y}0630"]
+    elif m >= 9:
+        cands = [f"{y}0630", f"{y}0331"]
+    elif m >= 5:
+        cands = [f"{y}0331", f"{y - 1}1231"]
+    else:
+        cands = [f"{y - 1}1231", f"{y - 1}0930"]
+
+    for period in cands:
+        try:
+            raw = ak.stock_yjyg_em(date=period)
+        except Exception as e:
+            print(f"[data_fetch] stock_yjyg_em({period}) 失败：{e}", file=sys.stderr)
+            continue
+        if raw is None or raw.empty:
+            continue
+        c_code = next((c for c in raw.columns if "股票代码" in c), None)
+        if not c_code:
+            continue
+        keep = [c for c in raw.columns if any(
+            k in c for k in ("预告", "预计", "变动", "摘要", "说明", "净利润"))]
+        rows = []
+        for _, r in raw.iterrows():
+            parts = [f"{c}={r[c]}" for c in keep
+                     if pd.notna(r[c]) and str(r[c]).strip() not in ("", "nan")]
+            if parts:
+                rows.append({"code": str(r[c_code]).zfill(6),
+                             "excerpt": "；".join(parts[:6])})
+        if rows:
+            return pd.DataFrame(rows).drop_duplicates("code").reset_index(drop=True)
+    return pd.DataFrame()
+
+
 def get_batch_fundamentals(codes: List[str]) -> pd.DataFrame:
     """批量获取一组股票的基本面，返回以 code 为索引的 DataFrame。
 
