@@ -970,7 +970,9 @@ def _fetch_yjbb_snapshot() -> pd.DataFrame:
 
 
 def get_yjyg_snapshot() -> pd.DataFrame:
-    """最新业绩预告（进程内只拉一次）。列：code, excerpt（预告要点拼接文本）。"""
+    """最新业绩预告（进程内只拉一次）。
+    列：code, name, preview_type, gain_pct, excerpt（业绩变动）,
+        reason（业绩变动原因，供关键词检索）, period。"""
     return _memo("yjyg_snapshot", _fetch_yjyg_snapshot)
 
 
@@ -1002,7 +1004,9 @@ def _fetch_yjyg_snapshot() -> pd.DataFrame:
         c_code = next((c for c in raw.columns if "股票代码" in c), None)
         c_type = next((c for c in raw.columns if "预告类型" in c), None)
         c_gain = next((c for c in raw.columns if "变动幅度" in c), None)
-        c_text = next((c for c in raw.columns if "业绩变动" in c and "幅度" not in c), None)
+        c_text = next((c for c in raw.columns if "业绩变动" in c
+                       and "幅度" not in c and "原因" not in c), None)
+        c_reason = next((c for c in raw.columns if "变动原因" in c), None)
         if not c_code or not c_type:
             continue
 
@@ -1024,12 +1028,24 @@ def _fetch_yjyg_snapshot() -> pd.DataFrame:
                 best = best_src.iloc[0]
                 gain = None
             text = str(best[c_text]).strip() if c_text and pd.notna(best[c_text]) else ""
+            reason = ""
+            if c_reason:
+                # 优先取 best 行的原因；为空则取该票任意非空原因
+                cand = best.get(c_reason)
+                if pd.notna(cand) and str(cand).strip():
+                    reason = str(cand).strip()
+                else:
+                    nn = best_src[c_reason].dropna()
+                    nn = nn[nn.astype(str).str.strip() != ""]
+                    if not nn.empty:
+                        reason = str(nn.iloc[0]).strip()
             rows.append({
                 "code": code,
                 "name": str(best.get("股票简称", "") or ""),
                 "preview_type": str(best[c_type]).strip(),
                 "gain_pct": gain,
                 "excerpt": text,
+                "reason": reason,
                 "period": period,
             })
         if rows:

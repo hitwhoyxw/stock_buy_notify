@@ -9,7 +9,8 @@
     # ingest（读 LLM 产出写台账）
     python scripts/t4_ingest.py
 
-    # input 准备（自动发现高增长池：业绩预告+业绩报表，无需人工填代码）
+    # input 准备（自动发现扫描池：关键词命中 + 预告/报表高增长，无需人工填代码；
+    # 报告头部附板块热度榜——同行业高增长家数，用于评估板块级景气）
     python scripts/t4_ingest.py --prepare
 
     # input 准备（手动指定股票，覆盖自动发现）
@@ -19,6 +20,8 @@ CLI 参数：
     --prepare          : 运行输入准备阶段
     --codes            : 逗号分隔的股票代码（留空则自动发现扫描池）
     --top-n            : 自动发现扫描池上限（默认 30）
+    --min-gain         : 预告/报表净利同比门槛（%，默认 50）
+    --kw-cap           : 关键词源入池上限（默认 12）
     --input-file       : 覆盖 LLM 输出路径（默认 data/skill_output_T4C.md）
     --dry-run          : 不写入台账，只打印
 """
@@ -48,54 +51,212 @@ SKILL_INPUT = DATA_DIR / "skill_input_T4C.md"
 
 
 # ============================================================
-# Phase 1：输入准备（从 akshare 抓财报摘要 → skill_input_T4C.md）
+# Phase 1：输入准备（自动发现 + 关键词扫描 + 板块热度 → skill_input_T4C.md）
 # ============================================================
 
-def discover_scan_pool(top_n: int = 30, min_gain: float = 50.0) -> List[str]:
-    """自动发现 T4 扫描池，无需人工填写股票代码。
+def _load_text_signal_rules():
+    """从 02_strategy_config.yaml 读 bucket_C.text_signal（唯一关键词来源）。
 
-    数据源（全市场批量快照，全程约 3 次 HTTP 调用）：
-      1. 业绩预告快照：正面预告（预增/略增/扭亏/续盈/减亏）且利润变动幅度 ≥ min_gain%
-      2. 业绩报表快照：净利润同比 ≥ 50% 且营收同比为正（补充已披露正式报告、
-         未发预告的高增长票）
-    优先级：预告票在前（预告含增量信息），再按报表增速补足，去重后取前 top_n。
+    返回 (categories, neg_keywords, penalty, min_score)：
+      categories = {类别名: (权重, [关键词])}
+    """
+    from lib.config import get_config
+    ts = get_config().get("bucket_C", {}).get("text_signal", {})
+    cats: Dict[str, Any] = {}
+    for cname, cdef in (ts.get("categories") or {}).items():
+        cats[cname] = (float(cdef.get("weight", 1.0)),
+                       list(cdef.get("keywords") or []))
+    neg = ts.get("negative_keywords") or {}
+    return (cats, list(neg.get("keywords") or []),
+            float(neg.get("penalty", -3.0)), float(ts.get("min_weighted_score", 6.0)))
+
+
+def scan_keyword_hits(yjyg_idx: "pd.DataFrame") -> Dict[str, Dict[str, Any]]:
+    """对业绩预告文本（变动原因+变动描述）做 bucket_C 关键词静态匹配。
+
+    入参 yjyg_idx：以 code 为索引的预告快照（需含 reason/excerpt 列）。
+    返回 {code: {"hits": {类别: [关键词]}, "neg": [反向词], "score": 加权分}}，
+    仅含至少命中一个正向关键词的票。打分口径与 t4_c_text_scan skill 一致：
+    sum(各类命中数×权重) + penalty×反向词数。
+    """
+    cats, neg_kws, penalty, _ = _load_text_signal_rules()
+    out: Dict[str, Dict[str, Any]] = {}
+    if yjyg_idx is None or yjyg_idx.empty or not cats:
+        return out
+    for code, r in yjyg_idx.iterrows():
+        text = (str(r.get("reason", "") or "") + "\n"
+                + str(r.get("excerpt", "") or ""))
+        if len(text.strip()) <= 1:
+            continue
+        hits: Dict[str, List[str]] = {}
+        score = 0.0
+        for cname, (w, kws) in cats.items():
+            matched = [k for k in kws if k in text]
+            if matched:
+                hits[cname] = matched
+                score += len(matched) * w
+        neg_hits = [k for k in neg_kws if k in text]
+        score += penalty * len(neg_hits)
+        if hits:
+            out[code] = {"hits": hits, "neg": neg_hits, "score": round(score, 1)}
+    return out
+
+
+def _clean_industry(v: Any) -> str:
+    """东财行业带 Ⅱ/Ⅲ 后缀（申万二级/三级），聚合热度时去掉便于归并。"""
+    s = str(v or "").strip()
+    return s.rstrip("ⅡⅢ").strip() or "未分类"
+
+
+def compute_sector_heat(yjbb_idx: "pd.DataFrame", min_gain: float = 50.0,
+                        top: int = 10) -> "pd.DataFrame":
+    """板块热度：全市场净利同比≥min_gain 的票按行业聚合。
+
+    返回列：industry, count（高增长家数）, median_gain, top_codes（增速前3）。
+    家数越多说明该板块业绩集体爆发，是 C 桶热点板块的核心证据。
+    """
+    if (yjbb_idx is None or yjbb_idx.empty
+            or "np_yoy" not in yjbb_idx.columns or "industry" not in yjbb_idx.columns):
+        return pd.DataFrame()
+    hb = yjbb_idx.dropna(subset=["np_yoy"])
+    hb = hb[hb["np_yoy"] >= min_gain]
+    if hb.empty:
+        return pd.DataFrame()
+    ind = hb["industry"].map(_clean_industry)
+    # 无行业归属的票（多为北交所/次新）不进热度榜，避免"未分类"霸榜
+    keep = ind != "未分类"
+    hb, ind = hb[keep], ind[keep]
+    if hb.empty:
+        return pd.DataFrame()
+    heat = (pd.DataFrame({"industry": ind, "np_yoy": hb["np_yoy"]})
+            .groupby("industry")["np_yoy"]
+            .agg(count="size", median_gain="median")
+            .reset_index()
+            .sort_values(["count", "median_gain"], ascending=False))
+    reps = {}
+    for name in heat["industry"]:
+        sub = hb[ind == name].sort_values("np_yoy", ascending=False)
+        reps[name] = list(sub.index[:3])
+    heat["top_codes"] = heat["industry"].map(reps)
+    return heat.head(top).reset_index(drop=True)
+
+
+def _build_pool_meta(pool: List[str], yjbb_idx: "pd.DataFrame",
+                     yjyg_idx: "pd.DataFrame",
+                     kw_map: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """为池内每只票整理来源标签（关键词/预告增速/报表增速）、行业、名称。"""
+    meta: Dict[str, Dict[str, Any]] = {}
+    for code in pool:
+        m: Dict[str, Any] = {"sources": [], "kw": kw_map.get(code),
+                             "industry": "", "name": ""}
+        if not yjyg_idx.empty and code in yjyg_idx.index:
+            r = yjyg_idx.loc[code]
+            m["name"] = str(r.get("name", "") or "")
+            g = r.get("gain_pct")
+            try:
+                g = float(g)
+                m["sources"].append(f"预告{g:+.0f}%")
+            except (TypeError, ValueError):
+                m["sources"].append(f"预告({r.get('preview_type', '?')})")
+        if not yjbb_idx.empty and code in yjbb_idx.index:
+            row = yjbb_idx.loc[code]
+            g = row.get("np_yoy")
+            try:
+                m["sources"].append(f"报表净利{float(g):+.0f}%")
+            except (TypeError, ValueError):
+                pass
+            m["industry"] = str(row.get("industry", "") or "")
+        if m["kw"]:
+            m["sources"].insert(0, "关键词")
+        meta[code] = m
+    return meta
+
+
+def discover_scan_pool(top_n: int = 30, min_gain: float = 50.0,
+                       kw_cap: int = 12):
+    """自动发现 T4 扫描池（无需人工填写股票代码）。
+
+    三个来源（全部来自全市场批量快照，约 3 次 HTTP 调用）：
+      1. 关键词源：业绩预告"变动原因/变动"文本命中 bucket_C 文本信号关键词
+         （需求/价格/供给），按加权分降序，最多 kw_cap 只；
+      2. 预告增速源：正面预告且利润变动幅度 ≥ min_gain%，按幅度降序；
+      3. 报表增速源：净利同比 ≥ min_gain% 且营收正增长，补足剩余名额。
+    返回 (pool, meta, heat)：
+      pool  股票代码列表（≤top_n）
+      meta  {code: {sources, kw, industry, name}}
+      heat  板块热度 DataFrame（全市场口径，供报告头部展示）
     """
     from lib.data_fetch import get_yjbb_snapshot, get_yjyg_snapshot
+
+    yjyg = get_yjyg_snapshot()
+    yjbb = get_yjbb_snapshot()
+    yjyg_idx = yjyg.set_index("code") if not yjyg.empty else pd.DataFrame()
+    yjbb_idx = yjbb.set_index("code") if not yjbb.empty else pd.DataFrame()
+
+    heat = compute_sector_heat(yjbb_idx, min_gain)
+    kw_map = scan_keyword_hits(yjyg_idx)
 
     pool: List[str] = []
     seen: set = set()
 
-    yjyg = get_yjyg_snapshot()
-    if not yjyg.empty and "gain_pct" in yjyg.columns:
-        hit = yjyg[yjyg["gain_pct"].isna() | (yjyg["gain_pct"] >= min_gain)].copy()
-        hit = hit.sort_values("gain_pct", ascending=False, na_position="last")
-        for code in hit["code"]:
-            if code not in seen:
-                seen.add(code)
-                pool.append(code)
-        print(f"[T4-discover] 业绩预告源：正面预告且变动幅度≥{min_gain:.0f}% 共 {len(hit)} 只")
+    def _add(code: str) -> None:
+        if code not in seen:
+            seen.add(code)
+            pool.append(code)
 
-    yjbb = get_yjbb_snapshot()
-    if not yjbb.empty and "np_yoy" in yjbb.columns:
-        hb = yjbb.dropna(subset=["np_yoy"]).copy()
+    # 来源 1：关键词命中（按加权分、预告幅度降序）
+    def _gain_of(code: str) -> float:
+        if yjyg_idx.empty or code not in yjyg_idx.index:
+            return 0.0
+        g = yjyg_idx.loc[code].get("gain_pct")
+        try:
+            g = float(g)
+            return g if g == g else 0.0  # NaN → 0
+        except (TypeError, ValueError):
+            return 0.0
+
+    kw_items = sorted(kw_map.items(),
+                      key=lambda kv: (kv[1]["score"], _gain_of(kv[0])),
+                      reverse=True)
+    for code, _ in kw_items[:kw_cap]:
+        _add(code)
+    print(f"[T4-discover] 关键词源：预告文本命中 bucket_C 关键词 {len(kw_map)} 只，"
+          f"取前 {min(kw_cap, len(kw_map))} 只")
+
+    # 来源 2：预告增速
+    if not yjyg_idx.empty and "gain_pct" in yjyg_idx.columns:
+        hit = yjyg_idx[yjyg_idx["gain_pct"].isna()
+                       | (yjyg_idx["gain_pct"] >= min_gain)]
+        hit = hit.sort_values("gain_pct", ascending=False, na_position="last")
+        before = len(pool)
+        for code in hit.index:
+            if len(pool) >= top_n:
+                break
+            _add(code)
+        print(f"[T4-discover] 预告增速源：变动幅度≥{min_gain:.0f}% 共 {len(hit)} 只，"
+              f"入池 {len(pool) - before} 只")
+
+    # 来源 3：报表增速补足
+    if len(pool) < top_n and not yjbb_idx.empty and "np_yoy" in yjbb_idx.columns:
+        hb = yjbb_idx.dropna(subset=["np_yoy"])
         rev_col = "rev_yoy" if "rev_yoy" in hb.columns else None
         hb = hb[(hb["np_yoy"] >= min_gain)
                 & (hb[rev_col] > 0 if rev_col else True)]
         hb = hb.sort_values("np_yoy", ascending=False)
         before = len(pool)
-        for code in hb["code"]:
-            if code not in seen:
-                seen.add(code)
-                pool.append(code)
-        print(f"[T4-discover] 业绩报表源：净利同比≥{min_gain:.0f}% 且营收正增长，"
-              f"补充 {len(pool) - before} 只")
+        for code in hb.index:
+            if len(pool) >= top_n:
+                break
+            _add(code)
+        if len(pool) > before:
+            print(f"[T4-discover] 报表增速源：补充 {len(pool) - before} 只")
 
-    pool = pool[:top_n]
+    meta = _build_pool_meta(pool, yjbb_idx, yjyg_idx, kw_map)
     if pool:
         print(f"[T4-discover] 扫描池共 {len(pool)} 只：{','.join(pool)}")
     else:
-        print("[T4-discover] [WARN] 两个数据源均为空，无法自动发现", file=sys.stderr)
-    return pool
+        print("[T4-discover] [WARN] 所有数据源均为空，无法自动发现", file=sys.stderr)
+    return pool, meta, heat
 
 
 def prepare_input(codes: List[str]) -> Path:
@@ -103,6 +264,8 @@ def prepare_input(codes: List[str]) -> Path:
 
     防超时设计：全程约 5 次 HTTP 调用（腾讯行情批量 + yjbb 全市场一次 +
     yjyg 全市场至多两次），绝不逐票请求。
+    文件头部附板块热度榜（全市场净利同比≥50% 按行业聚合），
+    每只票标注来源（关键词/预告/报表）与关键词命中详情。
     """
     from lib.data_fetch import (get_tencent_batch_quotes, get_yjbb_snapshot,
                                 get_yjyg_snapshot)
@@ -112,27 +275,38 @@ def prepare_input(codes: List[str]) -> Path:
     quotes = get_tencent_batch_quotes(codes)
     quotes = quotes.set_index("code") if not quotes.empty else pd.DataFrame()
     yjbb = get_yjbb_snapshot()
-    yjbb = yjbb.set_index("code") if not yjbb.empty else pd.DataFrame()
+    yjbb_idx = yjbb.set_index("code") if not yjbb.empty else pd.DataFrame()
     yjyg = get_yjyg_snapshot()
-    yjyg = yjyg.set_index("code") if not yjyg.empty else pd.DataFrame()
+    yjyg_idx = yjyg.set_index("code") if not yjyg.empty else pd.DataFrame()
 
     period = str(yjbb["period"].iloc[0]) if (not yjbb.empty and "period" in yjbb.columns) else "未知"
 
-    sections: List[str] = []
-    for code in codes:
-        name = industry = ""
-        if not quotes.empty and code in quotes.index:
-            name = str(quotes.loc[code].get("name", "") or "")
-        if not yjbb.empty and code in yjbb.index:
-            industry = str(yjbb.loc[code].get("industry", "") or "")
+    # 关键词命中 + 板块热度（全市场口径）+ 池内来源标签
+    kw_map = scan_keyword_hits(yjyg_idx)
+    heat = compute_sector_heat(yjbb_idx, min_gain=50.0)
+    meta = _build_pool_meta(codes, yjbb_idx, yjyg_idx, kw_map)
 
-        text_block = _build_report_text(code, yjbb, yjyg)
+    header = _build_header(codes, meta, heat, kw_map, yjbb_idx, period)
+
+    sections: List[str] = [header]
+    for code in codes:
+        m = meta.get(code, {})
+        name = m.get("name", "")
+        if not name and not quotes.empty and code in quotes.index:
+            name = str(quotes.loc[code].get("name", "") or "")
+        industry = m.get("industry", "")
+
+        tags = " | 来源: " + "+".join(m.get("sources", [])) if m.get("sources") else ""
+        kw_line = _format_kw_line(m.get("kw"))
+
+        text_block = _build_report_text(code, yjbb_idx, yjyg_idx)
         if not text_block:
             text_block = f"（{name or code} 暂无可用财报数据，请手动补充）"
 
         sections.append(
-            f"=== {code} · {name or '?'} · {industry or '未知'} ===\n"
-            f"数据来源: 东财业绩报表/业绩预告（批量抓取）\n"
+            f"=== {code} · {name or '?'} · {industry or '未知'}{tags} ===\n"
+            + (f"{kw_line}\n" if kw_line else "")
+            + f"数据来源: 东财业绩报表/业绩预告（批量抓取）\n"
             f"报告期: {period}；生成日期: {dt.date.today().isoformat()}\n"
             f"------\n"
             f"{text_block}\n"
@@ -146,6 +320,59 @@ def prepare_input(codes: List[str]) -> Path:
     print(f"\n[T4-prepare] 输入文件已生成：{SKILL_INPUT}")
     print(f"[T4-prepare] 共 {len(codes)} 只，请将内容喂给 LLM（参考 skills/t4_c_text_scan.md）")
     return SKILL_INPUT
+
+
+def _format_kw_line(kw: Optional[Dict[str, Any]]) -> str:
+    """把单票关键词命中渲染成一行：命中类别[词…]、加权分、反向词。"""
+    if not kw:
+        return ""
+    parts = []
+    for cname, kws in kw["hits"].items():
+        parts.append(f"{cname}[{'、'.join(kws)}]")
+    neg = "、".join(kw["neg"]) if kw["neg"] else "无"
+    return (f"关键词命中: {' '.join(parts)}；加权分 {kw['score']}"
+            f"（LLM 复核口径 ≥6.0 且三类齐全）；反向词: {neg}")
+
+
+def _build_header(codes: List[str], meta: Dict[str, Dict[str, Any]],
+                  heat: "pd.DataFrame", kw_map: Dict[str, Dict[str, Any]],
+                  yjbb_idx: "pd.DataFrame", period: str) -> str:
+    """报告头部：扫描池构成 + 板块热度榜。"""
+    n_kw = sum(1 for c in codes if meta.get(c, {}).get("kw"))
+    lines = [
+        "# T4 财报季扫描输入（自动发现）",
+        f"生成日期: {dt.date.today().isoformat()}；报告期: {period}；"
+        f"扫描池 {len(codes)} 只（其中关键词命中 {n_kw} 只）",
+        "",
+        "关键词口径: 业绩预告『变动原因/变动』文本匹配 bucket_C.text_signal "
+        "需求/价格/供给关键词；加权分=Σ(命中数×权重)−3×反向词数，最终判定以 LLM 复核为准。",
+    ]
+
+    if not heat.empty:
+        total = 0
+        n_ind = 0
+        if not yjbb_idx.empty and "np_yoy" in yjbb_idx.columns:
+            hb = yjbb_idx.dropna(subset=["np_yoy"])
+            hb = hb[hb["np_yoy"] >= 50.0]
+            total = len(hb)
+            if "industry" in hb.columns:
+                inds = hb["industry"].map(_clean_industry)
+                n_ind = int(inds[inds != "未分类"].nunique())
+        lines += [
+            "",
+            f"## 板块热度榜（全市场净利同比≥50% 共 {total} 只、"
+            f"分布在 {n_ind} 个行业；按高增长家数排序，前 {len(heat)} 名）",
+            "同一板块多家公司业绩集体爆发 = 板块级景气，是 C 桶热点判定的核心证据；"
+            "单票不可买时可沿同板块寻找替代标的。",
+            "",
+        ]
+        for i, r in heat.iterrows():
+            reps = "/".join(r["top_codes"])
+            lines.append(
+                f"{i + 1}. {r['industry']} — 高增长 {int(r['count'])} 家 | "
+                f"中位增速 {r['median_gain']:+.0f}% | 代表: {reps}"
+            )
+    return "\n".join(lines)
 
 
 def _fmt_yi(v: Any) -> str:
@@ -188,9 +415,13 @@ def _build_report_text(code: str, yjbb: "pd.DataFrame", yjyg: "pd.DataFrame") ->
             lines.append("业绩报表: " + "；".join(parts))
 
     if not yjyg.empty and code in yjyg.index:
-        excerpt = str(yjyg.loc[code].get("excerpt", "") or "")
+        r = yjyg.loc[code]
+        excerpt = str(r.get("excerpt", "") or "")
         if excerpt:
             lines.append("业绩预告: " + excerpt)
+        reason = str(r.get("reason", "") or "")
+        if reason:
+            lines.append("变动原因: " + reason)
     return "\n".join(lines)
 
 
@@ -366,6 +597,10 @@ def main() -> int:
                         help="逗号分隔股票代码（prepare 模式；留空则自动发现）")
     parser.add_argument("--top-n", type=int, default=30,
                         help="自动发现模式下扫描池上限（默认 30）")
+    parser.add_argument("--min-gain", type=float, default=50.0,
+                        help="预告/报表净利同比门槛（%%，默认 50）")
+    parser.add_argument("--kw-cap", type=int, default=12,
+                        help="关键词源入池上限（默认 12）")
     parser.add_argument("--input-file", type=Path, default=None,
                         help="覆盖 LLM 输出文件路径")
     parser.add_argument("--dry-run", action="store_true",
@@ -375,8 +610,10 @@ def main() -> int:
     if args.prepare:
         codes = [c.strip() for c in args.codes.split(",") if c.strip()]
         if not codes:
-            print("[T4] 未指定 --codes，启用自动发现（业绩预告+业绩报表高增长池）...")
-            codes = discover_scan_pool(top_n=args.top_n)
+            print("[T4] 未指定 --codes，启用自动发现"
+                  "（关键词+预告增速+报表增速）...")
+            codes, _meta, _heat = discover_scan_pool(
+                top_n=args.top_n, min_gain=args.min_gain, kw_cap=args.kw_cap)
             if not codes:
                 print("[T4] 自动发现失败：预告/报表数据均为空，"
                       "请手动 --codes 指定或稍后重试", file=sys.stderr)
