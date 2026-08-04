@@ -62,21 +62,12 @@ jobs:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
         run: |
           CODES="${{ github.event.inputs.codes }}"
-          if [ -z "$CODES" ]; then
-            echo "未指定 codes，使用中证红利前 20 成分作为 C 桶候选扫描池"
-            python -c "
-          import sys; sys.path.insert(0,'scripts')
-          from lib.data_fetch import get_csi_dividend_constituents
-          df = get_csi_dividend_constituents()
-          if not df.empty:
-              print(','.join(df['code'].head(20).tolist()))
-          " > /tmp/codes.txt
-            CODES=$(cat /tmp/codes.txt)
-          fi
           if [ -n "$CODES" ]; then
+            echo "Using manual codes: $CODES"
             python scripts/t4_ingest.py --prepare --codes "$CODES"
           else
-            echo "无可用代码，跳过"
+            echo "No codes given, auto-discovering scan pool (yjyg + yjbb)"
+            python scripts/t4_ingest.py --prepare
           fi
 
       - name: 回写 T4 输入文件

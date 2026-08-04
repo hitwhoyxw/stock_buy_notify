@@ -952,8 +952,9 @@ def _fetch_yjbb_snapshot() -> pd.DataFrame:
     out = pd.DataFrame({"code": raw[c_code].astype(str).str.zfill(6)})
     for key, cands in [
         ("industry", ("所处行业", "行业")),
-        ("revenue", ("营业收入-营业收入", "营业收入")),
-        ("rev_yoy", ("营业收入-同比增长",)),
+        ("revenue", ("营业总收入-营业总收入", "营业收入-营业收入",
+                     "营业总收入", "营业收入")),
+        ("rev_yoy", ("营业总收入-同比增长", "营业收入-同比增长")),
         ("np", ("净利润-净利润",)),
         ("np_yoy", ("净利润-同比增长",)),
         ("roe", ("净资产收益率",)),
@@ -975,6 +976,8 @@ def get_yjyg_snapshot() -> pd.DataFrame:
 
 @disk_cache(ttl_hours=24)
 def _fetch_yjyg_snapshot() -> pd.DataFrame:
+    """业绩预告聚合：每股一行。仅保留正面预告（预增/略增/扭亏/续盈/减亏）。
+    gain_pct 取利润类指标变动幅度的最大值；excerpt 取对应业绩变动原文。"""
     import akshare as ak
 
     y, m = dt.date.today().year, dt.date.today().month
@@ -987,6 +990,7 @@ def _fetch_yjyg_snapshot() -> pd.DataFrame:
     else:
         cands = [f"{y - 1}1231", f"{y - 1}0930"]
 
+    positive_types = {"预增", "略增", "扭亏", "续盈", "减亏"}
     for period in cands:
         try:
             raw = ak.stock_yjyg_em(date=period)
@@ -996,19 +1000,40 @@ def _fetch_yjyg_snapshot() -> pd.DataFrame:
         if raw is None or raw.empty:
             continue
         c_code = next((c for c in raw.columns if "股票代码" in c), None)
-        if not c_code:
+        c_type = next((c for c in raw.columns if "预告类型" in c), None)
+        c_gain = next((c for c in raw.columns if "变动幅度" in c), None)
+        c_text = next((c for c in raw.columns if "业绩变动" in c and "幅度" not in c), None)
+        if not c_code or not c_type:
             continue
-        keep = [c for c in raw.columns if any(
-            k in c for k in ("预告", "预计", "变动", "摘要", "说明", "净利润"))]
+
+        raw = raw[raw[c_type].astype(str).str.strip().isin(positive_types)].copy()
+        if raw.empty:
+            continue
+        raw["_gain"] = pd.to_numeric(raw.get(c_gain), errors="coerce") if c_gain else None
+        raw["_is_profit"] = raw["预测指标"].astype(str).str.contains("净利润") \
+            if "预测指标" in raw.columns else True
+
         rows = []
-        for _, r in raw.iterrows():
-            parts = [f"{c}={r[c]}" for c in keep
-                     if pd.notna(r[c]) and str(r[c]).strip() not in ("", "nan")]
-            if parts:
-                rows.append({"code": str(r[c_code]).zfill(6),
-                             "excerpt": "；".join(parts[:6])})
+        for code, grp in raw.groupby(raw[c_code].astype(str).str.zfill(6)):
+            profit_rows = grp[grp["_is_profit"]]
+            best_src = profit_rows if not profit_rows.empty else grp
+            if c_gain and best_src["_gain"].notna().any():
+                best = best_src.loc[best_src["_gain"].idxmax()]
+                gain = float(best["_gain"])
+            else:
+                best = best_src.iloc[0]
+                gain = None
+            text = str(best[c_text]).strip() if c_text and pd.notna(best[c_text]) else ""
+            rows.append({
+                "code": code,
+                "name": str(best.get("股票简称", "") or ""),
+                "preview_type": str(best[c_type]).strip(),
+                "gain_pct": gain,
+                "excerpt": text,
+                "period": period,
+            })
         if rows:
-            return pd.DataFrame(rows).drop_duplicates("code").reset_index(drop=True)
+            return pd.DataFrame(rows).reset_index(drop=True)
     return pd.DataFrame()
 
 

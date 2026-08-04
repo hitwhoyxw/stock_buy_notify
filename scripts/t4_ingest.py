@@ -9,12 +9,16 @@
     # ingest（读 LLM 产出写台账）
     python scripts/t4_ingest.py
 
-    # input 准备（抓财报节选产出供 LLM 消费的输入）
+    # input 准备（自动发现高增长池：业绩预告+业绩报表，无需人工填代码）
+    python scripts/t4_ingest.py --prepare
+
+    # input 准备（手动指定股票，覆盖自动发现）
     python scripts/t4_ingest.py --prepare --codes 600028,601088,601225
 
 CLI 参数：
     --prepare          : 运行输入准备阶段
-    --codes            : 逗号分隔的股票代码（prepare 模式下使用）
+    --codes            : 逗号分隔的股票代码（留空则自动发现扫描池）
+    --top-n            : 自动发现扫描池上限（默认 30）
     --input-file       : 覆盖 LLM 输出路径（默认 data/skill_output_T4C.md）
     --dry-run          : 不写入台账，只打印
 """
@@ -46,6 +50,53 @@ SKILL_INPUT = DATA_DIR / "skill_input_T4C.md"
 # ============================================================
 # Phase 1：输入准备（从 akshare 抓财报摘要 → skill_input_T4C.md）
 # ============================================================
+
+def discover_scan_pool(top_n: int = 30, min_gain: float = 50.0) -> List[str]:
+    """自动发现 T4 扫描池，无需人工填写股票代码。
+
+    数据源（全市场批量快照，全程约 3 次 HTTP 调用）：
+      1. 业绩预告快照：正面预告（预增/略增/扭亏/续盈/减亏）且利润变动幅度 ≥ min_gain%
+      2. 业绩报表快照：净利润同比 ≥ 50% 且营收同比为正（补充已披露正式报告、
+         未发预告的高增长票）
+    优先级：预告票在前（预告含增量信息），再按报表增速补足，去重后取前 top_n。
+    """
+    from lib.data_fetch import get_yjbb_snapshot, get_yjyg_snapshot
+
+    pool: List[str] = []
+    seen: set = set()
+
+    yjyg = get_yjyg_snapshot()
+    if not yjyg.empty and "gain_pct" in yjyg.columns:
+        hit = yjyg[yjyg["gain_pct"].isna() | (yjyg["gain_pct"] >= min_gain)].copy()
+        hit = hit.sort_values("gain_pct", ascending=False, na_position="last")
+        for code in hit["code"]:
+            if code not in seen:
+                seen.add(code)
+                pool.append(code)
+        print(f"[T4-discover] 业绩预告源：正面预告且变动幅度≥{min_gain:.0f}% 共 {len(hit)} 只")
+
+    yjbb = get_yjbb_snapshot()
+    if not yjbb.empty and "np_yoy" in yjbb.columns:
+        hb = yjbb.dropna(subset=["np_yoy"]).copy()
+        rev_col = "rev_yoy" if "rev_yoy" in hb.columns else None
+        hb = hb[(hb["np_yoy"] >= min_gain)
+                & (hb[rev_col] > 0 if rev_col else True)]
+        hb = hb.sort_values("np_yoy", ascending=False)
+        before = len(pool)
+        for code in hb["code"]:
+            if code not in seen:
+                seen.add(code)
+                pool.append(code)
+        print(f"[T4-discover] 业绩报表源：净利同比≥{min_gain:.0f}% 且营收正增长，"
+              f"补充 {len(pool) - before} 只")
+
+    pool = pool[:top_n]
+    if pool:
+        print(f"[T4-discover] 扫描池共 {len(pool)} 只：{','.join(pool)}")
+    else:
+        print("[T4-discover] [WARN] 两个数据源均为空，无法自动发现", file=sys.stderr)
+    return pool
+
 
 def prepare_input(codes: List[str]) -> Path:
     """为给定股票代码列表批量拉取财报关键数据，组装成 skill 需要的输入文件。
@@ -87,7 +138,7 @@ def prepare_input(codes: List[str]) -> Path:
             f"{text_block}\n"
             f"------\n"
         )
-        print(f"[T4-prepare] ✓ {code} {name}")
+        print(f"[T4-prepare] [OK] {code} {name}")
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     content = "\n\n".join(sections)
@@ -244,7 +295,7 @@ def ingest(path: Path, dry_run: bool = False) -> int:
         else:
             sid = append_signal(record)
             signals.append(sid)
-            print(f"  ✓ {sid} | {record['标的代码']} {record['标的名称']} "
+            print(f"  [OK] {sid} | {record['标的代码']} {record['标的名称']} "
                   f"score={record['触发时指标值']}")
         written += 1
 
@@ -312,7 +363,9 @@ def main() -> int:
     parser.add_argument("--prepare", action="store_true",
                         help="运行输入准备阶段（抓取财报摘要）")
     parser.add_argument("--codes", type=str, default="",
-                        help="逗号分隔股票代码（prepare 模式）")
+                        help="逗号分隔股票代码（prepare 模式；留空则自动发现）")
+    parser.add_argument("--top-n", type=int, default=30,
+                        help="自动发现模式下扫描池上限（默认 30）")
     parser.add_argument("--input-file", type=Path, default=None,
                         help="覆盖 LLM 输出文件路径")
     parser.add_argument("--dry-run", action="store_true",
@@ -322,8 +375,12 @@ def main() -> int:
     if args.prepare:
         codes = [c.strip() for c in args.codes.split(",") if c.strip()]
         if not codes:
-            print("[T4] --prepare 模式必须指定 --codes", file=sys.stderr)
-            return 1
+            print("[T4] 未指定 --codes，启用自动发现（业绩预告+业绩报表高增长池）...")
+            codes = discover_scan_pool(top_n=args.top_n)
+            if not codes:
+                print("[T4] 自动发现失败：预告/报表数据均为空，"
+                      "请手动 --codes 指定或稍后重试", file=sys.stderr)
+                return 1
         prepare_input(codes)
         return 0
 
