@@ -2,7 +2,7 @@
 
 三桶各自的筛选逻辑：
 - A 桶（红利逆向）：中证红利成分 → 股息率/PB/ROE 过滤 → quality_score 排序
-- B 桶（成长）：创业板指成分或全 A 高增长 → 增速/PEG/现金流过滤 → 成长因子排序
+- B 桶（成长）：中证1000成分 → 市值/CAGR/增速/ROE/现金流/PEG 过滤 → 1/PEG 排序
 - C 桶（热点周期）：T4 文本判定 PASS → 数据验证（单季扣非 + 合同负债 + 价格指数）
 
 产出：data/skill_input_T6.md（LLM 消费用，格式对齐 skills/t6_semantic_ranking.md）
@@ -30,8 +30,11 @@ from lib.paths import DATA_DIR, ensure_dirs
 from lib.config import get_config, get_yaml_tag
 from lib.data_fetch import (
     get_csi_dividend_constituents,
+    get_csi1000_constituents,
     get_batch_fundamentals,
     get_profit_quality_snapshot,
+    get_growth_snapshot,
+    get_yjbb_snapshot,
     get_dividend_yield_percentile,
     get_index_daily,
 )
@@ -177,108 +180,189 @@ def screen_bucket_a() -> pd.DataFrame:
 # ============================================================
 
 def screen_bucket_b() -> pd.DataFrame:
-    """B 桶硬门槛筛选。
+    """B 桶硬门槛筛选（中证1000 中盘成长股）。
 
-    条件：
-    - 营收 CAGR 3年 ≥ 15%
-    - 净利 CAGR 3年 ≥ 20%
-    - PEG ≤ 1.5
-    - 经营现金流/净利润 ≥ 0.5
-    - 商誉/净资产 ≤ 30%
+    候选池：中证1000（000852）全部成分股，剔除 ST/退。
+    硬门槛（阈值读 config bucket_B.batch_screen，默认值如下）：
+    - 总市值 ≥ 50 亿（统一亿元口径）
+    - 净利 3 年 CAGR ≥ 20%（2022→2025 年报首末期水平，基期/末期净利均须为正）
+    - 营收 3 年 CAGR ≥ 15%
+    - 最新报告期净利同比 ≥ 15%（成长未熄火）
+    - ROE 年化 ≥ 8%
+    - 近 3 年无单季亏损
+    - 最新年报 经营现金流/净利润 ≥ 0.5 且每股经营现金流 > 0（成长有现金支撑）
+    - 0 < PE(TTM) ≤ 60
+    - PEG ≤ 1.2（PEG = PE ÷ min(净利CAGR, 100)，封顶防低基数虚高）
+    核心数据缺失 → 剔除（不放行），缺哪一项在统计中打印。
+    排序值 = min(净利CAGR, 100) / PE（即 1/PEG）降序。
 
-    排序值 = (revenue_cagr × profit_cagr) / PEG
-    
-    注意：由于 akshare 免费接口无法直接拉 CAGR/PEG 等，这里使用简化逻辑。
-    完整版需要 tushare pro 接口或其他付费源。
+    批量口径：成分/业绩/现金流全部来自全市场快照 merge，绝不逐票请求。
+    非批量指标（商誉、应收、研发、渗透率、PE 历史分位）留 LLM 层验证。
     """
-    print("[T6-B] B 桶成长筛选（简化版：基于创业板指成分 + 基本面）...")
+    print("[T6-B] 中证1000 中盘成长筛选...")
 
-    # 使用创业板指成分作为候选池（399006 是深证指数，用 index_stock_cons）
-    cons = pd.DataFrame()
-    try:
-        import akshare as ak
-        raw = ak.index_stock_cons(symbol="399006")
-        if raw is not None and not raw.empty:
-            cons = raw
-    except Exception as e:
-        print(f"[T6-B] ⚠️ 创业板指成分拉取失败：{e}", file=sys.stderr)
-
+    cons = get_csi1000_constituents()
     if cons.empty:
-        print("[T6-B] ⚠️ 创业板指成分为空", file=sys.stderr)
+        print("[T6-B] [WARN] 中证1000 成分数据为空，跳过 B 桶", file=sys.stderr)
         return pd.DataFrame()
 
-    col_code = next((c for c in cons.columns if "代码" in c and "指数" not in c), None)
-    col_name = next((c for c in cons.columns if "名称" in c and "指数" not in c and "英文" not in c), None)
-    if col_code is None:
-        print(f"[T6-B] ⚠️ 成分列名解析失败：{list(cons.columns)}", file=sys.stderr)
+    # ST/退市风险票剔除（中证1000 编制规则本就排除，这里双保险）
+    before = len(cons)
+    cons = cons[~cons["name"].astype(str).str.contains("ST|退", regex=True)]
+    print(f"[T6-B] 成分 {before} 只，剔 ST/退 后 {len(cons)} 只")
+
+    # 配置阈值（batch_screen 优先，缺省回退 quality_filters/默认值）
+    try:
+        bcfg = get_config().get("bucket_B", {})
+    except Exception:
+        bcfg = {}
+    bs = bcfg.get("batch_screen", {})
+    qf = bcfg.get("quality_filters", {})
+    min_mv = bs.get("total_mv_min_yi", 50.0)
+    min_np_cagr = bs.get("np_cagr_3y_min_pct",
+                         qf.get("recurring_profit_cagr_3y_min_pct", 20.0))
+    min_rev_cagr = bs.get("rev_cagr_3y_min_pct",
+                          qf.get("revenue_cagr_3y_min_pct", 15.0))
+    min_np_yoy = bs.get("latest_np_yoy_min_pct", 15.0)
+    min_roe = bs.get("roe_annualized_min_pct", 8.0)
+    min_ocf_ratio = bs.get("ocf_to_np_annual_min", 0.5)
+    max_pe = bs.get("pe_ttm_max", 60.0)
+    max_peg = bs.get("peg_max", 1.2)
+    require_no_loss = bs.get("no_loss_quarters_3y", True)
+
+    # 批量数据源（各自全市场一次，进程内缓存）
+    print("[T6-B] 拉取 3 年成长快照（4 个年报期全市场业绩报表）...")
+    growth_df = get_growth_snapshot()
+    growth_idx = growth_df.set_index("code") if not growth_df.empty else pd.DataFrame()
+    if growth_idx.empty:
+        print("[T6-B] [WARN] 成长快照为空，跳过 B 桶", file=sys.stderr)
         return pd.DataFrame()
 
-    codes = [str(c).zfill(6) for c in cons[col_code].tolist()]
-    name_map = {str(cons.iloc[i][col_code]).zfill(6): str(cons.iloc[i][col_name])
-                for i in range(len(cons))} if col_name else {}
-    total = len(codes)
+    print("[T6-B] 拉取最新报告期业绩快照（净利同比/行业）...")
+    yjbb_df = get_yjbb_snapshot()
+    yjbb_idx = yjbb_df.set_index("code") if not yjbb_df.empty else pd.DataFrame()
 
-    # 批量一次拉取基本面（防限频：绝不逐票请求）
-    print(f"[T6-B] 批量拉取 {total} 只成分股基本面（单次调用）...")
+    print("[T6-B] 拉取盈利质量快照（亏损季度/现金流，批量）...")
+    pq_df = get_profit_quality_snapshot()
+    pq_idx = pq_df.set_index("code") if not pq_df.empty else pd.DataFrame()
+
+    codes = cons["code"].astype(str).tolist()
+    print(f"[T6-B] 批量拉取 {len(codes)} 只成分股基本面（PE/ROE/市值/现价）...")
     fund_df = get_batch_fundamentals(codes)
     if fund_df.empty:
-        print("[T6-B] ⚠️ 基本面数据为空，跳过 B 桶", file=sys.stderr)
+        print("[T6-B] [WARN] 基本面数据为空，跳过 B 桶", file=sys.stderr)
         return pd.DataFrame()
 
     results: List[Dict[str, Any]] = []
-    for i, code in enumerate(codes):
-        name = name_map.get(code, "")
+    dropped = {"基本面缺失": 0, "市值不足": 0, "净利CAGR": 0, "营收CAGR": 0,
+               "最新期增速": 0, "ROE": 0, "亏损季度": 0, "现金流": 0,
+               "PE": 0, "PEG": 0}
+    total = len(cons)
+
+    for i, row in cons.iterrows():
+        code = str(row["code"])
+        name = str(row.get("name", ""))
+
         if code not in fund_df.index:
+            dropped["基本面缺失"] += 1
             continue
         fund_row = fund_df.loc[code]
-
         pe = _safe_float(fund_row, ["pe_ttm", "市盈率"])
-        roe = _safe_float(fund_row, ["roe", "ROE"])  # 快照源通常无 ROE → None
-        total_mv = _safe_float(fund_row, ["total_mv", "总市值"])
+        roe = _safe_float(fund_row, ["roe", "ROE"])
+        total_mv = _safe_float(fund_row, ["total_mv", "总市值"])  # 亿元
         price = _safe_float(fund_row, ["price", "现价"])
-        pb = _safe_float(fund_row, ["pb", "市净率"])
 
-        # 简化筛选：PE 明显过高才剔除，缺失时放行留给 LLM 判定
-        if pe is not None and (pe <= 0 or pe > 80):
-            continue
-        if roe is not None and roe < 8:
+        # 市值门槛（缺市值视为不满足：中盘定位是硬约束）
+        if total_mv is None or total_mv < min_mv:
+            dropped["市值不足"] += 1
             continue
 
-        # 排序值：有 PE 用 ROE/PE（近似 PEG 逆），否则用低 PB 代理（PB 越低越靠前）
-        if pe is not None:
-            sort_val = (roe or 15) / max(pe, 1)
-            rank_basis = f"排序=ROE/PE近似"
-        else:
-            sort_val = 1.0 / max(pb or 3.0, 0.1) * 5  # 归一到相近量级
-            rank_basis = f"PE缺失按低PB排序"
+        # 成长门槛：CAGR 缺失（基期为负/缺披露）直接剔除，不放行
+        g = growth_idx.loc[code] if code in growth_idx.index else None
+        np_cagr = _safe_float(g, ["np_cagr_3y"]) if g is not None else None
+        rev_cagr = _safe_float(g, ["rev_cagr_3y"]) if g is not None else None
+        ocf_ratio = _safe_float(g, ["ocf_np_ratio"]) if g is not None else None
+        ocf_ps_a = _safe_float(g, ["ocf_ps_annual"]) if g is not None else None
+        if np_cagr is None or np_cagr < min_np_cagr:
+            dropped["净利CAGR"] += 1
+            continue
+        if rev_cagr is None or rev_cagr < min_rev_cagr:
+            dropped["营收CAGR"] += 1
+            continue
 
-        # 入选理由（门槛实际值 vs 阈值，缺数据时明示放行）
-        reason_parts = []
-        reason_parts.append(f"PE(TTM) {pe:.1f}≤80" if pe is not None else "PE缺失放行(或亏损)")
-        reason_parts.append(f"ROE年化{roe:.1f}%≥8%" if roe is not None else "ROE缺失放行")
-        reason_parts.append(rank_basis)
+        # 最新报告期净利同比（成长未熄火）；快照缺该票则剔除
+        np_yoy = None
+        industry = ""
+        if not yjbb_idx.empty and code in yjbb_idx.index:
+            np_yoy = _safe_float(yjbb_idx.loc[code], ["np_yoy"])
+            industry = str(yjbb_idx.loc[code].get("industry", "") or "")
+        if np_yoy is None or np_yoy < min_np_yoy:
+            dropped["最新期增速"] += 1
+            continue
+
+        # ROE 年化（已由 _attach_roe 年化；缺失剔除）
+        if roe is None or roe < min_roe:
+            dropped["ROE"] += 1
+            continue
+
+        # 盈利质量：近 3 年单季亏损（no_loss_quarters_3y=false 时跳过此门槛）
+        loss_q = None
+        if not pq_idx.empty and code in pq_idx.index:
+            loss_q = _safe_float(pq_idx.loc[code], ["loss_q_3y"])
+        if require_no_loss and (loss_q is None or loss_q > 0):
+            dropped["亏损季度"] += 1
+            continue
+
+        # 现金流：年报 OCF/NP 与每股 OCF
+        if ocf_ratio is None or ocf_ratio < min_ocf_ratio \
+                or ocf_ps_a is None or ocf_ps_a <= 0:
+            dropped["现金流"] += 1
+            continue
+
+        # 估值：PE 区间 + PEG
+        if pe is None or pe <= 0 or pe > max_pe:
+            dropped["PE"] += 1
+            continue
+        cagr_capped = min(np_cagr, 100.0)
+        peg = pe / cagr_capped
+        if peg > max_peg:
+            dropped["PEG"] += 1
+            continue
+
+        sort_val = cagr_capped / pe  # = 1/PEG
+        reason = (
+            f"总市值{total_mv:.0f}亿≥{min_mv:.0f} | "
+            f"净利CAGR3年+{np_cagr:.0f}%≥{min_np_cagr:.0f}% | "
+            f"营收CAGR3年+{rev_cagr:.0f}%≥{min_rev_cagr:.0f}% | "
+            f"最新期净利同比+{np_yoy:.0f}%≥{min_np_yoy:.0f}% | "
+            f"ROE年化{roe:.1f}%≥{min_roe:.0f}% | "
+            f"近3年亏损季度0 | "
+            f"年报OCF/NP {ocf_ratio:.2f}≥{min_ocf_ratio} | "
+            f"PE(TTM){pe:.1f}≤{max_pe:.0f} | PEG {peg:.2f}≤{max_peg}"
+        )
 
         results.append({
             "code": code,
             "name": name,
-            "industry": "",
-            "price": round(price, 2) if price else "",
-            "revenue_cagr_3y": "",  # 需要财报数据
-            "profit_cagr_3y": "",
-            "gross_margin_change": "",
-            "ocf_to_np": "",
-            "roe_ttm": round(roe, 1) if roe else "",
-            "peg": round(pe / max(roe or 15, 1), 2) if pe else "",
-            "penetration_rate": "",
-            "goodwill_ratio": "",
-            "sort_value": round(sort_val, 4),
-            "pick_reason": " | ".join(reason_parts),
+            "industry": industry,
+            "price": round(price, 2) if price is not None else "",
+            "total_mv_yi": round(total_mv, 0),
+            "profit_cagr_3y": round(np_cagr, 1),
+            "revenue_cagr_3y": round(rev_cagr, 1),
+            "np_yoy_latest": round(np_yoy, 1),
+            "roe_ann": round(roe, 1),
+            "ocf_to_np": round(ocf_ratio, 2),
+            "loss_q_3y": int(loss_q),
+            "pe_ttm": round(pe, 1),
+            "peg": round(peg, 2),
+            "sort_value": round(sort_val, 3),
+            "pick_reason": reason,
         })
 
-        if (i + 1) % 50 == 0:
-            print(f"  已处理 {i + 1}/{total}，通过 {len(results)} 只")
-
-    print(f"[T6-B] 完成：{len(results)} 只通过硬门槛")
+    print(f"[T6-B] 完成：{len(results)} 只通过硬门槛（共扫 {total} 只）")
+    drop_note = "、".join(f"{k}{v}" for k, v in dropped.items() if v)
+    if drop_note:
+        print(f"[T6-B] 剔除分布: {drop_note}")
     df = pd.DataFrame(results)
     if not df.empty:
         df = df.sort_values("sort_value", ascending=False).reset_index(drop=True)
@@ -406,14 +490,37 @@ def _rules_note_a(df: pd.DataFrame) -> str:
 
 
 def _rules_note_b(df: pd.DataFrame) -> str:
-    """B 桶筛选规则与排序公式说明。"""
+    """B 桶筛选规则与排序公式说明（阈值读配置，与筛选逻辑同源）。"""
+    try:
+        bcfg = get_config().get("bucket_B", {})
+    except Exception:
+        bcfg = {}
+    bs = bcfg.get("batch_screen", {})
+    qf = bcfg.get("quality_filters", {})
+    min_mv = bs.get("total_mv_min_yi", 50.0)
+    min_np_cagr = bs.get("np_cagr_3y_min_pct",
+                         qf.get("recurring_profit_cagr_3y_min_pct", 20.0))
+    min_rev_cagr = bs.get("rev_cagr_3y_min_pct",
+                          qf.get("revenue_cagr_3y_min_pct", 15.0))
+    min_np_yoy = bs.get("latest_np_yoy_min_pct", 15.0)
+    min_roe = bs.get("roe_annualized_min_pct", 8.0)
+    min_ocf = bs.get("ocf_to_np_annual_min", 0.5)
+    max_pe = bs.get("pe_ttm_max", 60.0)
+    max_peg = bs.get("peg_max", 1.2)
     lines = [
-        "筛选规则: 创业板指成分 + PE(TTM)≤80（负PE剔除；PE缺失放行，见 pick_reason）",
-        "排序公式: 有PE → ROE/PE（近似PEG逆）；PE缺失 → 按低PB代理排序",
+        f"筛选规则: 中证1000成分(剔ST/退) + 总市值≥{min_mv:.0f}亿"
+        f" + 净利3年CAGR≥{min_np_cagr:.0f}%(年报首末期,基期须为正)"
+        f" + 营收3年CAGR≥{min_rev_cagr:.0f}%"
+        f" + 最新报告期净利同比≥{min_np_yoy:.0f}%"
+        f" + ROE年化≥{min_roe:.0f}%"
+        f" + 近3年无单季亏损"
+        f" + 最新年报OCF/NP≥{min_ocf}且每股OCF>0"
+        f" + 0<PE(TTM)≤{max_pe:.0f} + PEG≤{max_peg}"
+        f"（PEG=PE÷min(净利CAGR,100%)）；核心数据缺失即剔除，每只票见 pick_reason",
+        "排序公式: sort_value = min(净利CAGR,100)/PE（即 1/PEG）降序",
+        "批量层未覆盖、需 LLM/人工复核: 商誉/净资产、应收vs营收增速、研发占比、"
+        "行业渗透率、PE 上市以来分位",
     ]
-    if not df.empty and "roe_ttm" in df.columns \
-            and df["roe_ttm"].astype(str).str.strip().eq("").all():
-        lines.append("注: 本次数据源无 ROE，ROE 按默认值 15 代入 → 排序实际按 1/PE 降序")
     return "\n".join(lines)
 
 
@@ -444,8 +551,9 @@ def assemble_output(bucket_a: pd.DataFrame, bucket_b: pd.DataFrame,
     if bucket_b.empty:
         parts.append("（B 桶候选为空）")
     else:
-        cols_b = ["code", "name", "industry", "price", "revenue_cagr_3y", "profit_cagr_3y",
-                  "gross_margin_change", "ocf_to_np", "roe_ttm", "peg", "penetration_rate", "goodwill_ratio",
+        cols_b = ["code", "name", "industry", "price", "total_mv_yi",
+                  "profit_cagr_3y", "revenue_cagr_3y", "np_yoy_latest",
+                  "roe_ann", "ocf_to_np", "loss_q_3y", "pe_ttm", "peg",
                   "sort_value", "pick_reason"]
         available = [c for c in cols_b if c in bucket_b.columns]
         parts.append(bucket_b[available].head(50).to_csv(index=False))

@@ -34,7 +34,7 @@ SKILL_INPUT = DATA_DIR / "skill_input_T5.md"
 # 桶基准映射
 BUCKET_BENCHMARKS = {
     "A": ("000922", "中证红利"),
-    "B": ("399006", "创业板指"),
+    "B": ("000852", "中证1000"),
     "C": ("000905", "中证500"),
 }
 MARKET_BENCHMARK = ("000300", "沪深300")

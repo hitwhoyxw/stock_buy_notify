@@ -31,7 +31,8 @@
 （CSV 列头 + 已过硬门槛的候选，含 code, name, industry, dividend_yield_ttm, dividend_percentile_5y, roe_5y_avg, fcf_coverage, pb, pb_percentile, dividend_years, quality_score）
 
 === BUCKET: B ===
-（CSV 列头，含 code, name, industry, revenue_cagr_3y, profit_cagr_3y, gross_margin_change, ocf_to_np, roe_ttm, peg, penetration_rate, goodwill_ratio）
+（筛选规则与排序公式见该段头部说明；CSV 列头，含 code, name, industry, price, total_mv_yi, profit_cagr_3y, revenue_cagr_3y, np_yoy_latest, roe_ann, ocf_to_np, loss_q_3y, pe_ttm, peg, sort_value, pick_reason）
+（批量层未覆盖、需你重点复核：商誉/净资产、应收vs营收增速、研发占比、行业渗透率、PE 上市以来分位）
 
 === BUCKET: C ===
 （CSV 列头，含 code, name, industry, text_score, categories_hit_count, price_index_1y_high, gross_margin_qoq, contract_liability_yoy, earnings_yoy_recurring）

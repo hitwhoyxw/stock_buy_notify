@@ -670,7 +670,8 @@ def get_csi_dividend_constituents() -> pd.DataFrame:
 # ============================================================
 
 def get_fundamentals_snapshot() -> pd.DataFrame:
-    """全市场基本面快照（进程内只拉一次）。列：code, pe_ttm, pb, dv_ttm, dv_ratio, total_mv。"""
+    """全市场基本面快照（进程内只拉一次）。
+    列：code, pe_ttm, pb, dv_ttm, dv_ratio, total_mv（单位统一为亿元）。"""
     return _memo("fundamentals_snapshot", _fetch_fundamentals_snapshot)
 
 
@@ -704,6 +705,8 @@ def _fetch_fundamentals_snapshot() -> pd.DataFrame:
                     "dv_ratio": pd.to_numeric(raw.get("dv_ratio"), errors="coerce"),
                     "total_mv": pd.to_numeric(raw.get("total_mv"), errors="coerce"),
                 })
+                # tushare total_mv 单位=万元 → 统一为亿元（腾讯源本就是亿元）
+                out["total_mv"] = out["total_mv"] / 1e4
                 return out.dropna(subset=["code"]).reset_index(drop=True)
         except Exception as e:
             print(f"[data_fetch] tushare daily_basic 失败：{e}", file=sys.stderr)
@@ -726,7 +729,8 @@ def _fetch_fundamentals_snapshot() -> pd.DataFrame:
                     "code": raw[c_code].astype(str).str.zfill(6),
                     "pe_ttm": pd.to_numeric(raw[c_pe], errors="coerce") if c_pe else None,
                     "pb": pd.to_numeric(raw[c_pb], errors="coerce") if c_pb else None,
-                    "total_mv": pd.to_numeric(raw[c_mv], errors="coerce") if c_mv else None,
+                    # spot_em total_mv 单位=元 → 统一为亿元
+                    "total_mv": pd.to_numeric(raw[c_mv], errors="coerce") / 1e8 if c_mv else None,
                 })
                 return out.reset_index(drop=True)
     except Exception as e:
@@ -936,6 +940,20 @@ def _fetch_yjbb_snapshot() -> pd.DataFrame:
     except Exception as e:
         print(f"[data_fetch] stock_yjbb_em({period}) 失败：{e}", file=sys.stderr)
         return pd.DataFrame()
+    out = _yjbb_extract(raw)
+    if out.empty:
+        return out
+    out["period"] = period
+    return out
+
+
+def _yjbb_extract(raw: "pd.DataFrame") -> pd.DataFrame:
+    """东财业绩报表原始表 → 标准列（供最新期快照与历年年报 CAGR 共用）。
+
+    注意列名陷阱：东财实际列名是"营业总收入-营业总收入"而非"营业收入-*"，
+    候选名不匹配会静默丢列。
+    列：code, industry, revenue, rev_yoy, np, np_yoy, roe, ocf_ps, eps, gross_margin。
+    """
     if raw is None or raw.empty:
         return pd.DataFrame()
 
@@ -959,14 +977,153 @@ def _fetch_yjbb_snapshot() -> pd.DataFrame:
         ("np_yoy", ("净利润-同比增长",)),
         ("roe", ("净资产收益率",)),
         ("ocf_ps", ("经营现金流",)),
+        ("eps", ("每股收益",)),
         ("gross_margin", ("销售毛利率",)),
     ]:
         c = _col(*cands)
         if c:
             out[key] = raw[c] if key == "industry" \
                 else pd.to_numeric(raw[c], errors="coerce")
-    out["period"] = period
     return out.drop_duplicates("code").reset_index(drop=True)
+
+
+def get_csi1000_constituents() -> pd.DataFrame:
+    """中证1000（000852）成分股。返回 code, name, weight。"""
+    return _memo("csi1000_constituents", _fetch_csi1000_constituents)
+
+
+@disk_cache(ttl_hours=24)
+def _fetch_csi1000_constituents() -> pd.DataFrame:
+    import akshare as ak
+
+    df = pd.DataFrame()
+    weight_col = None
+    try:
+        raw = ak.index_stock_cons_weight_csindex(symbol="000852")
+        if raw is not None and not raw.empty:
+            df = raw
+            weight_col = next((c for c in raw.columns
+                               if "权重" in c or "weight" in c.lower()), None)
+    except Exception:
+        pass
+
+    if df.empty:
+        try:
+            raw = ak.index_stock_cons_csindex(symbol="000852")
+            if raw is not None and not raw.empty:
+                df = raw
+        except Exception as e:
+            print(f"[data_fetch] 中证1000成分股拉取失败：{e}", file=sys.stderr)
+            return pd.DataFrame()
+
+    if df.empty:
+        return pd.DataFrame()
+
+    col_code = next((c for c in df.columns if "成分券代码" in c), None)
+    col_name = next((c for c in df.columns if "成分券名称" in c), None)
+    if col_code is None:
+        candidates = [c for c in df.columns if "代码" in c and "指数" not in c]
+        col_code = candidates[0] if candidates else None
+    if col_name is None:
+        candidates = [c for c in df.columns
+                      if "名称" in c and "指数" not in c and "英文" not in c]
+        col_name = candidates[0] if candidates else None
+    if col_code is None:
+        print(f"[data_fetch] 中证1000成分列名解析失败：{list(df.columns)}", file=sys.stderr)
+        return pd.DataFrame()
+
+    out = pd.DataFrame({
+        "code": df[col_code].astype(str).str.strip().str.zfill(6),
+        "name": df[col_name].astype(str) if col_name else "",
+        "weight": pd.to_numeric(df[weight_col], errors="coerce") if weight_col else None,
+    })
+    return out.drop_duplicates("code").reset_index(drop=True)
+
+
+def _latest_annual_periods(n_years: int = 4) -> List[str]:
+    """最近 n_years 个已完整披露的年报期（旧→新）。年报 4-30 前披露完。"""
+    y, m = dt.date.today().year, dt.date.today().month
+    last = y - 1 if m >= 5 else y - 2
+    return [f"{last - i}1231" for i in range(n_years - 1, -1, -1)]
+
+
+def get_growth_snapshot() -> pd.DataFrame:
+    """全市场 3 年成长快照（进程内只拉一次）。
+
+    列：code, np_cagr_3y(%), rev_cagr_3y(%), ocf_np_ratio（最新年报
+    经营现金流/净利润）, ocf_ps_annual（最新年报每股经营现金流）。
+    CAGR 用 4 个年报期的首末期水平计算，要求基期与末期净利均为正
+    （剔除低基数暴增与扭亏假成长）。"""
+    return _memo("growth_snapshot", _fetch_growth_snapshot)
+
+
+@disk_cache(ttl_hours=72)
+def _fetch_growth_snapshot() -> pd.DataFrame:
+    """4 次全市场 yjbb 调用（年报期），绝不逐票请求。"""
+    import time
+
+    import akshare as ak
+
+    periods = _latest_annual_periods(4)
+    yearly: Dict[str, pd.DataFrame] = {}
+    for p in periods:
+        try:
+            raw = ak.stock_yjbb_em(date=p)
+        except Exception as e:
+            print(f"[data_fetch] stock_yjbb_em({p}) 失败：{e}", file=sys.stderr)
+            raw = None
+        df = _yjbb_extract(raw)
+        if not df.empty:
+            yearly[p] = df.set_index("code")
+        time.sleep(0.8)
+
+    if len(yearly) < 2:
+        print("[data_fetch] [WARN] 年报期数据不足，成长快照为空", file=sys.stderr)
+        return pd.DataFrame()
+
+    p0, p1 = periods[0], periods[-1]
+    if p0 not in yearly or p1 not in yearly:
+        print(f"[data_fetch] [WARN] 缺少首/末年报期（{p0}/{p1}），成长快照为空",
+              file=sys.stderr)
+        return pd.DataFrame()
+
+    base, last = yearly[p0], yearly[p1]
+    span = len(periods) - 1  # 3
+    codes = sorted(set(base.index) & set(last.index))
+    rows = []
+    for code in codes:
+        np0, np1 = base.loc[code].get("np"), last.loc[code].get("np")
+        rv0, rv1 = base.loc[code].get("revenue"), last.loc[code].get("revenue")
+        try:
+            np0, np1 = float(np0), float(np1)
+        except (TypeError, ValueError):
+            np0 = np1 = None
+        try:
+            rv0, rv1 = float(rv0), float(rv1)
+        except (TypeError, ValueError):
+            rv0 = rv1 = None
+
+        np_cagr = ((np1 / np0) ** (1.0 / span) - 1) * 100 \
+            if (np0 and np1 and np0 > 0 and np1 > 0) else None
+        rev_cagr = ((rv1 / rv0) ** (1.0 / span) - 1) * 100 \
+            if (rv0 and rv1 and rv0 > 0 and rv1 > 0) else None
+
+        ocf_ps = last.loc[code].get("ocf_ps")
+        eps = last.loc[code].get("eps")
+        try:
+            ocf_ps, eps = float(ocf_ps), float(eps)
+            ocf_ratio = ocf_ps / eps if eps > 0 else None
+        except (TypeError, ValueError):
+            ocf_ps, ocf_ratio = None, None
+
+        rows.append({
+            "code": code,
+            "np_cagr_3y": round(np_cagr, 1) if np_cagr is not None else None,
+            "rev_cagr_3y": round(rev_cagr, 1) if rev_cagr is not None else None,
+            "ocf_np_ratio": round(ocf_ratio, 2) if ocf_ratio is not None else None,
+            "ocf_ps_annual": round(ocf_ps, 2) if ocf_ps is not None else None,
+        })
+    return pd.DataFrame(rows)
 
 
 def get_yjyg_snapshot() -> pd.DataFrame:

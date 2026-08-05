@@ -133,8 +133,25 @@ bucket_B:
   holdings_count: [4, 6]
   ladder: [0.25, 0.25, 0.25, 0.25]
 
+  # 批量静态筛选层（scripts/t6_candidate_pool.py screen_bucket_b 读取）
+  # 只用全市场批量接口可得的指标；商誉/应收/研发/渗透率/PE分位留 LLM 层验证
+  batch_screen:
+    universe_index: "000852.SH"      # 中证1000（中盘成长定位）
+    exclude_st: true
+    total_mv_min_yi: 50              # 总市值下限（亿元）
+    np_cagr_3y_min_pct: 20           # 净利3年CAGR（年报首末期，基期须为正）
+    rev_cagr_3y_min_pct: 15          # 营收3年CAGR
+    latest_np_yoy_min_pct: 15        # 最新报告期净利同比（成长未熄火）
+    roe_annualized_min_pct: 8
+    no_loss_quarters_3y: true        # 近3年无单季亏损
+    ocf_to_np_annual_min: 0.5        # 最新年报 经营现金流/净利润
+    ocf_ps_annual_positive: true     # 最新年报每股经营现金流 > 0
+    pe_ttm_max: 60                   # 负PE（亏损）天然剔除
+    peg_max: 1.2                     # PEG = PE ÷ min(净利CAGR, 100%)
+    sort: "np_cagr_capped_over_pe"   # min(净利CAGR,100)/PE 降序（=1/PEG）
+
   quality_filters:                  # 全部满足
-    revenue_cagr_3y_min_pct: 20
+    revenue_cagr_3y_min_pct: 15
     recurring_profit_cagr_3y_min_pct: 20
     gross_margin_stable_or_up: true
     gross_margin_volatility_max_pct: 3
@@ -385,7 +402,7 @@ data_sources:
 # ------------------------------------------------------------
 bucket_benchmarks:
   A: "000922.SH"           # 中证红利
-  B: "399006.SZ"           # 创业板指（备选 931643.SH 双创50，二选一）
+  B: "000852.SH"           # 中证1000（B桶股票池自2026-08改为中证1000，基准同步变更）
   C: "dynamic_sw_l1"       # 动态取该股申万一级行业指数
   portfolio: "weighted"    # 按当前 allocation.states 权重加权四桶基准
   cross_reference: "000300.SH"  # 沪深300 只作跨风格对照，不作 alpha 判定门槛
