@@ -19,10 +19,8 @@
 CLI 参数：
     --prepare          : 运行输入准备阶段
     --codes            : 逗号分隔的股票代码（留空则自动发现扫描池）
-    --top-n            : 自动发现扫描池上限（默认 50）
+    --top-n            : 自动发现扫描池上限（默认 300，仅作安全阀）
     --min-gain         : 预告/报表净利同比门槛（%，默认 50）
-    --kw-cap           : 关键词源入池上限（默认 20）
-    --preview-cap      : 预告增速源入池上限（默认 20，防极端值挤占）
     --input-file       : 覆盖 LLM 输出路径（默认 data/skill_output_T4C.md）
     --dry-run          : 不写入台账，只打印
 """
@@ -210,17 +208,17 @@ def _build_pool_meta(pool: List[str], yjbb_idx: "pd.DataFrame",
     return meta
 
 
-def discover_scan_pool(top_n: int = 50, min_gain: float = 50.0,
-                       kw_cap: int = 20, preview_cap: int = 20):
+def discover_scan_pool(top_n: int = 300, min_gain: float = 50.0):
     """自动发现 T4 扫描池（无需人工填写股票代码）。
 
-    三个来源（全部来自全市场批量快照，约 3 次 HTTP 调用）：
+    四个来源（全部来自全市场批量快照，约 3 次 HTTP 调用）：
+      0. 赛道龙头源：yaml bucket_C.text_signal.sector_leaders 直接纳入；
       1. 关键词源：业绩预告"变动原因/变动"文本命中 bucket_C 文本信号关键词
-         （需求/价格/供给），按加权分降序，最多 kw_cap 只；
+         （需求/价格/供给），全部入池（不再截断）；
       2. 预告增速源：正面预告且利润变动幅度 ≥ min_gain%，按幅度降序；
       3. 报表增速源：净利同比 ≥ min_gain% 且营收正增长，补足剩余名额。
     返回 (pool, meta, heat)：
-      pool  股票代码列表（≤top_n）
+      pool  股票代码列表（≤top_n，top_n 默认 300 仅作安全阀）
       meta  {code: {sources, kw, industry, name}}
       heat  板块热度 DataFrame（全市场口径，供报告头部展示）
     """
@@ -265,12 +263,11 @@ def discover_scan_pool(top_n: int = 50, min_gain: float = 50.0,
     kw_items = sorted(kw_map.items(),
                       key=lambda kv: (kv[1]["score"], _gain_of(kv[0])),
                       reverse=True)
-    for code, _ in kw_items[:kw_cap]:
+    for code, _ in kw_items:
         _add(code)
-    print(f"[T4-discover] 关键词源：预告文本命中 bucket_C 关键词 {len(kw_map)} 只，"
-          f"取前 {min(kw_cap, len(kw_map))} 只")
+    print(f"[T4-discover] 关键词源：预告文本命中 bucket_C 关键词 {len(kw_map)} 只，全部入池")
 
-    # 来源 2：预告增速（封顶 500% 防极端值挤占名额，上限 preview_cap 只）
+    # 来源 2：预告增速（封顶 500% 防极端值挤占排序，不再截断数量）
     if not yjyg_idx.empty and "gain_pct" in yjyg_idx.columns:
         hit = yjyg_idx[yjyg_idx["gain_pct"].isna()
                        | (yjyg_idx["gain_pct"] >= min_gain)].copy()
@@ -278,11 +275,11 @@ def discover_scan_pool(top_n: int = 50, min_gain: float = 50.0,
         hit = hit.sort_values("_gain_capped", ascending=False, na_position="last")
         before = len(pool)
         for code in hit.index:
-            if len(pool) - before >= preview_cap or len(pool) >= top_n:
+            if len(pool) >= top_n:
                 break
             _add(code)
         print(f"[T4-discover] 预告增速源：变动幅度≥{min_gain:.0f}% 共 {len(hit)} 只，"
-              f"入池 {len(pool) - before} 只（封顶 {preview_cap} 只，增速 clip 500%）")
+              f"入池 {len(pool) - before} 只（增速 clip 500%）")
 
     # 来源 3：报表增速补足（封顶 500% 防极端值，从已披露季报补充）
     if len(pool) < top_n and not yjbb_idx.empty and "np_yoy" in yjbb_idx.columns:
@@ -663,14 +660,10 @@ def main() -> int:
                         help="运行输入准备阶段（抓取财报摘要）")
     parser.add_argument("--codes", type=str, default="",
                         help="逗号分隔股票代码（prepare 模式；留空则自动发现）")
-    parser.add_argument("--top-n", type=int, default=50,
-                        help="自动发现模式下扫描池上限（默认 50）")
+    parser.add_argument("--top-n", type=int, default=300,
+                        help="自动发现模式下扫描池上限（默认 300，仅作安全阀）")
     parser.add_argument("--min-gain", type=float, default=50.0,
                         help="预告/报表净利同比门槛（%%，默认 50）")
-    parser.add_argument("--kw-cap", type=int, default=20,
-                        help="关键词源入池上限（默认 20）")
-    parser.add_argument("--preview-cap", type=int, default=20,
-                        help="预告增速源入池上限（默认 20，防极端值挤占）")
     parser.add_argument("--input-file", type=Path, default=None,
                         help="覆盖 LLM 输出文件路径")
     parser.add_argument("--dry-run", action="store_true",
@@ -683,8 +676,7 @@ def main() -> int:
             print("[T4] 未指定 --codes，启用自动发现"
                   "（关键词+预告增速+报表增速）...")
             codes, _meta, _heat = discover_scan_pool(
-                top_n=args.top_n, min_gain=args.min_gain,
-                kw_cap=args.kw_cap, preview_cap=args.preview_cap)
+                top_n=args.top_n, min_gain=args.min_gain)
             if not codes:
                 print("[T4] 自动发现失败：预告/报表数据均为空，"
                       "请手动 --codes 指定或稍后重试", file=sys.stderr)

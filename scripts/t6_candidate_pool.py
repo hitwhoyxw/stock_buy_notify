@@ -601,8 +601,8 @@ def main() -> int:
                         help="指定桶（A/B/C 组合，默认 ABC 全跑）")
     parser.add_argument("--dry-run", action="store_true",
                         help="只打印结果，不写输出文件")
-    parser.add_argument("--top", type=int, default=50,
-                        help="每桶输出 top N 候选（默认 50）")
+    parser.add_argument("--top", type=int, default=200,
+                        help="每桶输出 top N 候选（默认 200，不限制死）")
     args = parser.parse_args()
 
     ensure_dirs()
