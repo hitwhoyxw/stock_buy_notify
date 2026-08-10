@@ -19,9 +19,10 @@
 CLI 参数：
     --prepare          : 运行输入准备阶段
     --codes            : 逗号分隔的股票代码（留空则自动发现扫描池）
-    --top-n            : 自动发现扫描池上限（默认 30）
+    --top-n            : 自动发现扫描池上限（默认 50）
     --min-gain         : 预告/报表净利同比门槛（%，默认 50）
-    --kw-cap           : 关键词源入池上限（默认 12）
+    --kw-cap           : 关键词源入池上限（默认 20）
+    --preview-cap      : 预告增速源入池上限（默认 20，防极端值挤占）
     --input-file       : 覆盖 LLM 输出路径（默认 data/skill_output_T4C.md）
     --dry-run          : 不写入台账，只打印
 """
@@ -71,23 +72,21 @@ def _load_text_signal_rules():
             float(neg.get("penalty", -3.0)), float(ts.get("min_weighted_score", 6.0)))
 
 
-def scan_keyword_hits(yjyg_idx: "pd.DataFrame") -> Dict[str, Dict[str, Any]]:
-    """对业绩预告文本（变动原因+变动描述）做 bucket_C 关键词静态匹配。
+def scan_keyword_hits(yjyg_idx: "pd.DataFrame",
+                      irm_texts: Dict[str, str] = None) -> Dict[str, Dict[str, Any]]:
+    """对业绩预告文本 + 互动易问答文本做 bucket_C 关键词静态匹配。
 
     入参 yjyg_idx：以 code 为索引的预告快照（需含 reason/excerpt 列）。
-    返回 {code: {"hits": {类别: [关键词]}, "neg": [反向词], "score": 加权分}}，
+    入参 irm_texts：{code: "Q: ... A: ..."} 互动易问答文本（可选）。
+    返回 {code: {"hits": {类别: [关键词]}, "neg": [反向词], "score": 加权分, "sources": [文本来源]}}，
     仅含至少命中一个正向关键词的票。打分口径与 t4_c_text_scan skill 一致：
     sum(各类命中数×权重) + penalty×反向词数。
     """
     cats, neg_kws, penalty, _ = _load_text_signal_rules()
     out: Dict[str, Dict[str, Any]] = {}
-    if yjyg_idx is None or yjyg_idx.empty or not cats:
-        return out
-    for code, r in yjyg_idx.iterrows():
-        text = (str(r.get("reason", "") or "") + "\n"
-                + str(r.get("excerpt", "") or ""))
-        if len(text.strip()) <= 1:
-            continue
+
+    def _scan_text(text: str) -> tuple:
+        """对单段文本做关键词匹配，返回 (hits, neg_hits, score)。"""
         hits: Dict[str, List[str]] = {}
         score = 0.0
         for cname, (w, kws) in cats.items():
@@ -97,8 +96,47 @@ def scan_keyword_hits(yjyg_idx: "pd.DataFrame") -> Dict[str, Dict[str, Any]]:
                 score += len(matched) * w
         neg_hits = [k for k in neg_kws if k in text]
         score += penalty * len(neg_hits)
-        if hits:
-            out[code] = {"hits": hits, "neg": neg_hits, "score": round(score, 1)}
+        return hits, neg_hits, score
+
+    # 源 1：业绩预告文本
+    if yjyg_idx is not None and not yjyg_idx.empty and cats:
+        for code, r in yjyg_idx.iterrows():
+            text = (str(r.get("reason", "") or "") + "\n"
+                    + str(r.get("excerpt", "") or ""))
+            if len(text.strip()) <= 1:
+                continue
+            hits, neg_hits, score = _scan_text(text)
+            if hits:
+                out[code] = {"hits": hits, "neg": neg_hits,
+                             "score": round(score, 1), "sources": ["预告"]}
+
+    # 源 2：互动易问答文本
+    if irm_texts:
+        for code, text in irm_texts.items():
+            if not text or len(text.strip()) <= 1:
+                continue
+            hits, neg_hits, score = _scan_text(text)
+            if code in out:
+                # 合并到已有结果（预告已命中）
+                existing = out[code]
+                for cname, matched in hits.items():
+                    existing["hits"].setdefault(cname, [])
+                    for k in matched:
+                        if k not in existing["hits"][cname]:
+                            existing["hits"][cname].append(k)
+                existing["neg"] = list(set(existing["neg"] + neg_hits))
+                # 重新计分
+                new_score = 0.0
+                for cname, (w, _) in cats.items():
+                    new_score += len(existing["hits"].get(cname, [])) * w
+                new_score += penalty * len(existing["neg"])
+                existing["score"] = round(new_score, 1)
+                if "互动易" not in existing["sources"]:
+                    existing["sources"].append("互动易")
+            elif hits:
+                out[code] = {"hits": hits, "neg": neg_hits,
+                             "score": round(score, 1), "sources": ["互动易"]}
+
     return out
 
 
@@ -172,8 +210,8 @@ def _build_pool_meta(pool: List[str], yjbb_idx: "pd.DataFrame",
     return meta
 
 
-def discover_scan_pool(top_n: int = 30, min_gain: float = 50.0,
-                       kw_cap: int = 12):
+def discover_scan_pool(top_n: int = 50, min_gain: float = 50.0,
+                       kw_cap: int = 20, preview_cap: int = 20):
     """自动发现 T4 扫描池（无需人工填写股票代码）。
 
     三个来源（全部来自全市场批量快照，约 3 次 HTTP 调用）：
@@ -204,6 +242,15 @@ def discover_scan_pool(top_n: int = 30, min_gain: float = 50.0,
             seen.add(code)
             pool.append(code)
 
+    # 来源 0：赛道龙头强制纳入（不依赖增速排序，yaml 配置 sector_leaders）
+    from lib.config import get_config
+    leaders = (get_config().get("bucket_C", {})
+               .get("text_signal", {}).get("sector_leaders") or [])
+    for code in leaders:
+        _add(str(code).strip().zfill(6))
+    if leaders:
+        print(f"[T4-discover] 赛道龙头源：yaml sector_leaders {len(leaders)} 只，入池 {len(pool)} 只")
+
     # 来源 1：关键词命中（按加权分、预告幅度降序）
     def _gain_of(code: str) -> float:
         if yjyg_idx.empty or code not in yjyg_idx.index:
@@ -223,33 +270,36 @@ def discover_scan_pool(top_n: int = 30, min_gain: float = 50.0,
     print(f"[T4-discover] 关键词源：预告文本命中 bucket_C 关键词 {len(kw_map)} 只，"
           f"取前 {min(kw_cap, len(kw_map))} 只")
 
-    # 来源 2：预告增速
+    # 来源 2：预告增速（封顶 500% 防极端值挤占名额，上限 preview_cap 只）
     if not yjyg_idx.empty and "gain_pct" in yjyg_idx.columns:
         hit = yjyg_idx[yjyg_idx["gain_pct"].isna()
-                       | (yjyg_idx["gain_pct"] >= min_gain)]
-        hit = hit.sort_values("gain_pct", ascending=False, na_position="last")
+                       | (yjyg_idx["gain_pct"] >= min_gain)].copy()
+        hit["_gain_capped"] = hit["gain_pct"].clip(upper=500.0)
+        hit = hit.sort_values("_gain_capped", ascending=False, na_position="last")
         before = len(pool)
         for code in hit.index:
-            if len(pool) >= top_n:
+            if len(pool) - before >= preview_cap or len(pool) >= top_n:
                 break
             _add(code)
         print(f"[T4-discover] 预告增速源：变动幅度≥{min_gain:.0f}% 共 {len(hit)} 只，"
-              f"入池 {len(pool) - before} 只")
+              f"入池 {len(pool) - before} 只（封顶 {preview_cap} 只，增速 clip 500%）")
 
-    # 来源 3：报表增速补足
+    # 来源 3：报表增速补足（封顶 500% 防极端值，从已披露季报补充）
     if len(pool) < top_n and not yjbb_idx.empty and "np_yoy" in yjbb_idx.columns:
         hb = yjbb_idx.dropna(subset=["np_yoy"])
         rev_col = "rev_yoy" if "rev_yoy" in hb.columns else None
         hb = hb[(hb["np_yoy"] >= min_gain)
-                & (hb[rev_col] > 0 if rev_col else True)]
-        hb = hb.sort_values("np_yoy", ascending=False)
+                & (hb[rev_col] > 0 if rev_col else True)].copy()
+        hb["_np_capped"] = hb["np_yoy"].clip(upper=500.0)
+        hb = hb.sort_values("_np_capped", ascending=False)
         before = len(pool)
         for code in hb.index:
             if len(pool) >= top_n:
                 break
             _add(code)
         if len(pool) > before:
-            print(f"[T4-discover] 报表增速源：补充 {len(pool) - before} 只")
+            print(f"[T4-discover] 报表增速源：补充 {len(pool) - before} 只"
+                  f"（np_yoy≥{min_gain:.0f}% 且营收正增长，增速 clip 500%）")
 
     meta = _build_pool_meta(pool, yjbb_idx, yjyg_idx, kw_map)
     if pool:
@@ -262,13 +312,13 @@ def discover_scan_pool(top_n: int = 30, min_gain: float = 50.0,
 def prepare_input(codes: List[str]) -> Path:
     """为给定股票代码列表批量拉取财报关键数据，组装成 skill 需要的输入文件。
 
-    防超时设计：全程约 5 次 HTTP 调用（腾讯行情批量 + yjbb 全市场一次 +
-    yjyg 全市场至多两次），绝不逐票请求。
+    防超时设计：批量快照（腾讯行情 + yjbb + yjyg）只 3-5 次全市场调用，
+    互动易逐票拉取（每只约 2-3 秒，50 只约 2 分钟）。
     文件头部附板块热度榜（全市场净利同比≥50% 按行业聚合），
-    每只票标注来源（关键词/预告/报表）与关键词命中详情。
+    每只票标注来源（关键词/预告/报表/互动易）与关键词命中详情。
     """
     from lib.data_fetch import (get_tencent_batch_quotes, get_yjbb_snapshot,
-                                get_yjyg_snapshot)
+                                get_yjyg_snapshot, get_irm_texts)
 
     codes = [c.strip().split(".")[0].zfill(6) for c in codes if c.strip()]
     print(f"[T4-prepare] 批量拉取 {len(codes)} 只股票数据（行情+业绩报表+业绩预告）...")
@@ -279,10 +329,16 @@ def prepare_input(codes: List[str]) -> Path:
     yjyg = get_yjyg_snapshot()
     yjyg_idx = yjyg.set_index("code") if not yjyg.empty else pd.DataFrame()
 
+    # 互动易问答文本（逐票拉取，约 2-3 秒/只）
+    print(f"[T4-prepare] 拉取互动易问答文本（{len(codes)} 只，约 {len(codes)*3}s）...")
+    irm_texts = get_irm_texts(codes, limit_per_stock=30)
+    irm_hit_count = sum(1 for v in irm_texts.values() if v)
+    print(f"[T4-prepare] 互动易：{irm_hit_count}/{len(codes)} 只有有效问答文本")
+
     period = str(yjbb["period"].iloc[0]) if (not yjbb.empty and "period" in yjbb.columns) else "未知"
 
-    # 关键词命中 + 板块热度（全市场口径）+ 池内来源标签
-    kw_map = scan_keyword_hits(yjyg_idx)
+    # 关键词命中（预告文本 + 互动易文本）+ 板块热度 + 池内来源标签
+    kw_map = scan_keyword_hits(yjyg_idx, irm_texts)
     heat = compute_sector_heat(yjbb_idx, min_gain=50.0)
     meta = _build_pool_meta(codes, yjbb_idx, yjyg_idx, kw_map)
 
@@ -299,14 +355,14 @@ def prepare_input(codes: List[str]) -> Path:
         tags = " | 来源: " + "+".join(m.get("sources", [])) if m.get("sources") else ""
         kw_line = _format_kw_line(m.get("kw"))
 
-        text_block = _build_report_text(code, yjbb_idx, yjyg_idx)
+        text_block = _build_report_text(code, yjbb_idx, yjyg_idx, irm_texts)
         if not text_block:
             text_block = f"（{name or code} 暂无可用财报数据，请手动补充）"
 
         sections.append(
             f"=== {code} · {name or '?'} · {industry or '未知'}{tags} ===\n"
             + (f"{kw_line}\n" if kw_line else "")
-            + f"数据来源: 东财业绩报表/业绩预告（批量抓取）\n"
+            + f"数据来源: 东财业绩报表/业绩预告 + 巨潮互动易（批量抓取）\n"
             f"报告期: {period}；生成日期: {dt.date.today().isoformat()}\n"
             f"------\n"
             f"{text_block}\n"
@@ -383,8 +439,12 @@ def _fmt_yi(v: Any) -> str:
         return ""
 
 
-def _build_report_text(code: str, yjbb: "pd.DataFrame", yjyg: "pd.DataFrame") -> str:
-    """从批量快照中拼出单只票的财报要点文本（无网络调用）。"""
+def _build_report_text(code: str, yjbb: "pd.DataFrame", yjyg: "pd.DataFrame",
+                      irm_texts: Dict[str, str] = None) -> str:
+    """从批量快照中拼出单只票的财报要点文本（无网络调用）。
+
+    文本源：业绩报表（结构化数字）+ 业绩预告（变动原因/描述）+ 互动易问答。
+    """
     import math
 
     lines: List[str] = []
@@ -422,6 +482,14 @@ def _build_report_text(code: str, yjbb: "pd.DataFrame", yjyg: "pd.DataFrame") ->
         reason = str(r.get("reason", "") or "")
         if reason:
             lines.append("变动原因: " + reason)
+
+    if irm_texts and code in irm_texts and irm_texts[code]:
+        irm_text = irm_texts[code]
+        # 截取前 2000 字防文件过大
+        if len(irm_text) > 2000:
+            irm_text = irm_text[:2000] + " ...(截断)"
+        lines.append("互动易问答: " + irm_text)
+
     return "\n".join(lines)
 
 
@@ -595,12 +663,14 @@ def main() -> int:
                         help="运行输入准备阶段（抓取财报摘要）")
     parser.add_argument("--codes", type=str, default="",
                         help="逗号分隔股票代码（prepare 模式；留空则自动发现）")
-    parser.add_argument("--top-n", type=int, default=30,
-                        help="自动发现模式下扫描池上限（默认 30）")
+    parser.add_argument("--top-n", type=int, default=50,
+                        help="自动发现模式下扫描池上限（默认 50）")
     parser.add_argument("--min-gain", type=float, default=50.0,
                         help="预告/报表净利同比门槛（%%，默认 50）")
-    parser.add_argument("--kw-cap", type=int, default=12,
-                        help="关键词源入池上限（默认 12）")
+    parser.add_argument("--kw-cap", type=int, default=20,
+                        help="关键词源入池上限（默认 20）")
+    parser.add_argument("--preview-cap", type=int, default=20,
+                        help="预告增速源入池上限（默认 20，防极端值挤占）")
     parser.add_argument("--input-file", type=Path, default=None,
                         help="覆盖 LLM 输出文件路径")
     parser.add_argument("--dry-run", action="store_true",
@@ -613,7 +683,8 @@ def main() -> int:
             print("[T4] 未指定 --codes，启用自动发现"
                   "（关键词+预告增速+报表增速）...")
             codes, _meta, _heat = discover_scan_pool(
-                top_n=args.top_n, min_gain=args.min_gain, kw_cap=args.kw_cap)
+                top_n=args.top_n, min_gain=args.min_gain,
+                kw_cap=args.kw_cap, preview_cap=args.preview_cap)
             if not codes:
                 print("[T4] 自动发现失败：预告/报表数据均为空，"
                       "请手动 --codes 指定或稍后重试", file=sys.stderr)

@@ -32,6 +32,15 @@ jobs:
 
       - run: pip install -r scripts/requirements.txt
 
+      # 缓存 data/cache（交易日历 + 行情 parquet）。该目录被 .gitignore 忽略，
+      # 不加 cache 时 CI 每次空仓、trading_day 首跑必依赖 akshare 拉新浪接口，
+      # 海外 runner 易超时/限流 → is_trading_day 输出为空 → T1/T8 静默跳过。
+      - uses: actions/cache@v4
+        with:
+          path: data/cache
+          key: data-cache-${{ github.run_id }}
+          restore-keys: data-cache-
+
       - name: check trading day
         id: td
         run: python scripts/lib/trading_day.py

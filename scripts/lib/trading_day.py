@@ -26,6 +26,20 @@ DateLike = Union[str, dt.date, dt.datetime]
 _CACHE_FILE = CACHE_DIR / "trade_calendar.json"
 _CACHE_TTL_HOURS = 24
 
+# A 股按北京时间计日。GitHub Actions runner 默认 UTC，直接用 date.today()
+# 在凌晨触发的任务里会偏移一天；CI 与本地统一用 UTC+8 口径。
+_CN_TZ = dt.timezone(dt.timedelta(hours=8))
+
+
+def today_cn() -> dt.date:
+    """返回北京时间（UTC+8）当前日期。供脚本与 CI 统一口径。"""
+    return dt.datetime.now(_CN_TZ).date()
+
+
+def now_cn() -> dt.datetime:
+    """返回北京时间（UTC+8）当前 datetime（带时区）。报告运行时间用。"""
+    return dt.datetime.now(_CN_TZ)
+
 
 def _normalize(date: DateLike) -> dt.date:
     if isinstance(date, dt.datetime):
@@ -140,8 +154,16 @@ def days_offset_to_date(base: DateLike, trading_days: int) -> dt.date:
 
 
 if __name__ == "__main__":
-    today = dt.date.today() if len(sys.argv) < 2 else _normalize(sys.argv[1])
-    result = is_trading_day(today)
+    today = today_cn() if len(sys.argv) < 2 else _normalize(sys.argv[1])
+    try:
+        result = is_trading_day(today)
+    except Exception as e:
+        # 交易日历拉取失败且无本地缓存（CI 上 data/cache 被 .gitignore 忽略，
+        # 首跑依赖 akshare 访问新浪接口，海外 runner 易超时/限流）。
+        # cron 已限定工作日（1-5），保守判为交易日：宁可多跑一次无信号扫描，
+        # 不可让 is_trading_day 输出为空导致后续 T1/T8/commit 全部静默跳过。
+        print(f"[trading_day] 判定失败({e})，兜底视为交易日", file=sys.stderr)
+        result = True
 
     # GitHub Actions 输出：写 GITHUB_OUTPUT
     gh_output = os.environ.get("GITHUB_OUTPUT")

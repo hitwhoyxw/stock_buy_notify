@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 from lib import notifier, paths, report, signal_log, trade_log
 from lib.config import get_config, get_yaml_tag
 from lib.data_fetch import get_index_daily, get_stock_daily
-from lib.trading_day import is_trading_day
+from lib.trading_day import is_trading_day, today_cn
 
 
 def _pct(a: float, b: float) -> float:
@@ -30,7 +30,7 @@ def _pct(a: float, b: float) -> float:
 
 
 def _price_and_ma60(code: str) -> Optional[Dict[str, float]]:
-    end = dt.date.today()
+    end = today_cn()
     start = end - dt.timedelta(days=180)
     df = get_stock_daily(code, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"), adjust="qfq")
     if df.empty or len(df) < 30:
@@ -67,7 +67,7 @@ def check_c_bucket_drawdown(positions, cfg: Dict[str, Any]) -> List[Dict[str, An
                 "current": f"现价 {m['latest']:.2f} < MA60 {m['ma60']:.2f}",
                 "threshold": "price_index_cross_below_ma60",
                 "action": "同日减仓 50%",
-                "source": f"akshare · {dt.date.today()}",
+                "source": f"akshare · {today_cn()}",
             })
         if dd_thr and m["drawdown_pct"] < -15:
             alerts.append({
@@ -78,7 +78,7 @@ def check_c_bucket_drawdown(positions, cfg: Dict[str, Any]) -> List[Dict[str, An
                 "current": f"距高点 {m['drawdown_pct']:.1f}%",
                 "threshold": "drawdown_from_high_pct > 15",
                 "action": "清仓",
-                "source": f"akshare · {dt.date.today()}",
+                "source": f"akshare · {today_cn()}",
             })
     return alerts
 
@@ -113,7 +113,7 @@ def check_stop_loss(positions, cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "current": f"浮亏 {ret:.1f}%",
                 "threshold": f"< {thr}%",
                 "action": "立即止损清仓",
-                "source": f"akshare · {dt.date.today()}",
+                "source": f"akshare · {today_cn()}",
             })
         elif bucket == "C" and ret >= 40:
             level = "P0" if ret >= 80 else "P1"
@@ -127,7 +127,7 @@ def check_stop_loss(positions, cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "current": f"浮盈 {ret:.1f}%",
                 "threshold": f">= {'80' if ret >= 80 else '40'}%",
                 "action": act,
-                "source": f"akshare · {dt.date.today()}",
+                "source": f"akshare · {today_cn()}",
             })
     return alerts
 
@@ -227,7 +227,8 @@ def _fetch_market_overview() -> str:
     # 中证红利股息率分位
     div = get_dividend_yield_percentile(years=5)
     if div:
-        position = "偏低(便宜)" if div["percentile"] < 30 else ("偏高(贵)" if div["percentile"] > 70 else "中位")
+        # 股息率分位低 = 股价偏贵；分位高 = 股价便宜（红利策略估值视角）
+        position = "偏高(贵)" if div["percentile"] < 30 else ("偏低(便宜)" if div["percentile"] > 70 else "中位")
         rows.append(f"| 中证红利股息率 | {div['current']:.2f}% (5年{div['percentile']:.0f}%分位) | {position} |")
     else:
         rows.append("| 中证红利股息率分位 | N/A | 数据获取失败 |")
@@ -244,9 +245,14 @@ def _fetch_market_overview() -> str:
 
 def main() -> int:
     paths.ensure_dirs()
-    today = dt.date.today()
+    today = today_cn()
 
-    if not is_trading_day(today):
+    try:
+        trading_day = is_trading_day(today)
+    except Exception as e:
+        print(f"[T1] 交易日历判定失败({e})，兜底视为交易日继续", file=sys.stderr)
+        trading_day = True
+    if not trading_day:
         print(f"[T1] {today} 非交易日，跳过")
         return 0
 

@@ -31,7 +31,7 @@ from lib import notifier, paths, report, signal_log
 from lib.config import get_config, get_yaml_tag
 from lib.data_fetch import get_index_daily, get_stock_daily
 from lib.signal_log import RETURN_HORIZONS, parse_date
-from lib.trading_day import days_offset_to_date, is_trading_day
+from lib.trading_day import days_offset_to_date, is_trading_day, today_cn
 
 
 # ============================================================
@@ -108,7 +108,7 @@ def _compute_returns(row: pd.Series, cfg: Dict[str, Any]) -> Dict[str, Any]:
     bench_base = _get_index_close_on(bench_code, base_date)
 
     patch: Dict[str, Any] = {}
-    today = dt.date.today()
+    today = today_cn()
 
     for horizon_days, cols in RETURN_HORIZONS:
         try:
@@ -154,7 +154,7 @@ def check_alpha_decay(df: pd.DataFrame) -> List[Dict[str, Any]]:
     """按 桶+规则ID 汇总最近 90 天记录，若实盘胜率 < 回测预期 - 10pct 且 n>=5 → P0。"""
     if df.empty:
         return []
-    today = dt.date.today()
+    today = today_cn()
     cutoff = today - dt.timedelta(days=90)
 
     df = df.copy()
@@ -206,7 +206,7 @@ def main() -> int:
     args = parser.parse_args()
 
     paths.ensure_dirs()
-    today = dt.date.today()
+    today = today_cn()
     cfg = get_config()
     yaml_tag = get_yaml_tag()
 
@@ -218,7 +218,11 @@ def main() -> int:
         for idx, row in df.iterrows():
             if row.get("是否实际执行", "") != "是":
                 continue
-            patch = _compute_returns(row, cfg)
+            try:
+                patch = _compute_returns(row, cfg)
+            except Exception as e:
+                print(f"[T8] {row.get('signal_id', '')} 回补失败({e})，跳过", file=sys.stderr)
+                continue
             if patch:
                 if args.dry_run:
                     print(f"[dry-run] {row['signal_id']} patch = {patch}")

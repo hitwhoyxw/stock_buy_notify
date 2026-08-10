@@ -374,12 +374,10 @@ def screen_bucket_b() -> pd.DataFrame:
 # ============================================================
 
 def screen_bucket_c() -> pd.DataFrame:
-    """C 桶候选：从 T4 文本判定输出中读取 PASS 条目，补充数据验证列。
+    """C 桶候选：从 T4 文本判定输出中读取 PASS 条目，补充财务指标并按增速排序。
 
-    数据验证维度：
-    - 单季扣非增速 YoY
-    - 合同负债 YoY
-    - 价格指数是否高于 MA60
+    C 桶逻辑：文本信号只做初筛（≥1类命中即可），排序由净利润同比增速决定。
+    数据验证维度：净利润同比增速 YoY（主排序值）、营收同比、毛利率、价格是否高于 MA60。
     """
     print("[T6-C] 从 T4 输出读取文本判定 PASS 标的...")
 
@@ -397,6 +395,11 @@ def screen_bucket_c() -> pd.DataFrame:
         print("[T6-C] T4 输出中无 PASS 条目")
         return pd.DataFrame()
 
+    # 拉取业绩报表快照，用于补充 np_yoy / revenue_yoy / gross_margin
+    print("[T6-C] 拉取业绩报表快照（净利润同比/营收/毛利率）...")
+    yjbb_df = get_yjbb_snapshot()
+    yjbb_idx = yjbb_df.set_index("code") if not yjbb_df.empty else pd.DataFrame()
+
     results: List[Dict[str, Any]] = []
     for item in passed:
         code = str(item.get("stock_code", ""))
@@ -406,9 +409,21 @@ def screen_bucket_c() -> pd.DataFrame:
         cats = item.get("categories_hit", {})
         cats_count = sum(len(v) if isinstance(v, list) else 0 for v in cats.values())
 
-        # 数据验证（简化：只拉取能拿到的）
+        # 从业绩报表快照补充财务指标
+        np_yoy = None
+        revenue_yoy = None
+        gross_margin = None
+        if not yjbb_idx.empty and code in yjbb_idx.index:
+            row = yjbb_idx.loc[code]
+            np_yoy = _safe_float(row, ["np_yoy"])
+            revenue_yoy = _safe_float(row, ["rev_yoy"])
+            gross_margin = _safe_float(row, ["gross_margin"])
+
         # 价格是否高于 MA60
         price_above_ma60 = _check_price_above_ma(code)
+
+        # 主排序值：净利润同比增速，封顶 500% 防极端值
+        sort_val = min(np_yoy, 500.0) if np_yoy is not None else 0.0
 
         results.append({
             "code": code,
@@ -416,12 +431,13 @@ def screen_bucket_c() -> pd.DataFrame:
             "industry": industry,
             "text_score": round(text_score, 2),
             "categories_hit_count": cats_count,
+            "np_yoy": round(np_yoy, 1) if np_yoy is not None else "",
+            "revenue_yoy": round(revenue_yoy, 1) if revenue_yoy is not None else "",
+            "gross_margin": round(gross_margin, 1) if gross_margin is not None else "",
             "price_index_1y_high": "",  # 需要行业指数
-            "gross_margin_qoq": "",     # 需要财报
             "contract_liability_yoy": "",  # 需要财报
-            "earnings_yoy_recurring": "",  # 需要财报
             "price_above_ma60": "是" if price_above_ma60 else "否",
-            "sort_value": round(text_score + cats_count * 0.5, 3),
+            "sort_value": round(sort_val, 3),
         })
 
     print(f"[T6-C] 完成：{len(results)} 只来自 T4 PASS")
@@ -565,9 +581,10 @@ def assemble_output(bucket_a: pd.DataFrame, bucket_b: pd.DataFrame,
         parts.append("（C 桶候选为空）")
     else:
         cols_c = ["code", "name", "industry", "text_score", "categories_hit_count",
-                  "price_index_1y_high", "gross_margin_qoq", "contract_liability_yoy", "earnings_yoy_recurring"]
+                  "np_yoy", "revenue_yoy", "gross_margin",
+                  "price_index_1y_high", "contract_liability_yoy", "price_above_ma60"]
         available = [c for c in cols_c if c in bucket_c.columns]
-        parts.append(bucket_c[available].head(30).to_csv(index=False))
+        parts.append(bucket_c[available].head(50).to_csv(index=False))
     parts.append("")
 
     parts.append(f"=== YAML_TAG: {yaml_tag} ===")
@@ -584,8 +601,8 @@ def main() -> int:
                         help="指定桶（A/B/C 组合，默认 ABC 全跑）")
     parser.add_argument("--dry-run", action="store_true",
                         help="只打印结果，不写输出文件")
-    parser.add_argument("--top", type=int, default=30,
-                        help="每桶输出 top N 候选（默认 30）")
+    parser.add_argument("--top", type=int, default=50,
+                        help="每桶输出 top N 候选（默认 50）")
     args = parser.parse_args()
 
     ensure_dirs()

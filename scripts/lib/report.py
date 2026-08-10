@@ -6,10 +6,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from lib.paths import DATA_DIR
+from lib.trading_day import today_cn, now_cn
 
 
 def report_path(task: str, date: Optional[dt.date] = None) -> Path:
-    date = date or dt.date.today()
+    date = date or today_cn()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     return DATA_DIR / f"report_{date.isoformat()}_{task}.md"
 
@@ -59,11 +60,11 @@ def write_report(task: str, title: str, sections: List[tuple[str, str]],
                  alerts: Optional[List[Dict[str, Any]]] = None,
                  date: Optional[dt.date] = None) -> Path:
     """写报告文件。sections = [(section_title, section_body_md), ...]。返回文件路径。"""
-    date = date or dt.date.today()
+    date = date or today_cn()
     path = report_path(task, date)
     parts: List[str] = [
         f"# {title}",
-        f"_运行时间：{dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_",
+        f"_运行时间：{now_cn().strftime('%Y-%m-%d %H:%M:%S')}_",
         "",
     ]
     if alerts is not None:

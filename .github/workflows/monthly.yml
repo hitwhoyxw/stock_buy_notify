@@ -32,6 +32,12 @@ jobs:
 
       - run: pip install -r scripts/requirements.txt
 
+      - uses: actions/cache@v4
+        with:
+          path: data/cache
+          key: data-cache-${{ github.run_id }}
+          restore-keys: data-cache-
+
       - name: T3 monthly rebalance
         env:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}

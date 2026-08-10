@@ -1210,6 +1210,66 @@ def _fetch_yjyg_snapshot() -> pd.DataFrame:
     return pd.DataFrame()
 
 
+# ============================================================
+# 互动易（投资者关系问答）——逐票拉取，补充文本信号源
+# ============================================================
+
+_irm_cache: Dict[str, str] = {}
+
+
+def get_irm_texts(codes: List[str], limit_per_stock: int = 30) -> Dict[str, str]:
+    """批量拉取互动易（stock_irm_cninfo）问答文本。
+
+    互动易是巨潮旗下的投资者关系互动平台，每只票有数十条 Q&A。
+    这里逐票请求（每只约 2-3 秒），拼成 {code: "Q: ... A: ...\\nQ: ... A: ..."} 格式。
+    仅保留有回答内容的 Q&A（过滤 None），取最近 limit_per_stock 条。
+    """
+    import akshare as ak
+    import time
+
+    out: Dict[str, str] = {}
+    for i, code in enumerate(codes):
+        code = str(code).strip().split(".")[0].zfill(6)
+        if code in _irm_cache:
+            out[code] = _irm_cache[code]
+            continue
+        try:
+            df = ak.stock_irm_cninfo(symbol=code)
+            if df is None or df.empty:
+                _irm_cache[code] = ""
+                out[code] = ""
+                continue
+            # 只保留有回答的
+            if "回答内容" in df.columns:
+                answered = df[df["回答内容"].notna()
+                              & (df["回答内容"].astype(str) != "None")
+                              & (df["回答内容"].astype(str).str.len() > 5)]
+            else:
+                answered = df
+            if answered.empty:
+                _irm_cache[code] = ""
+                out[code] = ""
+                continue
+            answered = answered.head(limit_per_stock)
+            qa_parts: List[str] = []
+            for _, row in answered.iterrows():
+                q = str(row.get("问题", "") or "").strip()
+                a = str(row.get("回答内容", "") or "").strip()
+                if a and a != "None" and len(a) > 5:
+                    qa_parts.append(f"Q: {q[:200]}\nA: {a[:500]}")
+            text = "\n\n".join(qa_parts)
+            _irm_cache[code] = text
+            out[code] = text
+            if (i + 1) % 10 == 0:
+                print(f"[data_fetch] 互动易: {i + 1}/{len(codes)} 完成", file=sys.stderr)
+            time.sleep(0.5)  # 轻微限流
+        except Exception as e:
+            print(f"[data_fetch] 互动易({code}) 失败: {e}", file=sys.stderr)
+            _irm_cache[code] = ""
+            out[code] = ""
+    return out
+
+
 def get_batch_fundamentals(codes: List[str]) -> pd.DataFrame:
     """批量获取一组股票的基本面，返回以 code 为索引的 DataFrame。
 
