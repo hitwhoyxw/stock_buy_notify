@@ -44,6 +44,97 @@ T4_OUTPUT = DATA_DIR / "skill_output_T4C.md"
 
 
 # ============================================================
+# 机构持仓识别（险资/社保/养老金/QFII）
+# ============================================================
+
+_INSURANCE_KW = ["保险", "人寿", "平安", "泰康", "太保", "人保", "新华保险",
+                 "太平人寿", "友邦", "中再", "大家人寿", "农银人寿"]
+_SOCIAL_SECURITY_KW = ["社保", "全国社保"]
+_PENSION_KW = ["基本养老", "养老基金"]  # 政府养老金，排除商业养老保险
+_QFII_KW = ["摩根", "瑞银", "高盛", "富达", "QFII", "渣打", "花旗", "德银",
+            "野村", "景顺", "施罗德", "巴克莱", "汇丰", "挪威中央银行",
+            "阿布达比", "科威特", "淡马锡", "比尔盖茨", "老虎", "安本",
+            "魁尔坎", "法兴", "新加坡政府投资", "澳门金融", "瑞信",
+            "伯克希尔", "耶鲁", "斯坦福"]
+
+
+def _classify_holder(name: str) -> list:
+    """识别股东属于哪类机构，返回 tag list。"""
+    tags = []
+    is_pension = any(kw in name for kw in _PENSION_KW)
+    # 保险：排除政府养老金（避免"基本养老保险基金"误匹配）
+    if not is_pension and any(kw in name for kw in _INSURANCE_KW):
+        tags.append("保险")
+    if is_pension:
+        tags.append("养老")
+    if any(kw in name for kw in _SOCIAL_SECURITY_KW):
+        tags.append("社保")
+    if any(kw in name for kw in _QFII_KW):
+        tags.append("QFII")
+    return tags
+
+
+def _fetch_institutional_holders(codes: list) -> dict:
+    """批量拉取十大流通股东并分类（东方财富 API）。
+    返回 {code: {insurance, social_security, pension, qfii, detail, count}}
+    """
+    import requests
+    import time
+    print(f"[T6] 拉取机构持仓（{len(codes)} 只）...")
+    result = {}
+    for i, code in enumerate(codes):
+        code = str(code).zfill(6)
+        if code.startswith("920"):
+            prefix = "BJ"
+        elif code.startswith(("0", "3", "2")):
+            prefix = "SZ"
+        else:
+            prefix = "SH"
+        url = "http://datacenter-web.eastmoney.com/api/data/v1/get"
+        params = {
+            "reportName": "RPT_F10_EH_FREEHOLDERS",
+            "columns": "HOLDER_NAME,FREE_HOLDNUM_RATIO",
+            "filter": f'(SECUCODE="{code}.{prefix}")',
+            "pageNumber": "1",
+            "pageSize": "10",
+            "sortColumns": "UPDATE_DATE,HOLDER_RANK",
+            "sortTypes": "-1,1",
+            "source": "WEB",
+            "client": "WEB",
+        }
+        try:
+            resp = requests.get(url, params=params, timeout=10,
+                                headers={"User-Agent": "Mozilla/5.0"})
+            data = resp.json()
+            rows = data.get("result", {}).get("data", []) if data.get("result") else []
+        except Exception:
+            rows = []
+
+        tags_found = set()
+        detail_parts = []
+        for r in rows:
+            hname = r.get("HOLDER_NAME", "")
+            htags = _classify_holder(hname)
+            if htags:
+                tags_found.update(htags)
+                detail_parts.append(f"{hname}[{'/'.join(htags)}]")
+
+        result[code] = {
+            "insurance": "保险" in tags_found,
+            "social_security": "社保" in tags_found,
+            "pension": "养老" in tags_found,
+            "qfii": "QFII" in tags_found,
+            "detail": "; ".join(detail_parts) if detail_parts else "",
+            "count": len(tags_found),
+        }
+        if (i + 1) % 20 == 0:
+            print(f"  机构持仓 {i + 1}/{len(codes)}")
+        time.sleep(0.15)  # 避免限频
+    print(f"[T6] 机构持仓拉取完成")
+    return result
+
+
+# ============================================================
 # A 桶 · 红利逆向
 # ============================================================
 
@@ -91,6 +182,9 @@ def screen_bucket_a() -> pd.DataFrame:
     pq_df = get_profit_quality_snapshot()
     pq_df = pq_df.set_index("code") if not pq_df.empty else pd.DataFrame()
 
+    # 拉取机构持仓（险资/社保/养老金/QFII）
+    inst_holders = _fetch_institutional_holders(cons["code"].tolist())
+
     for i, row in cons.iterrows():
         code = str(row["code"])
         name = str(row.get("name", ""))
@@ -131,6 +225,11 @@ def screen_bucket_a() -> pd.DataFrame:
         div_years = 5  # 简化：成分股默认至少 3 年（实际需要接口）
         quality_score = roe_score * 0.4 + fcf_coverage * 0.3 + (div_years / 10) * 0.3
 
+        # 机构持仓加分：每种机构 +0.05（最多 +0.20）
+        inst = inst_holders.get(code, {})
+        inst_count = inst.get("count", 0)
+        quality_score += 0.05 * inst_count
+
         # PB 分位（简化：使用当前 PB / 历史中位 PB 的逆）
         pb_percentile = min(100, max(0, (2.0 - (pb or 1.5)) / 2.0 * 100)) if pb else 50.0
 
@@ -160,6 +259,11 @@ def screen_bucket_a() -> pd.DataFrame:
             "loss_q_3y": int(loss_q) if loss_q is not None else "",
             "ocf_ps_annual": round(ocf_ps, 2) if ocf_ps is not None else "",
             "quality_score": round(quality_score, 3),
+            "has_insurance": "是" if inst.get("insurance") else "",
+            "has_social_security": "是" if inst.get("social_security") else "",
+            "has_pension": "是" if inst.get("pension") else "",
+            "has_qfii": "是" if inst.get("qfii") else "",
+            "inst_detail": inst.get("detail", ""),
             "sort_value": round(sort_value, 3),
             "pick_reason": " | ".join(reason_parts),
         })
@@ -356,6 +460,11 @@ def screen_bucket_b() -> pd.DataFrame:
             "pe_ttm": round(pe, 1),
             "peg": round(peg, 2),
             "sort_value": round(sort_val, 3),
+            "has_insurance": "",
+            "has_social_security": "",
+            "has_pension": "",
+            "has_qfii": "",
+            "inst_detail": "",
             "pick_reason": reason,
         })
 
@@ -363,6 +472,21 @@ def screen_bucket_b() -> pd.DataFrame:
     drop_note = "、".join(f"{k}{v}" for k, v in dropped.items() if v)
     if drop_note:
         print(f"[T6-B] 剔除分布: {drop_note}")
+
+    # 通过硬门槛后再拉取机构持仓（避免拉取 1000 只）
+    if results:
+        passing_codes = [r["code"] for r in results]
+        inst_data = _fetch_institutional_holders(passing_codes)
+        for r in results:
+            inst = inst_data.get(r["code"], {})
+            r["has_insurance"] = "是" if inst.get("insurance") else ""
+            r["has_social_security"] = "是" if inst.get("social_security") else ""
+            r["has_pension"] = "是" if inst.get("pension") else ""
+            r["has_qfii"] = "是" if inst.get("qfii") else ""
+            r["inst_detail"] = inst.get("detail", "")
+            inst_count = inst.get("count", 0)
+            r["sort_value"] = round(r["sort_value"] + 0.3 * inst_count, 3)  # 每种 +0.3
+
     df = pd.DataFrame(results)
     if not df.empty:
         df = df.sort_values("sort_value", ascending=False).reset_index(drop=True)
@@ -408,6 +532,9 @@ def screen_bucket_c() -> pd.DataFrame:
     if isinstance(fund_idx.index, pd.MultiIndex):
         fund_idx = fund_idx.reset_index().drop_duplicates("code").set_index("code")
 
+    # 拉取机构持仓（险资/社保/养老金/QFII）
+    inst_holders = _fetch_institutional_holders(all_codes)
+
     results: List[Dict[str, Any]] = []
     for item in passed:
         code = str(item.get("stock_code", ""))
@@ -443,6 +570,11 @@ def screen_bucket_c() -> pd.DataFrame:
         # 主排序值：净利润同比增速，封顶 500% 防极端值
         sort_val = min(np_yoy, 500.0) if np_yoy is not None else 0.0
 
+        # 机构持仓加分：每种机构 +10（最多 +40）
+        inst = inst_holders.get(code, {})
+        inst_count = inst.get("count", 0)
+        sort_val += 10 * inst_count
+
         results.append({
             "code": code,
             "name": name,
@@ -457,6 +589,11 @@ def screen_bucket_c() -> pd.DataFrame:
             "price_index_1y_high": "",  # 需要行业指数
             "contract_liability_yoy": "",  # 需要财报
             "price_above_ma60": "是" if price_above_ma60 else "否",
+            "has_insurance": "是" if inst.get("insurance") else "",
+            "has_social_security": "是" if inst.get("social_security") else "",
+            "has_pension": "是" if inst.get("pension") else "",
+            "has_qfii": "是" if inst.get("qfii") else "",
+            "inst_detail": inst.get("detail", ""),
             "sort_value": round(sort_val, 3),
         })
 
@@ -575,6 +712,7 @@ def assemble_output(bucket_a: pd.DataFrame, bucket_b: pd.DataFrame,
         cols_a = ["code", "name", "industry", "price", "dividend_yield_ttm", "dividend_percentile_5y",
                   "roe_5y_avg", "fcf_coverage", "pb", "pb_percentile", "dividend_years",
                   "loss_q_3y", "ocf_ps_annual", "quality_score",
+                  "has_insurance", "has_social_security", "has_pension", "has_qfii",
                   "sort_value", "pick_reason"]
         # 只取存在的列
         available = [c for c in cols_a if c in bucket_a.columns]
@@ -590,6 +728,7 @@ def assemble_output(bucket_a: pd.DataFrame, bucket_b: pd.DataFrame,
         cols_b = ["code", "name", "industry", "price", "total_mv_yi",
                   "profit_cagr_3y", "revenue_cagr_3y", "np_yoy_latest",
                   "roe_ann", "ocf_to_np", "loss_q_3y", "pe_ttm", "peg",
+                  "has_insurance", "has_social_security", "has_pension", "has_qfii",
                   "sort_value", "pick_reason"]
         available = [c for c in cols_b if c in bucket_b.columns]
         parts.append(bucket_b[available].head(50).to_csv(index=False))
@@ -603,6 +742,7 @@ def assemble_output(bucket_a: pd.DataFrame, bucket_b: pd.DataFrame,
         cols_c = ["code", "name", "industry", "text_score", "categories_hit_count",
                   "np_yoy", "revenue_yoy", "gross_margin",
                   "pe_ttm", "peg",
+                  "has_insurance", "has_social_security", "has_pension", "has_qfii",
                   "price_index_1y_high", "contract_liability_yoy", "price_above_ma60"]
         available = [c for c in cols_c if c in bucket_c.columns]
         parts.append(bucket_c[available].to_csv(index=False))
