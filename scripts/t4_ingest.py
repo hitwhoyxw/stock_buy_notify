@@ -647,6 +647,36 @@ def ingest(path: Path, dry_run: bool = False) -> int:
                  f"分={p.get('weighted_score','')}）" for p in passed[:10]])
             notify(summary, title="T4 C桶文本信号", level="P1")
 
+    # 汇总 LLM 建议的新关键词（suggested_keywords 字段）
+    suggested: Dict[str, set] = {"demand": set(), "price": set(), "supply": set(), "negative": set()}
+    for item in results:
+        sk = item.get("suggested_keywords") or {}
+        for cat, kws in sk.items():
+            if cat in suggested and isinstance(kws, list):
+                suggested[cat].update(kws)
+
+    has_new = any(suggested.values())
+    if has_new:
+        print("\n[T4-ingest] LLM 建议补充的新关键词（人工审核后可更新到 02_strategy_config.yaml）：")
+        for cat, kws in suggested.items():
+            if kws:
+                print(f"  {cat}: {', '.join(sorted(kws))}")
+        # 在报告中也加一节
+        kw_lines = []
+        for cat, kws in suggested.items():
+            if kws:
+                kw_lines.append(f"- **{cat}**：{', '.join(sorted(kws))}")
+        if kw_lines:
+            sections.append(("LLM 建议补充关键词", "\n".join(kw_lines)))
+            if not dry_run:
+                report_path2 = write_report(
+                    task="T4",
+                    title=f"T4 财报季文本扫描 · {today}",
+                    sections=sections,
+                    alerts=alerts,
+                    date=today,
+                )
+
     return written
 
 

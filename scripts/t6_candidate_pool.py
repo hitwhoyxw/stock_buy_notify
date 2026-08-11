@@ -400,6 +400,14 @@ def screen_bucket_c() -> pd.DataFrame:
     yjbb_df = get_yjbb_snapshot()
     yjbb_idx = yjbb_df.set_index("code") if not yjbb_df.empty else pd.DataFrame()
 
+    # 拉取基本面（PE_TTM），用于计算 PEG
+    # 用 get_batch_fundamentals 而非 get_fundamentals_snapshot，因为前者会降级到腾讯批量行情
+    print("[T6-C] 拉取基本面快照（PE_TTM → PEG）...")
+    all_codes = [str(item.get("stock_code", "")) for item in passed]
+    fund_idx = get_batch_fundamentals(all_codes)
+    if isinstance(fund_idx.index, pd.MultiIndex):
+        fund_idx = fund_idx.reset_index().drop_duplicates("code").set_index("code")
+
     results: List[Dict[str, Any]] = []
     for item in passed:
         code = str(item.get("stock_code", ""))
@@ -419,6 +427,16 @@ def screen_bucket_c() -> pd.DataFrame:
             revenue_yoy = _safe_float(row, ["rev_yoy"])
             gross_margin = _safe_float(row, ["gross_margin"])
 
+        # 从基本面快照补充 PE_TTM
+        pe_ttm = None
+        if not fund_idx.empty and code in fund_idx.index:
+            pe_ttm = _safe_float(fund_idx.loc[code], ["pe_ttm"])
+
+        # PEG = PE_TTM / 净利润同比增速（增速用百分比数字，如 50% → 50）
+        peg = None
+        if pe_ttm is not None and pe_ttm > 0 and np_yoy is not None and np_yoy > 0:
+            peg = round(pe_ttm / np_yoy, 2)
+
         # 价格是否高于 MA60
         price_above_ma60 = _check_price_above_ma(code)
 
@@ -434,6 +452,8 @@ def screen_bucket_c() -> pd.DataFrame:
             "np_yoy": round(np_yoy, 1) if np_yoy is not None else "",
             "revenue_yoy": round(revenue_yoy, 1) if revenue_yoy is not None else "",
             "gross_margin": round(gross_margin, 1) if gross_margin is not None else "",
+            "pe_ttm": round(pe_ttm, 1) if pe_ttm is not None else "",
+            "peg": peg if peg is not None else "",
             "price_index_1y_high": "",  # 需要行业指数
             "contract_liability_yoy": "",  # 需要财报
             "price_above_ma60": "是" if price_above_ma60 else "否",
@@ -582,9 +602,10 @@ def assemble_output(bucket_a: pd.DataFrame, bucket_b: pd.DataFrame,
     else:
         cols_c = ["code", "name", "industry", "text_score", "categories_hit_count",
                   "np_yoy", "revenue_yoy", "gross_margin",
+                  "pe_ttm", "peg",
                   "price_index_1y_high", "contract_liability_yoy", "price_above_ma60"]
         available = [c for c in cols_c if c in bucket_c.columns]
-        parts.append(bucket_c[available].head(50).to_csv(index=False))
+        parts.append(bucket_c[available].to_csv(index=False))
     parts.append("")
 
     parts.append(f"=== YAML_TAG: {yaml_tag} ===")
@@ -627,8 +648,7 @@ def main() -> int:
     if "C" in buckets:
         bucket_c = screen_bucket_c()
         if not bucket_c.empty:
-            bucket_c = bucket_c.head(args.top)
-            print(f"\n[T6] C 桶 Top {len(bucket_c)} 候选就绪")
+            print(f"\n[T6] C 桶 {len(bucket_c)} 候选就绪（不截断）")
 
     output = assemble_output(bucket_a, bucket_b, bucket_c)
 
