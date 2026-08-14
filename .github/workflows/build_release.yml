@@ -1,0 +1,102 @@
+name: Build Desktop Release
+
+on:
+  schedule:
+    # 19:30 CST (UTC+8) = 11:30 UTC，每天一次
+    - cron: "30 11 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 需完整历史才能查 tag
+
+      # 仅当 HEAD 没有被 tag 过（即有新提交）才构建，
+      # 避免每天重复发版。manual dispatch 时也会检查。
+      - name: Check if HEAD is already released
+        id: check
+        shell: bash
+        run: |
+          if [ -n "$(git tag --points-at HEAD)" ]; then
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "::notice::HEAD 已有 release tag，跳过构建"
+          else
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "::notice::HEAD 无 release tag，将构建新版本"
+          fi
+
+      - name: Skip (no updates)
+        if: steps.check.outputs.should_build != 'true'
+        run: echo "No new commits since last release. Skipping."
+
+      - name: Setup Python
+        if: steps.check.outputs.should_build == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        if: steps.check.outputs.should_build == 'true'
+        run: pip install pyinstaller PyQt5 pandas openpyxl -q
+
+      # 版本号 = vYYYY.MM.DD；同一天多次触发则追加短 SHA
+      - name: Compute version
+        if: steps.check.outputs.should_build == 'true'
+        id: version
+        shell: bash
+        run: |
+          VERSION="v$(date +%Y.%m.%d)"
+          if git tag -l "$VERSION" | grep -q .; then
+            SHA=$(git rev-parse --short HEAD)
+            VERSION="$VERSION-$SHA"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build with PyInstaller
+        if: steps.check.outputs.should_build == 'true'
+        working-directory: desktop
+        run: pyinstaller --noconfirm --onedir --windowed --name "三桶策略系统" --add-data "..\scripts;scripts" --add-data "..\skills;skills" --add-data "..\trading-system;trading-system" --add-data "..\data;data" --hidden-import PyQt5 --hidden-import pandas main.py
+
+      - name: Zip artifact
+        if: steps.check.outputs.should_build == 'true'
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          $zipPath = "desktop\三桶策略系统-$v.zip"
+          Compress-Archive -Path "desktop\dist\三桶策略系统\*" -DestinationPath $zipPath -Force
+          $sizeMB = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
+          Write-Host "Created: $zipPath ($sizeMB MB)"
+
+      - name: Create Release
+        if: steps.check.outputs.should_build == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DATE_STR=$(date '+%Y-%m-%d %H:%M')
+          SHA_SHORT=${GITHUB_SHA:0:7}
+
+          gh release create "$VERSION" \
+            "desktop/三桶策略系统-$VERSION.zip" \
+            --title "三桶策略系统 $VERSION" \
+            --notes "## 自动构建
+
+构建时间: $DATE_STR
+提交: $SHA_SHORT
+
+### 下载
+- 解压后双击 三桶策略系统.exe 运行
+- 需 Windows 10/11，无需安装 Python 环境"
+
+      - name: Cleanup build artifacts
+        if: always()
+        shell: bash
+        run: rm -rf desktop/build desktop/dist desktop/*.spec || true
