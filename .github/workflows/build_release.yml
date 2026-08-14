@@ -3,7 +3,7 @@ name: Build Desktop Release
 on:
   schedule:
     # 19:30 CST (UTC+8) = 11:30 UTC，每天一次
-    - cron: "30 11 * *"
+    - cron: "30 11 * * *"
   workflow_dispatch:
 
 permissions:
