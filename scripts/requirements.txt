@@ -10,5 +10,10 @@ requests>=2.31,<3.0
 python-dateutil>=2.8,<3.0
 pyarrow>=14.0,<20.0
 
+# 桌面端
+PyQt5>=5.15,<6.0
+pyqtgraph>=0.13,<1.0
+matplotlib>=3.5,<4.0
+
 # 邮件（用 stdlib smtplib，无额外依赖）
 # LLM 客户端在 skills 阶段暂不接入，无需额外包

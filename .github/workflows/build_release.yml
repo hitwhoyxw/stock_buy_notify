@@ -44,7 +44,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.check.outputs.should_build == 'true'
-        run: pip install pyinstaller PyQt5 pandas openpyxl -q
+        run: pip install pyinstaller PyQt5 pyqtgraph matplotlib pandas openpyxl -q
 
       # 版本号 = vYYYY.MM.DD；同一天多次触发则追加短 SHA
       - name: Compute version
@@ -62,7 +62,7 @@ jobs:
       - name: Build with PyInstaller
         if: steps.check.outputs.should_build == 'true'
         working-directory: desktop
-        run: pyinstaller --noconfirm --onedir --windowed --name "三桶策略系统" --add-data "..\scripts;scripts" --add-data "..\skills;skills" --add-data "..\trading-system;trading-system" --add-data "..\data;data" --hidden-import PyQt5 --hidden-import pandas main.py
+        run: pyinstaller --noconfirm --onedir --windowed --name "三桶策略系统" --add-data "..\scripts;scripts" --add-data "..\skills;skills" --add-data "..\trading-system;trading-system" --add-data "..\data;data" --hidden-import PyQt5 --hidden-import pandas --hidden-import pyqtgraph --hidden-import matplotlib --hidden-import matplotlib.backends.backend_qt5agg main.py
 
       - name: Zip artifact
         if: steps.check.outputs.should_build == 'true'

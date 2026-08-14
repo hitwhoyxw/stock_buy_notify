@@ -17,17 +17,19 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox,
     QSystemTrayIcon, QMenu, QAction, QStyle, QGroupBox,
-    QFormLayout, QSpinBox, QCheckBox,
+    QFormLayout, QSpinBox, QCheckBox, QTimeEdit,
 )
 
 from engine import (
     detect_project_root, detect_python, load_config, save_config,
     TaskEngine, DataManager,
 )
+from scheduler import TaskScheduler
 from tab_dashboard import DashboardTab
 from tab_candidates import CandidatesTab
 from tab_llm import LLMBridgeTab
 from tab_reports import ReportsTab
+from tab_portfolio import PortfolioTab
 
 
 class SettingsTab(QWidget):
@@ -108,6 +110,31 @@ class SettingsTab(QWidget):
 
         lay.addWidget(auto_group)
 
+        # ── 内置定时器 ──
+        sched_group = QGroupBox("内置定时器（本地自动跑任务）")
+        sched_form = QFormLayout(sched_group)
+
+        self.sched_enabled = QCheckBox("启用定时执行（工作日）")
+        self.sched_enabled.setChecked(self.config.get("scheduler_enabled", False))
+        sched_form.addRow("", self.sched_enabled)
+
+        self.sched_time = QTimeEdit()
+        self.sched_time.setDisplayFormat("HH:mm")
+        default_time = self.config.get("scheduler_time", "16:30")
+        try:
+            h, m = map(int, default_time.split(":"))
+            from PyQt5.QtCore import QTime
+            self.sched_time.setTime(QTime(h, m))
+        except Exception:
+            pass
+        sched_form.addRow("每日运行时间:", self.sched_time)
+
+        self.sched_tasks = QLineEdit(self.config.get("scheduler_tasks_str", "T1 T8"))
+        self.sched_tasks.setPlaceholderText("如 T1 T8")
+        sched_form.addRow("运行任务:", self.sched_tasks)
+
+        lay.addWidget(sched_group)
+
         # ── 保存按钮 ──
         save_btn = QPushButton("💾 保存设置")
         save_btn.setStyleSheet(
@@ -150,6 +177,14 @@ class SettingsTab(QWidget):
         self.config["auto_refresh"] = self.auto_refresh.isChecked()
         self.config["refresh_interval"] = self.refresh_interval.value()
 
+        # 定时器配置
+        self.config["scheduler_enabled"] = self.sched_enabled.isChecked()
+        sched_time = self.sched_time.time()
+        self.config["scheduler_time"] = f"{sched_time.hour():02d}:{sched_time.minute():02d}"
+        tasks_str = self.sched_tasks.text().strip()
+        self.config["scheduler_tasks_str"] = tasks_str
+        self.config["scheduler_tasks"] = [t.strip() for t in tasks_str.split() if t.strip()] or ["T1", "T8"]
+
         save_config(self.config)
 
         if self.on_save:
@@ -180,6 +215,9 @@ class MainWindow(QMainWindow):
         self.config.setdefault("project_root", root)
         self.config.setdefault("python_exe", detect_python())
         self.config.setdefault("data_dir", os.path.join(root, "data"))
+        self.config.setdefault("scheduler_enabled", False)
+        self.config.setdefault("scheduler_time", "16:30")
+        self.config.setdefault("scheduler_tasks", ["T1", "T8"])
 
         # 初始化引擎和数据管理器
         self.engine = TaskEngine(
@@ -188,6 +226,11 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._build_tray()
+
+        # 初始化定时器
+        self.scheduler = TaskScheduler(self.engine, self.config)
+        self.scheduler.status_message.connect(self._on_scheduler_status)
+        self.scheduler.task_finished.connect(self._on_scheduler_task_done)
 
     def _build_ui(self):
         self.setWindowTitle("三桶策略系统 — 桌面端")
@@ -213,12 +256,14 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
 
         self.tab_dashboard = DashboardTab(self.engine)
+        self.tab_portfolio = PortfolioTab(self.dm)
         self.tab_candidates = CandidatesTab(self.dm)
         self.tab_llm = LLMBridgeTab(self.dm, self.engine)
         self.tab_reports = ReportsTab(self.dm)
         self.tab_settings = SettingsTab(self.config, on_save=self._on_settings_saved)
 
         tabs.addTab(self.tab_dashboard, "📊 任务面板")
+        tabs.addTab(self.tab_portfolio, "💼 持仓总览")
         tabs.addTab(self.tab_candidates, "📋 候选池")
         tabs.addTab(self.tab_llm, "🤖 LLM 桥接")
         tabs.addTab(self.tab_reports, "📈 报告")
@@ -261,6 +306,9 @@ class MainWindow(QMainWindow):
         self.engine.python_exe = cfg["python_exe"]
         self.dm.set_data_dir(cfg["data_dir"])
 
+        # 重载定时器配置
+        self.scheduler.reload_config(cfg)
+
         self.statusBar().showMessage(
             f"项目: {cfg['project_root']}  |  "
             f"数据: {cfg['data_dir']}  |  "
@@ -269,11 +317,22 @@ class MainWindow(QMainWindow):
         # 刷新当前页面
         idx = self.tabs.currentIndex()
         if idx == 1:
-            self.tab_candidates._load()
+            self.tab_portfolio._load()
         elif idx == 2:
-            self.tab_llm._load()
+            self.tab_candidates._load()
         elif idx == 3:
+            self.tab_llm._load()
+        elif idx == 4:
             self.tab_reports._load_list()
+
+    def _on_scheduler_status(self, msg: str):
+        """定时器状态更新到状态栏。"""
+        self.statusBar().showMessage(msg)
+
+    def _on_scheduler_task_done(self, key: str, ok: bool):
+        """定时器任务完成后刷新数据。"""
+        if ok:
+            self.tab_portfolio._load()
 
     def closeEvent(self, e):
         """关闭时最小化到托盘（不退出）。"""

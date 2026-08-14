@@ -331,3 +331,53 @@ class DataManager:
         if not info:
             return False
         return self.save_text(info["output"], content)
+
+    # ── 持仓 & 净值 ──
+
+    def load_positions(self) -> pd.DataFrame:
+        """从 live_trade_log.csv 解析当前持仓。
+
+        返回列：代码, 名称, 桶, 申万一级行业, 净股数, 累计成本金额, 平均成本
+        """
+        df = self.load_csv("live_trade_log.csv")
+        if df.empty:
+            return pd.DataFrame(columns=["代码", "名称", "桶", "申万一级行业",
+                                         "净股数", "累计成本金额", "平均成本"])
+        for c in ["股数", "金额"]:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+        df["signed_shares"] = df.apply(
+            lambda r: r.get("股数", 0) if str(r.get("方向", "")).strip() in ("买入", "buy", "BUY")
+            else -r.get("股数", 0), axis=1)
+        df["signed_amount"] = df.apply(
+            lambda r: r.get("金额", 0) if str(r.get("方向", "")).strip() in ("买入", "buy", "BUY")
+            else -r.get("金额", 0), axis=1)
+        agg = df.groupby("代码").agg(
+            名称=("名称", "last"),
+            桶=("桶", "last"),
+            申万一级行业=("申万一级行业", "last"),
+            净股数=("signed_shares", "sum"),
+            累计成本金额=("signed_amount", "sum"),
+        ).reset_index()
+        agg = agg[agg["净股数"] > 0].copy()
+        agg["平均成本"] = agg["累计成本金额"] / agg["净股数"].replace(0, pd.NA)
+        return agg
+
+    def load_nav(self) -> pd.DataFrame:
+        """读取 portfolio_nav.csv 净值序列。"""
+        return self.load_csv("portfolio_nav.csv")
+
+    def bucket_weights(self) -> dict:
+        """按累计成本计算四桶占比。"""
+        pos = self.load_positions()
+        weights = {"A": 0.0, "B": 0.0, "C": 0.0, "D": 0.0}
+        if pos.empty:
+            return weights
+        total = float(pos["累计成本金额"].sum())
+        if total <= 0:
+            return weights
+        for _, row in pos.iterrows():
+            b = str(row.get("桶", "")).strip().upper()
+            if b in weights:
+                weights[b] += float(row["累计成本金额"]) / total
+        return weights

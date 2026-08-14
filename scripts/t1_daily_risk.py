@@ -19,7 +19,7 @@ import datetime as dt
 import sys
 from typing import Any, Dict, List, Optional
 
-from lib import notifier, paths, report, signal_log, trade_log
+from lib import c_signal, notifier, paths, portfolio_nav, report, signal_log, trade_log
 from lib.config import get_config, get_yaml_tag
 from lib.data_fetch import get_index_daily, get_stock_daily
 from lib.trading_day import is_trading_day, today_cn
@@ -178,10 +178,18 @@ def check_concentration(positions, cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def check_portfolio_drawdown(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """组合级回撤检查。当前 04 号日志暂无净值序列，本函数只输出提示文案，
-    等 T5 归因或客户端接入后补真实净值曲线。
+    """组合级回撤熔断检查。读取 portfolio_nav.csv 净值序列判断是否触发阈值。"""
+    return portfolio_nav.check_circuit_breaker(cfg)
+
+
+def check_c_exit_signals(positions, cfg: Dict[str, Any]) -> str:
+    """C 桶卖出信号扫描框架。
+
+    已有规则（C-E1~E5）由 check_c_bucket_drawdown / check_stop_loss 覆盖。
+    此函数输出 C 桶量化分析框架报告，待用户填充量化模型后生成买卖点建议。
     """
-    return []
+    analyses = c_signal.analyze_c_positions(positions, cfg)
+    return c_signal.render_c_analysis(analyses)
 
 
 # ============================================================
@@ -259,6 +267,16 @@ def main() -> int:
     cfg = get_config()
     positions = trade_log.current_positions()
 
+    # 更新组合净值序列
+    nav_info = None
+    try:
+        nav_info = portfolio_nav.update_nav(positions, today)
+        print(f"[T1] 净值更新: nav={nav_info['nav']:.4f} "
+              f"回撤={nav_info['drawdown_pct']:.1f}% "
+              f"总市值={nav_info['total_mv']:.0f}")
+    except Exception as e:
+        print(f"[T1] 净值更新失败: {e}", file=sys.stderr)
+
     alerts: List[Dict[str, Any]] = []
     alerts.extend(check_c_bucket_drawdown(positions, cfg))
     alerts.extend(check_stop_loss(positions, cfg))
@@ -302,18 +320,44 @@ def main() -> int:
     weights = trade_log.bucket_weights()
     weights_md = " · ".join(f"{k}={v * 100:.1f}%" for k, v in weights.items())
 
+    # C 桶卖出信号扫描
+    c_exit_report = check_c_exit_signals(positions, cfg)
+
     # 组装报告
+    nav_md = ""
+    if nav_info:
+        nav_md = (
+            f"| 净值 | {nav_info['nav']:.4f} |\n"
+            f"| 峰值净值 | {nav_info['peak_nav']:.4f} |\n"
+            f"| 当前回撤 | {nav_info['drawdown_pct']:.1f}% |\n"
+            f"| 总市值 | {nav_info['total_mv']:.0f} 元 |\n"
+            f"| A/B/C/D 市值 | "
+            f"{nav_info['bucket_mv']['A']:.0f} / "
+            f"{nav_info['bucket_mv']['B']:.0f} / "
+            f"{nav_info['bucket_mv']['C']:.0f} / "
+            f"{nav_info['bucket_mv']['D']:.0f} 元 |\n"
+        )
+    else:
+        nav_md = "_净值数据获取失败_\n"
+
+    # 风控检查结论
+    cb_status = (
+        f"已检查（回撤 {nav_info['drawdown_pct']:.1f}%）"
+        if nav_info else "净值获取失败"
+    )
     sections = [
         ("市场概况", market_overview),
         ("四桶权重", f"`{weights_md}`\n\n"
                     f"持仓标的数：**{len(positions)}**\n"),
+        ("组合净值", nav_md),
         ("持仓明细", report.render_kv_table(snapshot_rows, ["代码", "名称", "桶", "净股数", "平均成本"])
                     if snapshot_rows else "_当前空仓_\n"),
+        ("C 桶卖出信号扫描", c_exit_report),
         ("风控检查结论",
          f"- C 桶回撤/MA60：{'无持仓' if positions.empty or not any(str(r.get('桶','')).upper()=='C' for _,r in positions.iterrows()) else '已检查'}\n"
          f"- 止损线（B<-25%, C<-15%）：{'无持仓' if positions.empty else '已检查'}\n"
          f"- 集中度（单票/行业）：{'无持仓' if positions.empty else '已检查'}\n"
-         f"- 组合级回撤：{'待净值接入' if True else '已检查'}\n"),
+         f"- 组合级回撤熔断：{cb_status}\n"),
         ("yaml 版本", f"`{yaml_tag}`\n"),
     ]
 
