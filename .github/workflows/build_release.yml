@@ -84,17 +84,12 @@ jobs:
           DATE_STR=$(date '+%Y-%m-%d %H:%M')
           SHA_SHORT=${GITHUB_SHA:0:7}
 
+          printf '## 自动构建\n\n构建时间: %s\n提交: %s\n\n### 下载\n- 解压后双击 三桶策略系统.exe 运行\n- 需 Windows 10/11，无需安装 Python 环境\n' "$DATE_STR" "$SHA_SHORT" > /tmp/release_notes.md
+
           gh release create "$VERSION" \
             "desktop/三桶策略系统-$VERSION.zip" \
             --title "三桶策略系统 $VERSION" \
-            --notes "## 自动构建
-
-构建时间: $DATE_STR
-提交: $SHA_SHORT
-
-### 下载
-- 解压后双击 三桶策略系统.exe 运行
-- 需 Windows 10/11，无需安装 Python 环境"
+            --notes-file /tmp/release_notes.md
 
       - name: Cleanup build artifacts
         if: always()
