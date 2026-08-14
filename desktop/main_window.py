@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import (
 )
 
 from engine import (
-    detect_project_root, load_config, save_config,
+    detect_project_root, detect_python, load_config, save_config,
     TaskEngine, DataManager,
 )
 from tab_dashboard import DashboardTab
@@ -56,7 +56,7 @@ class SettingsTab(QWidget):
         root_row.addWidget(root_btn)
         form.addRow("项目根目录:", _wrap(root_row))
 
-        self.python_edit = QLineEdit(self.config.get("python_exe", sys.executable))
+        self.python_edit = QLineEdit(self.config.get("python_exe", detect_python()))
         python_btn = QPushButton("浏览…")
         python_btn.clicked.connect(self._browse_python)
         py_row = QHBoxLayout()
@@ -178,7 +178,7 @@ class MainWindow(QMainWindow):
         # 确保关键配置有默认值
         root = self.config.get("project_root", detect_project_root())
         self.config.setdefault("project_root", root)
-        self.config.setdefault("python_exe", sys.executable)
+        self.config.setdefault("python_exe", detect_python())
         self.config.setdefault("data_dir", os.path.join(root, "data"))
 
         # 初始化引擎和数据管理器

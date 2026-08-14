@@ -25,18 +25,65 @@ from PyQt5.QtCore import QThread, pyqtSignal
 # 项目根目录 & 配置
 # ============================================================
 
+def is_frozen() -> bool:
+    """是否在 PyInstaller 打包环境中运行。"""
+    return getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
+
+
 def detect_project_root() -> str:
-    """自动检测项目根目录（含 scripts/ 的目录）。"""
-    here = os.path.dirname(os.path.abspath(__file__))
-    root = os.path.dirname(here)
-    if os.path.isdir(os.path.join(root, "scripts")):
-        return root
+    """自动检测项目根目录（含 scripts/ 的目录）。
+
+    打包模式：从 exe 所在目录逐级向上查找 scripts/。
+    开发模式：从 __file__ 向上一级查找 scripts/。
+    """
+    # 打包模式：从 exe 目录向上查找
+    if is_frozen():
+        exe_dir = os.path.dirname(sys.executable)
+        d = exe_dir
+        for _ in range(10):
+            if os.path.isdir(os.path.join(d, "scripts")):
+                return d
+            parent = os.path.dirname(d)
+            if parent == d:
+                break
+            d = parent
+    else:
+        # 开发模式：从 __file__ 向上查找
+        here = os.path.dirname(os.path.abspath(__file__))
+        root = os.path.dirname(here)
+        if os.path.isdir(os.path.join(root, "scripts")):
+            return root
+
+    # 检查 cwd
     if os.path.isdir("scripts"):
         return os.getcwd()
-    return root
+
+    # 兜底：打包用 _MEIPASS（内置只读资源），开发用 __file__ 父目录
+    if is_frozen():
+        return sys._MEIPASS
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_config.json")
+def detect_python() -> str:
+    """检测 Python 可执行文件路径。
+
+    打包模式下 sys.executable 是 exe 本身，需要找系统 Python。
+    """
+    if not is_frozen():
+        return sys.executable
+    import shutil
+    for name in ("python", "python3", "python.exe", "python3.exe"):
+        path = shutil.which(name)
+        if path:
+            return path
+    return sys.executable  # 兜底（可能无法运行脚本，但至少不崩）
+
+
+# 配置文件放在 exe 旁边（打包）或源码旁边（开发），不放进 _MEIPASS 临时目录
+if is_frozen():
+    _CONFIG_PATH = os.path.join(os.path.dirname(sys.executable), "app_config.json")
+else:
+    _CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_config.json")
 
 
 def load_config() -> dict:
