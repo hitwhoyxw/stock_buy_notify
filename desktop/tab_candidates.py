@@ -6,6 +6,7 @@
 - 机构持仓列高亮（险资/社保/养老/QFII）
 - 导出 Excel
 - 自动刷新
+- 右键 "加入监控自选"（需传入 watchlist_store）
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QComboBox,
-    QLineEdit, QFileDialog, QMessageBox, QCheckBox,
+    QLineEdit, QFileDialog, QMessageBox, QCheckBox, QMenu, QAction,
 )
 
 from engine import DataManager
@@ -43,9 +44,10 @@ NUMERIC_COLS = {
 class CandidatesTab(QWidget):
     """三桶候选池表格查看页。"""
 
-    def __init__(self, dm: DataManager):
+    def __init__(self, dm: DataManager, watchlist_store=None):
         super().__init__()
         self.dm = dm
+        self.watchlist_store = watchlist_store
         self._full_df = pd.DataFrame()
         self._build()
 
@@ -102,6 +104,8 @@ class CandidatesTab(QWidget):
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setDefaultSectionSize(28)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_context_menu)
         lay.addWidget(self.table)
 
         # ── 明细面板（底部展开） ──
@@ -233,6 +237,48 @@ class CandidatesTab(QWidget):
             parts.append(f"📋 入选理由: {row['pick_reason']}")
 
         self.detail_lbl.setText("  |  ".join(parts) if parts else "")
+
+    def _on_context_menu(self, pos):
+        """右键菜单：加入监控自选（需在构造时传入 watchlist_store）。"""
+        if self.watchlist_store is None:
+            return
+        row = self.table.rowAt(pos.y())
+        if row < 0:
+            return
+        code_item = self.table.item(row, 0)
+        if not code_item:
+            return
+        code = code_item.text().strip()
+
+        # 从完整数据里补名称（表格 name 列可能被拉伸，用列名定位）
+        name = ""
+        df = self._full_df
+        if not df.empty and "name" in df.columns:
+            hit = df[df["code"].astype(str) == code]
+            if not hit.empty:
+                name = str(hit.iloc[0]["name"])
+
+        already = self.watchlist_store.in_watchlist(code)
+        menu = QMenu(self)
+        if already:
+            act = QAction(f"✅ {name or code} 已在监控池", self)
+            act.setEnabled(False)
+            menu.addAction(act)
+        else:
+            act = QAction(f"🎯 加入监控自选（{name or code}）", self)
+            act.triggered.connect(
+                lambda: self._add_to_watchlist(code, name))
+            menu.addAction(act)
+        menu.exec_(self.table.viewport().mapToGlobal(pos))
+
+    def _add_to_watchlist(self, code: str, name: str):
+        bucket = "ABC"[self.bucket_combo.currentIndex()]
+        ok, msg = self.watchlist_store.add(
+            code, name, added_from=f"candidates_{bucket}")
+        if ok:
+            self.stats_lbl.setText(f"✅ {msg}，可在「监控自选」页应用策略")
+        else:
+            QMessageBox.warning(self, "添加失败", msg)
 
     def _export(self):
         if self._full_df.empty:

@@ -130,3 +130,7 @@ class TaskScheduler(QObject):
         """设置保存后重新加载配置。"""
         self.config = config
         self._update_status()
+
+    def stop(self):
+        """程序退出时停止定时器。"""
+        self._timer.stop()

@@ -1,0 +1,6 @@
+﻿id,name,type,indicator,operator,threshold,action,priority,enabled
+S1,跌破MA60减仓,sell,price_vs_ma60,<,0,现价跌破MA60均线，建议减仓1/3观察,P0,1
+S2,深回撤清仓线,sell,drawdown_from_high_180d,<=,-20,距半年高点回撤超20%，建议清仓止损,P0,1
+S3,低点涨幅止盈,sell,gain_from_low_180d,>=,50,距半年低点涨幅超50%，建议分批止盈,P1,1
+S4,持仓浮盈减半,sell,cost_basis_gain,>=,40,持仓浮盈超40%，建议卖出半仓锁定利润,P1,1
+S5,放量异动关注,buy,volume_ratio_20d,>=,2,量比超2倍出现异动，关注买入机会,P2,1
