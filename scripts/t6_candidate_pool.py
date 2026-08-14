@@ -532,6 +532,10 @@ def screen_bucket_c() -> pd.DataFrame:
     if isinstance(fund_idx.index, pd.MultiIndex):
         fund_idx = fund_idx.reset_index().drop_duplicates("code").set_index("code")
 
+    # 报告期 → 年化系数（动态 PE 用）
+    period = str(yjbb_df["period"].iloc[0]) if (not yjbb_df.empty and "period" in yjbb_df.columns) else ""
+    q_label, ann_factor = _period_annualize_info(period) if period else ("", 1.0)
+
     # 拉取机构持仓（险资/社保/养老金/QFII）
     inst_holders = _fetch_institutional_holders(all_codes)
 
@@ -559,6 +563,26 @@ def screen_bucket_c() -> pd.DataFrame:
         if not fund_idx.empty and code in fund_idx.index:
             pe_ttm = _safe_float(fund_idx.loc[code], ["pe_ttm"])
 
+        # 动态 PE：已披露最新季报 → 年化推算；未披露 → 用 PE(TTM)
+        pe_dynamic = None
+        pe_method = ""
+        if period and not yjbb_idx.empty and code in yjbb_idx.index:
+            yjbb_row = yjbb_idx.loc[code]
+            np_val = _safe_float(yjbb_row, ["np"])
+            eps_val = _safe_float(yjbb_row, ["eps"])
+            price_val = _safe_float(fund_idx.loc[code], ["price"]) if (not fund_idx.empty and code in fund_idx.index) else None
+            total_mv_val = _safe_float(fund_idx.loc[code], ["total_mv"]) if (not fund_idx.empty and code in fund_idx.index) else None
+            # 优先用 EPS×年化系数算（最直接），退回用 总市值/年化净利润
+            if eps_val and eps_val > 0 and price_val and price_val > 0:
+                pe_dynamic = round(price_val / (eps_val * ann_factor), 1)
+                pe_method = f"动态({q_label})"
+            elif np_val and np_val > 0 and total_mv_val and total_mv_val > 0:
+                pe_dynamic = round(total_mv_val / (np_val * ann_factor / 1e8), 1)
+                pe_method = f"动态({q_label})"
+        if pe_dynamic is None:
+            pe_dynamic = round(pe_ttm, 1) if pe_ttm is not None else ""
+            pe_method = "PE(TTM)"
+
         # PEG = PE_TTM / 净利润同比增速（增速用百分比数字，如 50% → 50）
         peg = None
         if pe_ttm is not None and pe_ttm > 0 and np_yoy is not None and np_yoy > 0:
@@ -585,6 +609,8 @@ def screen_bucket_c() -> pd.DataFrame:
             "revenue_yoy": round(revenue_yoy, 1) if revenue_yoy is not None else "",
             "gross_margin": round(gross_margin, 1) if gross_margin is not None else "",
             "pe_ttm": round(pe_ttm, 1) if pe_ttm is not None else "",
+            "pe_dynamic": pe_dynamic,
+            "pe_method": pe_method,
             "peg": peg if peg is not None else "",
             "price_index_1y_high": "",  # 需要行业指数
             "contract_liability_yoy": "",  # 需要财报
@@ -636,6 +662,24 @@ def _safe_float(row: Any, candidates: List[str]) -> Optional[float]:
             except (ValueError, TypeError):
                 continue
     return None
+
+
+def _period_annualize_info(period: str) -> tuple:
+    """报告期 → (年化标签, 年化系数)。
+
+    一季报(0331)×4、中报(0630)×2、三季报(0930)×4/3、年报(1231)×1。
+    用于动态 PE 计算：将最新报告期累计盈利年化后推算全年 PE。
+    """
+    p = str(period)
+    if p.endswith("0331"):
+        return ("一季报×4", 4.0)
+    if p.endswith("0630"):
+        return ("中报×2", 2.0)
+    if p.endswith("0930"):
+        return ("三季报×4/3", 4.0 / 3.0)
+    if p.endswith("1231"):
+        return ("年报", 1.0)
+    return ("未知", 1.0)
 
 
 # ============================================================
@@ -741,7 +785,7 @@ def assemble_output(bucket_a: pd.DataFrame, bucket_b: pd.DataFrame,
     else:
         cols_c = ["code", "name", "industry", "text_score", "categories_hit_count",
                   "np_yoy", "revenue_yoy", "gross_margin",
-                  "pe_ttm", "peg",
+                  "pe_ttm", "pe_dynamic", "pe_method", "peg",
                   "has_insurance", "has_social_security", "has_pension", "has_qfii",
                   "price_index_1y_high", "contract_liability_yoy", "price_above_ma60"]
         available = [c for c in cols_c if c in bucket_c.columns]

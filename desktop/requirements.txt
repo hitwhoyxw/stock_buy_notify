@@ -1,0 +1,7 @@
+# 三桶策略系统 — 桌面端依赖
+# 安装: pip install -r desktop/requirements.txt
+
+PyQt5>=5.15
+pandas>=1.5
+openpyxl>=3.0          # Excel 导出
+pyinstaller>=5.0       # 打包 exe（开发时不需要）

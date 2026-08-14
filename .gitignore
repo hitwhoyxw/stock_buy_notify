@@ -23,6 +23,11 @@ data/cache/
 Thumbs.db
 *.log
 
+# PyInstaller
+build/
+dist/
+*.spec
+
 # IDE
 .vscode/
 .idea/
