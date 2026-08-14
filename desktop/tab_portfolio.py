@@ -13,11 +13,12 @@ import os
 from typing import Dict, List, Optional
 
 import pandas as pd
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt5.QtCore import Qt, QThread, QDate, pyqtSignal, QTimer
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QGridLayout,
     QLabel, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
-    QFrame, QComboBox, QMessageBox,
+    QFrame, QComboBox, QMessageBox, QDialog, QFormLayout, QDateEdit,
+    QDoubleSpinBox, QSpinBox, QLineEdit, QStackedWidget,
 )
 from PyQt5.QtGui import QColor, QFont
 
@@ -172,6 +173,162 @@ class SummaryCard(QFrame):
 
 
 # ============================================================
+# 交易录入/编辑对话框
+# ============================================================
+
+class TradeDialog(QDialog):
+    """记一笔交易 / 编辑已有交易记录。
+
+    trade 为 None 时是新增模式，否则编辑模式（预填数据）。
+    金额默认按 价格×股数 自动计算，也可手动覆盖（含手续费场景）。
+    """
+
+    def __init__(self, parent=None, trade: dict = None):
+        super().__init__(parent)
+        self.setWindowTitle("编辑交易" if trade else "➕ 记一笔交易")
+        self.setMinimumWidth(440)
+        self._build()
+        if trade:
+            self._fill(trade)
+        else:
+            self.shares_spin.setValue(100)
+
+    def _build(self):
+        form = QFormLayout()
+
+        self.date_edit = QDateEdit(QDate.currentDate())
+        self.date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.date_edit.setCalendarPopup(True)
+        form.addRow("日期:", self.date_edit)
+
+        self.direction_combo = QComboBox()
+        self.direction_combo.addItems(["买入", "卖出"])
+        form.addRow("方向:", self.direction_combo)
+
+        self.bucket_combo = QComboBox()
+        self.bucket_combo.addItems(["A", "B", "C", "D"])
+        form.addRow("桶:", self.bucket_combo)
+
+        self.code_edit = QLineEdit()
+        self.code_edit.setPlaceholderText("6 位数字，如 600519")
+        form.addRow("代码:", self.code_edit)
+
+        self.name_edit = QLineEdit()
+        form.addRow("名称:", self.name_edit)
+
+        self.industry_edit = QLineEdit()
+        self.industry_edit.setPlaceholderText("申万一级行业（可选）")
+        form.addRow("行业:", self.industry_edit)
+
+        self.price_spin = QDoubleSpinBox()
+        self.price_spin.setDecimals(3)
+        self.price_spin.setRange(0.001, 999999)
+        self.price_spin.valueChanged.connect(self._auto_amount)
+        form.addRow("价格:", self.price_spin)
+
+        self.shares_spin = QSpinBox()
+        self.shares_spin.setRange(0, 100_000_000)
+        self.shares_spin.setSingleStep(100)
+        self.shares_spin.valueChanged.connect(self._auto_amount)
+        form.addRow("股数:", self.shares_spin)
+
+        self.amount_spin = QDoubleSpinBox()
+        self.amount_spin.setDecimals(2)
+        self.amount_spin.setRange(0, 999_999_999)
+        form.addRow("金额(元):", self.amount_spin)
+
+        self.rule_edit = QLineEdit()
+        self.rule_edit.setPlaceholderText("触发规则 ID（可选）")
+        form.addRow("规则ID:", self.rule_edit)
+
+        self.reason_edit = QLineEdit()
+        self.reason_edit.setPlaceholderText("一句话决策理由（可选）")
+        form.addRow("决策理由:", self.reason_edit)
+
+        btns = QHBoxLayout()
+        ok_btn = QPushButton("💾 保存")
+        ok_btn.setStyleSheet(
+            "QPushButton{background:#27ae60;color:white;border:none;"
+            "padding:8px 24px;border-radius:4px;font-size:13px}"
+            "QPushButton:hover{background:#229954}")
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(self.reject)
+        btns.addStretch()
+        btns.addWidget(ok_btn)
+        btns.addWidget(cancel_btn)
+
+        lay = QVBoxLayout(self)
+        lay.addLayout(form)
+        lay.addLayout(btns)
+
+    def _auto_amount(self):
+        """价格或股数变化时自动算金额。"""
+        self.amount_spin.setValue(
+            round(self.price_spin.value() * self.shares_spin.value(), 2))
+
+    def _fill(self, trade: dict):
+        """编辑模式预填。"""
+        try:
+            y, m, d = str(trade.get("日期", "")).split("-")
+            self.date_edit.setDate(QDate(int(y), int(m), int(d)))
+        except Exception:
+            pass
+        direction = str(trade.get("方向", "买入")).strip() or "买入"
+        self.direction_combo.setCurrentText(direction)
+        bucket = str(trade.get("桶", "A")).strip().upper() or "A"
+        self.bucket_combo.setCurrentText(bucket)
+        self.code_edit.setText(str(trade.get("代码", "")))
+        self.name_edit.setText(str(trade.get("名称", "")))
+        self.industry_edit.setText(str(trade.get("申万一级行业", "")))
+        try:
+            self.price_spin.setValue(float(trade.get("价格", 0) or 0))
+        except (ValueError, TypeError):
+            pass
+        try:
+            self.shares_spin.setValue(int(float(trade.get("股数", 0) or 0)))
+        except (ValueError, TypeError):
+            pass
+        # 金额在价格/股数之后设置，覆盖自动计算值
+        try:
+            self.amount_spin.setValue(float(trade.get("金额", 0) or 0))
+        except (ValueError, TypeError):
+            pass
+        self.rule_edit.setText(str(trade.get("触发规则ID", "")))
+        self.reason_edit.setText(str(trade.get("决策理由(一句话)", "")))
+
+    def accept(self):
+        """保存前校验。"""
+        code = self.code_edit.text().strip()
+        if not (code.isdigit() and len(code) == 6):
+            QMessageBox.warning(self, "代码格式错误",
+                                "股票代码必须是 6 位数字，如 600519。")
+            return
+        if self.shares_spin.value() <= 0:
+            QMessageBox.warning(self, "股数错误", "股数必须大于 0。")
+            return
+        if self.price_spin.value() <= 0:
+            QMessageBox.warning(self, "价格错误", "价格必须大于 0。")
+            return
+        super().accept()
+
+    def get_record(self) -> dict:
+        return {
+            "日期": self.date_edit.date().toString("yyyy-MM-dd"),
+            "方向": self.direction_combo.currentText(),
+            "桶": self.bucket_combo.currentText(),
+            "代码": self.code_edit.text().strip(),
+            "名称": self.name_edit.text().strip(),
+            "申万一级行业": self.industry_edit.text().strip(),
+            "价格": f"{self.price_spin.value():.3f}",
+            "股数": str(self.shares_spin.value()),
+            "金额": f"{self.amount_spin.value():.2f}",
+            "触发规则ID": self.rule_edit.text().strip(),
+            "决策理由(一句话)": self.reason_edit.text().strip(),
+        }
+
+
+# ============================================================
 # 持仓总览 Tab
 # ============================================================
 
@@ -192,7 +349,24 @@ class PortfolioTab(QWidget):
         # 顶部栏
         bar = QHBoxLayout()
         bar.addWidget(QLabel("<h2>📊 持仓总览</h2>"))
+
+        # 视图切换：持仓汇总 / 交易流水
+        self.view_combo = QComboBox()
+        self.view_combo.addItems(["持仓汇总", "交易流水"])
+        self.view_combo.currentIndexChanged.connect(self._switch_view)
+        self.view_combo.setStyleSheet("padding:4px")
+        bar.addWidget(self.view_combo)
         bar.addStretch()
+
+        # 记一笔交易
+        self.add_trade_btn = QPushButton("➕ 记一笔")
+        self.add_trade_btn.setStyleSheet(
+            "QPushButton{background:#27ae60;color:white;border:none;"
+            "padding:6px 16px;border-radius:4px;font-size:13px}"
+            "QPushButton:hover{background:#229954}")
+        self.add_trade_btn.clicked.connect(self._on_add_trade)
+        bar.addWidget(self.add_trade_btn)
+
         self.refresh_btn = QPushButton("🔄 刷新行情")
         self.refresh_btn.setStyleSheet(
             "QPushButton{background:#3498db;color:white;border:none;"
@@ -201,6 +375,14 @@ class PortfolioTab(QWidget):
         self.refresh_btn.clicked.connect(self._refresh_prices)
         bar.addWidget(self.refresh_btn)
         lay.addLayout(bar)
+
+        # 视图堆栈：页1 持仓汇总 / 页2 交易流水
+        self.stack = QStackedWidget()
+
+        # ── 页1：持仓汇总（卡片 + 表 + 图 + K线）──
+        page_pos = QWidget()
+        pos_lay = QVBoxLayout(page_pos)
+        pos_lay.setContentsMargins(0, 0, 0, 0)
 
         # 摘要卡片行
         cards = QHBoxLayout()
@@ -212,8 +394,7 @@ class PortfolioTab(QWidget):
         for c in [self.card_cost, self.card_mv, self.card_pnl, self.card_nav, self.card_dd]:
             cards.addWidget(c)
         cards.addStretch()
-        self._cards_layout = cards
-        lay.addLayout(cards)
+        pos_lay.addLayout(cards)
 
         # 主体：左表 + 右图
         splitter = QSplitter(Qt.Horizontal)
@@ -265,20 +446,68 @@ class PortfolioTab(QWidget):
         splitter.addWidget(right)
 
         splitter.setSizes([500, 400])
-        lay.addWidget(splitter)
+        pos_lay.addWidget(splitter)
 
         # 底部：K线图
         if HAS_PG:
             self.kline_label = QLabel("")
             self.kline_label.setStyleSheet("color:#999;font-size:11px")
-            lay.addWidget(self.kline_label)
+            pos_lay.addWidget(self.kline_label)
             self.kline_plot = pg.PlotWidget(title="个股 K线")
             self.kline_plot.setLabel("left", "价格")
             self.kline_plot.setLabel("bottom", "交易日")
             self.kline_plot.showGrid(x=False, y=True)
-            lay.addWidget(self.kline_plot)
+            pos_lay.addWidget(self.kline_plot)
         else:
-            lay.addWidget(QLabel("安装 pyqtgraph 后可显示 K 线图"))
+            pos_lay.addWidget(QLabel("安装 pyqtgraph 后可显示 K 线图"))
+
+        self.stack.addWidget(page_pos)
+
+        # ── 页2：交易流水（增删改查）──
+        page_trades = QWidget()
+        trades_lay = QVBoxLayout(page_trades)
+        trades_lay.setContentsMargins(0, 0, 0, 0)
+
+        trades_bar = QHBoxLayout()
+        hint = QLabel("双击行或点按钮编辑；增删改后持仓与图表自动刷新")
+        hint.setStyleSheet("color:#999;font-size:11px")
+        trades_bar.addWidget(hint)
+        trades_bar.addStretch()
+
+        self.edit_trade_btn = QPushButton("✏️ 编辑选中")
+        self.edit_trade_btn.setStyleSheet(
+            "QPushButton{background:#f39c12;color:white;border:none;"
+            "padding:6px 16px;border-radius:4px;font-size:13px}"
+            "QPushButton:hover{background:#e67e22}")
+        self.edit_trade_btn.clicked.connect(lambda: self._on_edit_trade())
+        trades_bar.addWidget(self.edit_trade_btn)
+
+        self.del_trade_btn = QPushButton("🗑 删除选中")
+        self.del_trade_btn.setStyleSheet(
+            "QPushButton{background:#e74c3c;color:white;border:none;"
+            "padding:6px 16px;border-radius:4px;font-size:13px}"
+            "QPushButton:hover{background:#c0392b}")
+        self.del_trade_btn.clicked.connect(self._on_delete_trade)
+        trades_bar.addWidget(self.del_trade_btn)
+
+        trades_lay.addLayout(trades_bar)
+
+        self.trades_table = QTableWidget()
+        self.trades_table.setColumnCount(11)
+        self.trades_table.setHorizontalHeaderLabels(
+            ["日期", "方向", "桶", "代码", "名称", "行业",
+             "价格", "股数", "金额", "规则ID", "决策理由"])
+        self.trades_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.trades_table.horizontalHeader().setStretchLastSection(True)
+        self.trades_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.trades_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.trades_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.trades_table.doubleClicked.connect(
+            lambda idx: self._on_edit_trade(idx))
+        trades_lay.addWidget(self.trades_table)
+
+        self.stack.addWidget(page_trades)
+        lay.addWidget(self.stack)
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -289,6 +518,106 @@ class PortfolioTab(QWidget):
         self._load_positions()
         self._load_nav()
         self._load_pie()
+        self._load_trades()
+
+    # ── 视图切换 ──
+
+    def _switch_view(self, index: int):
+        self.stack.setCurrentIndex(index)
+        if index == 1:
+            self._load_trades()
+
+    # ── 交易流水 CRUD ──
+
+    def _load_trades(self):
+        """加载交易流水表。"""
+        df = self.dm.read_trades()
+        self.trades_table.setRowCount(0)
+        if df.empty:
+            return
+        cols = ["日期", "方向", "桶", "代码", "名称", "申万一级行业",
+                "价格", "股数", "金额", "触发规则ID", "决策理由(一句话)"]
+        self.trades_table.setRowCount(len(df))
+        for i, (_, row) in enumerate(df.iterrows()):
+            for j, c in enumerate(cols):
+                text = str(row.get(c, ""))
+                item = QTableWidgetItem(text)
+                if c == "方向":
+                    item.setForeground(
+                        QColor("#e74c3c" if text == "买入" else "#27ae60"))
+                elif c == "桶":
+                    item.setForeground(
+                        QColor(BUCKET_COLORS.get(text.strip().upper(), "#333")))
+                self.trades_table.setItem(i, j, item)
+
+    def _on_add_trade(self):
+        """记一笔交易（新增）。"""
+        dlg = TradeDialog(self)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        record = dlg.get_record()
+        # 卖出超持仓提醒（不强制阻止，允许跨桶修正等场景）
+        if record["方向"] == "卖出":
+            held = self.dm.shares_of(record["代码"])
+            if float(record["股数"]) > held:
+                ret = QMessageBox.warning(
+                    self, "卖出超过持仓",
+                    f"{record['代码']} 当前净持仓 {held:.0f} 股，"
+                    f"本次卖出 {record['股数']} 股，将出现负持仓。\n仍要保存吗？",
+                    QMessageBox.Yes | QMessageBox.No)
+                if ret != QMessageBox.Yes:
+                    return
+        if self.dm.append_trade(record):
+            self._after_trade_changed()
+        else:
+            QMessageBox.critical(self, "保存失败", "写入 live_trade_log.csv 失败，请检查文件是否被占用。")
+
+    def _on_edit_trade(self, index=None):
+        """编辑选中的交易记录（按钮触发 index=None；双击触发传 QModelIndex）。"""
+        row = index.row() if index is not None and hasattr(index, "row") \
+            else self.trades_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "提示", "请先选中一条交易记录。")
+            return
+        df = self.dm.read_trades()
+        if row >= len(df):
+            return
+        trade = df.iloc[row].to_dict()
+        dlg = TradeDialog(self, trade=trade)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        record = dlg.get_record()
+        if self.dm.update_trade(row, record):
+            self._after_trade_changed()
+        else:
+            QMessageBox.critical(self, "保存失败", "更新 live_trade_log.csv 失败。")
+
+    def _on_delete_trade(self):
+        """删除选中的交易记录。"""
+        row = self.trades_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "提示", "请先选中一条交易记录。")
+            return
+        df = self.dm.read_trades()
+        if row >= len(df):
+            return
+        t = df.iloc[row]
+        ret = QMessageBox.question(
+            self, "确认删除",
+            f"确定删除这条交易记录？\n\n"
+            f"{t['日期']}  {t['方向']}  {t['代码']} {t['名称']}\n"
+            f"{t['股数']} 股 @ {t['价格']} 元 = {t['金额']} 元",
+            QMessageBox.Yes | QMessageBox.No)
+        if ret != QMessageBox.Yes:
+            return
+        if self.dm.delete_trade(row):
+            self._after_trade_changed()
+        else:
+            QMessageBox.critical(self, "删除失败", "更新 live_trade_log.csv 失败。")
+
+    def _after_trade_changed(self):
+        """增删改交易后刷新持仓、图表、流水表。"""
+        self._load()
 
     # ── 持仓表 ──
 

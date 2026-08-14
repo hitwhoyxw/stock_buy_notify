@@ -335,11 +335,11 @@ class DataManager:
     # ── 持仓 & 净值 ──
 
     def load_positions(self) -> pd.DataFrame:
-        """从 live_trade_log.csv 解析当前持仓。
+        """从 live_trade_log.csv 解析当前持仓（dtype=str 读，保留代码前导零）。
 
         返回列：代码, 名称, 桶, 申万一级行业, 净股数, 累计成本金额, 平均成本
         """
-        df = self.load_csv("live_trade_log.csv")
+        df = self._read_trade_csv()
         if df.empty:
             return pd.DataFrame(columns=["代码", "名称", "桶", "申万一级行业",
                                          "净股数", "累计成本金额", "平均成本"])
@@ -381,3 +381,75 @@ class DataManager:
             if b in weights:
                 weights[b] += float(row["累计成本金额"]) / total
         return weights
+
+    # ── 交易日志 CRUD ──
+
+    TRADE_COLUMNS = [
+        "日期", "方向", "桶", "代码", "名称", "申万一级行业",
+        "价格", "股数", "金额", "占总资产%", "触发规则ID",
+        "触发时指标值", "阈值", "决策理由(一句话)", "当时组合状态",
+        "当时四桶权重ABCD", "情绪自评(1-5)", "是否违反纪律",
+        "事后30日涨跌%", "事后90日涨跌%", "复盘结论",
+    ]
+
+    def _trade_log_path(self) -> str:
+        return os.path.join(self.data_dir, "live_trade_log.csv")
+
+    def _read_trade_csv(self) -> pd.DataFrame:
+        """dtype=str 读交易日志，保持代码前导零（000001 等）。"""
+        path = self._trade_log_path()
+        if not os.path.exists(path):
+            return pd.DataFrame(columns=self.TRADE_COLUMNS)
+        try:
+            df = pd.read_csv(path, dtype=str, keep_default_na=False)
+            for c in self.TRADE_COLUMNS:
+                if c not in df.columns:
+                    df[c] = ""
+            return df[self.TRADE_COLUMNS]
+        except Exception:
+            return pd.DataFrame(columns=self.TRADE_COLUMNS)
+
+    def read_trades(self) -> pd.DataFrame:
+        """读取完整交易日志（流水，非聚合持仓）。"""
+        return self._read_trade_csv()
+
+    def _write_trade_csv(self, df: pd.DataFrame) -> bool:
+        try:
+            df.to_csv(self._trade_log_path(), index=False, encoding="utf-8-sig")
+            return True
+        except Exception:
+            return False
+
+    def append_trade(self, record: dict) -> bool:
+        """追加一条交易记录。record 至少含 日期/方向/桶/代码/价格/股数/金额。"""
+        df = self._read_trade_csv()
+        row = {c: str(record.get(c, "")) for c in self.TRADE_COLUMNS}
+        df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+        return self._write_trade_csv(df)
+
+    def update_trade(self, row_index: int, record: dict) -> bool:
+        """更新指定行（0-based，对应 read_trades() 顺序）。"""
+        df = self._read_trade_csv()
+        if row_index < 0 or row_index >= len(df):
+            return False
+        for c in self.TRADE_COLUMNS:
+            if c in record:
+                df.iat[row_index, df.columns.get_loc(c)] = str(record.get(c, ""))
+        return self._write_trade_csv(df)
+
+    def delete_trade(self, row_index: int) -> bool:
+        """删除指定行。"""
+        df = self._read_trade_csv()
+        if row_index < 0 or row_index >= len(df):
+            return False
+        df = df.drop(df.index[row_index]).reset_index(drop=True)
+        return self._write_trade_csv(df)
+
+    def shares_of(self, code: str) -> float:
+        """查询某代码当前净持仓股数（用于录入卖出时提示）。"""
+        pos = self.load_positions()
+        if pos.empty:
+            return 0.0
+        code = code.split(".")[0].zfill(6)
+        hit = pos[pos["代码"].astype(str).str.zfill(6) == code]
+        return float(hit["净股数"].sum()) if not hit.empty else 0.0
