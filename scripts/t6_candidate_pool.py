@@ -827,8 +827,8 @@ def main() -> int:
                         help="指定桶（A/B/C 组合，默认 ABC 全跑）")
     parser.add_argument("--dry-run", action="store_true",
                         help="只打印结果，不写输出文件")
-    parser.add_argument("--top", type=int, default=200,
-                        help="每桶输出 top N 候选（默认 200，不限制死）")
+    parser.add_argument("--top", type=int, default=100,
+                        help="每桶按排序值截取 Top N 投入 LLM 分析（默认 100 上限）")
     args = parser.parse_args()
 
     ensure_dirs()
@@ -853,7 +853,10 @@ def main() -> int:
     if "C" in buckets:
         bucket_c = screen_bucket_c()
         if not bucket_c.empty:
-            print(f"\n[T6] C 桶 {len(bucket_c)} 候选就绪（不截断）")
+            before_c = len(bucket_c)
+            bucket_c = bucket_c.head(args.top)
+            print(f"\n[T6] C 桶 {before_c} 只按排序值截取 Top {len(bucket_c)}"
+                  f"（LLM 分析上限 {args.top}）")
 
     output = assemble_output(bucket_a, bucket_b, bucket_c)
 
