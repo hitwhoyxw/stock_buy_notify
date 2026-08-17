@@ -1,15 +1,16 @@
-"""T6 候选池静态筛选：硬门槛 + 排序值计算 → data/skill_input_T6.md。
+"""T6 候选池静态筛选：硬门槛 + 排序值计算 → data/skill_input_T6_{A,B,C}.md。
 
 三桶各自的筛选逻辑：
 - A 桶（红利逆向）：中证红利成分 → 股息率/PB/ROE 过滤 → quality_score 排序
 - B 桶（成长）：中证1000+500+A500+800成分 → 市值/CAGR/增速/ROE/现金流/PEG 过滤 → 1/PEG 排序
 - C 桶（热点周期）：T4 文本判定 PASS → 数据验证（单季扣非 + 合同负债 + 价格指数）
 
-产出：data/skill_input_T6.md（LLM 消费用，格式对齐 skills/t6_semantic_ranking.md）
+产出：data/skill_input_T6_A.md / _B.md / _C.md 按桶分文件（LLM 消费，
+格式对齐 skills/t6_semantic_ranking.md）。单桶跑只写对应桶文件，不覆盖其他桶。
 
 用法：
     python scripts/t6_candidate_pool.py               # 全部三桶
-    python scripts/t6_candidate_pool.py --bucket A    # 只跑 A 桶
+    python scripts/t6_candidate_pool.py --bucket A    # 只跑 A 桶（只写 _A 分文件）
     python scripts/t6_candidate_pool.py --dry-run     # 只打印不写文件
 """
 from __future__ import annotations
@@ -42,7 +43,11 @@ from lib.data_fetch import (
     get_index_daily,
 )
 
-SKILL_INPUT = DATA_DIR / "skill_input_T6.md"
+SKILL_INPUTS = {
+    "A": DATA_DIR / "skill_input_T6_A.md",
+    "B": DATA_DIR / "skill_input_T6_B.md",
+    "C": DATA_DIR / "skill_input_T6_C.md",
+}
 T4_OUTPUT = DATA_DIR / "skill_output_T4C.md"
 
 
@@ -762,56 +767,61 @@ def _rules_note_b(df: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
-def assemble_output(bucket_a: pd.DataFrame, bucket_b: pd.DataFrame,
-                    bucket_c: pd.DataFrame) -> str:
-    """组装成 skills/t6_semantic_ranking.md 定义的输入格式。"""
+def assemble_bucket(letter: str, bucket: pd.DataFrame) -> str:
+    """组装单个桶的 skill_input 内容，写入 skill_input_T6_{letter}.md。
+
+    格式对齐 skills/t6_semantic_ranking.md；行数截断由 main() 的 --top
+    统一控制（每桶 LLM 分析上限），此处不再二次截断。
+    """
     parts: List[str] = []
     yaml_tag = get_yaml_tag()
 
-    # A 桶
-    parts.append("=== BUCKET: A ===")
-    parts.append(_rules_note_a(bucket_a))
-    if bucket_a.empty:
-        parts.append("（A 桶候选为空）")
-    else:
-        cols_a = ["code", "name", "industry", "price", "dividend_yield_ttm", "dividend_percentile_5y",
-                  "roe_5y_avg", "fcf_coverage", "pb", "pb_percentile", "dividend_years",
-                  "loss_q_3y", "ocf_ps_annual", "quality_score",
-                  "has_insurance", "has_social_security", "has_pension", "has_qfii",
-                  "sort_value", "pick_reason"]
-        # 只取存在的列
-        available = [c for c in cols_a if c in bucket_a.columns]
-        parts.append(bucket_a[available].head(50).to_csv(index=False))
-    parts.append("")
+    if letter == "A":
+        parts.append("=== BUCKET: A ===")
+        parts.append(_rules_note_a(bucket))
+        if bucket.empty:
+            parts.append("（A 桶候选为空）")
+        else:
+            cols = ["code", "name", "industry", "price", "dividend_yield_ttm", "dividend_percentile_5y",
+                    "roe_5y_avg", "fcf_coverage", "pb", "pb_percentile", "dividend_years",
+                    "loss_q_3y", "ocf_ps_annual", "quality_score",
+                    "has_insurance", "has_social_security", "has_pension", "has_qfii",
+                    "sort_value", "pick_reason"]
+            available = [c for c in cols if c in bucket.columns]
+            parts.append(bucket[available].to_csv(index=False))
+        parts.append("")
 
-    # B 桶
-    parts.append("=== BUCKET: B ===")
-    parts.append(_rules_note_b(bucket_b))
-    if bucket_b.empty:
-        parts.append("（B 桶候选为空）")
-    else:
-        cols_b = ["code", "name", "industry", "price", "total_mv_yi",
-                  "profit_cagr_3y", "revenue_cagr_3y", "np_yoy_latest",
-                  "roe_ann", "ocf_to_np", "loss_q_3y", "pe_ttm", "peg",
-                  "has_insurance", "has_social_security", "has_pension", "has_qfii",
-                  "sort_value", "pick_reason"]
-        available = [c for c in cols_b if c in bucket_b.columns]
-        parts.append(bucket_b[available].head(50).to_csv(index=False))
-    parts.append("")
+    elif letter == "B":
+        parts.append("=== BUCKET: B ===")
+        parts.append(_rules_note_b(bucket))
+        if bucket.empty:
+            parts.append("（B 桶候选为空）")
+        else:
+            cols = ["code", "name", "industry", "price", "total_mv_yi",
+                    "profit_cagr_3y", "revenue_cagr_3y", "np_yoy_latest",
+                    "roe_ann", "ocf_to_np", "loss_q_3y", "pe_ttm", "peg",
+                    "has_insurance", "has_social_security", "has_pension", "has_qfii",
+                    "sort_value", "pick_reason"]
+            available = [c for c in cols if c in bucket.columns]
+            parts.append(bucket[available].to_csv(index=False))
+        parts.append("")
 
-    # C 桶
-    parts.append("=== BUCKET: C ===")
-    if bucket_c.empty:
-        parts.append("（C 桶候选为空）")
+    elif letter == "C":
+        parts.append("=== BUCKET: C ===")
+        if bucket.empty:
+            parts.append("（C 桶候选为空）")
+        else:
+            cols = ["code", "name", "industry", "text_score", "categories_hit_count",
+                    "np_yoy", "revenue_yoy", "gross_margin",
+                    "pe_ttm", "pe_dynamic", "pe_method", "peg",
+                    "has_insurance", "has_social_security", "has_pension", "has_qfii",
+                    "price_index_1y_high", "contract_liability_yoy", "price_above_ma60"]
+            available = [c for c in cols if c in bucket.columns]
+            parts.append(bucket[available].to_csv(index=False))
+        parts.append("")
+
     else:
-        cols_c = ["code", "name", "industry", "text_score", "categories_hit_count",
-                  "np_yoy", "revenue_yoy", "gross_margin",
-                  "pe_ttm", "pe_dynamic", "pe_method", "peg",
-                  "has_insurance", "has_social_security", "has_pension", "has_qfii",
-                  "price_index_1y_high", "contract_liability_yoy", "price_above_ma60"]
-        available = [c for c in cols_c if c in bucket_c.columns]
-        parts.append(bucket_c[available].to_csv(index=False))
-    parts.append("")
+        raise ValueError(f"未知桶标识：{letter}")
 
     parts.append(f"=== YAML_TAG: {yaml_tag} ===")
     return "\n".join(parts)
@@ -858,20 +868,29 @@ def main() -> int:
             print(f"\n[T6] C 桶 {before_c} 只按排序值截取 Top {len(bucket_c)}"
                   f"（LLM 分析上限 {args.top}）")
 
-    output = assemble_output(bucket_a, bucket_b, bucket_c)
+    outputs = {}
+    if "A" in buckets:
+        outputs["A"] = assemble_bucket("A", bucket_a)
+    if "B" in buckets:
+        outputs["B"] = assemble_bucket("B", bucket_b)
+    if "C" in buckets:
+        outputs["C"] = assemble_bucket("C", bucket_c)
 
     if args.dry_run:
         print("\n" + "=" * 50)
-        print("[dry-run] 输出预览（前 2000 字符）：")
-        print(output[:2000])
+        for letter, text in outputs.items():
+            print(f"\n[dry-run] === {letter} 桶输出预览（前 1000 字符）===")
+            print(text[:1000])
         return 0
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    SKILL_INPUT.write_text(output, encoding="utf-8")
-    print(f"\n[T6] 输入文件已生成：{SKILL_INPUT}")
-    print(f"[T6] 文件大小：{SKILL_INPUT.stat().st_size:,} bytes")
+    for letter, text in outputs.items():
+        path = SKILL_INPUTS[letter]
+        path.write_text(text, encoding="utf-8")
+        print(f"\n[T6-{letter}] 输入文件已生成：{path}")
+        print(f"[T6-{letter}] 文件大小：{path.stat().st_size:,} bytes")
     print(f"[T6] 请将内容喂给 LLM（参考 skills/t6_semantic_ranking.md）")
-    print(f"[T6] LLM 产出写回 data/skill_output_T6.md")
+    print(f"[T6] LLM 产出写回 data/skill_output_T6_{{A,B,C}}.md（按桶分文件）")
 
     # 同时输出 CSV 以便直接查看
     if not bucket_a.empty:

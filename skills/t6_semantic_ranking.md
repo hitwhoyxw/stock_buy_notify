@@ -1,6 +1,6 @@
 # Skill · T6 三桶候选池语义排序
 
-> 每周五 20:00 由 `t6_candidate_pool.py` 生成脚本部分（硬门槛过滤 + 财务指标计算），产出候选池 CSV；LLM 在此基础上对每桶**最多 100 只**（脚本按排序值截取）做**推荐/中立/不推荐**三档全量分类，每只给出可追溯理由。
+> 每周五 20:00 由 `t6_candidate_pool.py` 生成脚本部分（硬门槛过滤 + 财务指标计算），产出候选池 CSV 与**按桶分文件**的 `skill_input_T6_{A,B,C}.md`（单桶重跑只覆盖对应桶文件，互不污染）；LLM 在此基础上对每桶**最多 100 只**（脚本按排序值截取）做**推荐/中立/不推荐**三档全量分类，每只给出可追溯理由，产出分别写回 `skill_output_T6_{A,B,C}.md`。
 
 ## 角色
 
@@ -26,6 +26,8 @@
 
 ## 输入格式
 
+每桶一个独立文件：`data/skill_input_T6_A.md` / `_B.md` / `_C.md`，内容均以 `=== BUCKET: X ===` 开头、`=== YAML_TAG: ... ===` 结尾。跨桶冲突检测时需同时读取三个文件对照。
+
 ```
 === BUCKET: A ===
 （CSV 列头 + 已过硬门槛的候选，含 code, name, industry, dividend_yield_ttm, dividend_percentile_5y, roe_5y_avg, fcf_coverage, pb, pb_percentile, dividend_years, quality_score）
@@ -40,10 +42,10 @@
 
 ## 输出格式（严格结构 · Markdown + 表格 · 三档全量）
 
-每桶投入分析的股票**全部**归入三档之一并给出理由——不允许"分析过但不列出"。
+每桶投入分析的股票**全部**归入三档之一并给出理由——不允许"分析过但不列出"。**每桶一个输出文件**：`data/skill_output_T6_A.md` / `_B.md` / `_C.md`，各自只写本桶章节。
 
 ```markdown
-# 三桶候选池 · YYYY-MM-DD
+# {A|B|C} 桶候选池 · YYYY-MM-DD
 
 ## A 桶 · 红利逆向
 

@@ -59,7 +59,7 @@ jobs:
         run: |
           git config user.name "trading-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add data/live_signal_log.csv data/report_*.md data/skill_input_T6.md data/candidates_*.csv || true
+          git add data/live_signal_log.csv data/report_*.md data/skill_input_T6_*.md data/candidates_*.csv || true
           git diff --cached --quiet && echo "no changes" && exit 0
           git commit -m "chore(weekly): $(date +%F) run"
           git push

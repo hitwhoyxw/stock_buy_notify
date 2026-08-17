@@ -232,14 +232,18 @@ class TaskEngine:
 class DataManager:
     """读写 data/ 目录下的 CSV/MD 文件。"""
 
-    # 需要 LLM 处理的 skill 文件映射
+    # 需要 LLM 处理的 skill 文件映射（T6 按桶分文件，带 _A/_B/_C 后缀）
     SKILLS = {
         "T4C": {"input": "skill_input_T4C.md", "output": "skill_output_T4C.md",
                 "label": "T4 财报文本扫描"},
         "T5":  {"input": "skill_input_T5.md",  "output": "skill_output_T5.md",
                 "label": "T5 季度归因"},
-        "T6":  {"input": "skill_input_T6.md",  "output": "skill_output_T6.md",
-                "label": "T6 候选池语义排序"},
+        "T6A": {"input": "skill_input_T6_A.md", "output": "skill_output_T6_A.md",
+                "label": "T6 A桶·红利逆向"},
+        "T6B": {"input": "skill_input_T6_B.md", "output": "skill_output_T6_B.md",
+                "label": "T6 B桶·成长"},
+        "T6C": {"input": "skill_input_T6_C.md", "output": "skill_output_T6_C.md",
+                "label": "T6 C桶·热点周期"},
     }
 
     def __init__(self, data_dir: str):

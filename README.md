@@ -11,7 +11,7 @@ Agent 只出提醒、买卖仍由人决策的 A 股三桶（红利逆向 / 成�
 | **T3 月度再平衡** | `t3_monthly_rebalance.py` | 每月首日 | 检查四桶实际权重 vs 目标偏离，校验弪药桶≥15%，统计分红入D | `data/report_日期_T3.md` |
 | **T4 财报季扫描** | `t4_ingest.py` | 4/8/10月+每周五 | 从业绩预告+互动易问答搜关键词→LLM判定景气→写入信号台账 | `skill_input_T4C.md` → `skill_output_T4C.md` → `live_signal_log.csv` |
 | **T5 季度归因** | `t5_prepare.py` | 季末 | 组装季度交易日志+信号台账+基准走势→LLM做归因复盘 | `skill_input_T5.md` → `skill_output_T5.md` |
-| **T6 候选池筛选** | `t6_candidate_pool.py` | 每周五/季末 | 三桶各自硬门槛过滤→排序→输出候选池CSV→LLM语义排序Top10 | `candidates_A/B/C.csv` + `skill_input_T6.md` → `skill_output_T6.md` |
+| **T6 候选池筛选** | `t6_candidate_pool.py` | 每周五/季末 | 三桶各自硬门槛过滤→排序→输出候选池CSV→LLM三档全量分析 | `candidates_A/B/C.csv` + `skill_input_T6_A/B/C.md` → `skill_output_T6_A/B/C.md` |
 | **T7 参数回测** | `t7_backtest.py` | 月末/季末 | 包装06号回测脚本，验证策略参数历史胜率 | `data/report_日期_T7.md` |
 | **T8 信号台账维护** | `t8_signal_log.py` | 工作日17:00 | 回补历史信号60/120/250日收益，对比实盘vs回测胜率，触发失效预警 | `data/report_日期_T8.md` |
 
@@ -61,8 +61,8 @@ Agent 只出提醒、买卖仍由人决策的 A 股三桶（红利逆向 / 成�
     ├── skill_input_T4C.md         # T4 输入：财报+互动易文本（喂给LLM）
     ├── skill_output_T4C.md        # T4 输出：LLM判定的PASS/REJECT结果
     ├── skill_input_T5.md          # T5 输入：季度交易+信号+基准（喂给LLM）
-    ├── skill_input_T6.md          # T6 输入：三桶候选池CSV（喂给LLM）
-    ├── skill_output_T6.md         # T6 输出：LLM语义排序Top10+景气分析
+    ├── skill_input_T6_A/B/C.md    # T6 输入：按桶分文件的候选池（喂给LLM）
+    ├── skill_output_T6_A/B/C.md   # T6 输出：LLM三档全量分析（推荐/中立/不推荐）
     ├── report_日期_T*.md          # 各任务的盘后报告
     └── cache/                     # 数据缓存（交易日历等）
 ```
@@ -214,7 +214,7 @@ Agent 只出提醒、买卖仍由人决策的 A 股三桶（红利逆向 / 成�
 | has_irm | 是否有互动易文本 |
 | negative_hits | 反向词命中（顶部信号） |
 
-**产出**：`candidates_A/B/C.csv` + `skill_input_T6.md` → 喂LLM → `skill_output_T6.md`（Top10+REJECT+景气分析）
+**产出**：`candidates_A/B/C.csv` + `skill_input_T6_A/B/C.md` → 喂LLM → `skill_output_T6_A/B/C.md`（三档全量+REJECT+景气分析）
 
 ### T7 · 参数回测（`t7_backtest.py`）
 
@@ -306,8 +306,8 @@ T4/T5/T6 中涉及 LLM 的部分采用"脚本准备输入 → 人工/CI 调用 L
 | T4 入库 | `t4_ingest.py` | — | 写入 `data/live_signal_log.csv` |
 | T5 准备 | `t5_prepare.py` | — | `data/skill_input_T5.md` |
 | T5 归因 | _手动喂 LLM_ | `skills/t5_attribution.md` | `data/skill_output_T5.md` |
-| T6 筛选 | `t6_candidate_pool.py` | — | `data/skill_input_T6.md` + CSVs |
-| T6 排序 | _手动喂 LLM_ | `skills/t6_semantic_ranking.md` | `data/skill_output_T6.md` |
+| T6 筛选 | `t6_candidate_pool.py` | — | `data/skill_input_T6_A/B/C.md` + CSVs |
+| T6 排序 | _手动喂 LLM_ | `skills/t6_semantic_ranking.md` | `data/skill_output_T6_A/B/C.md` |
 
 ## GitHub Actions 调度
 
