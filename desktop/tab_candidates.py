@@ -202,12 +202,23 @@ class CandidatesTab(QWidget):
                 self.table.setItem(r, c, item)
 
         self.table.setSortingEnabled(True)
+
+        # 列宽：全部改为可拖拽的 Interactive 模式。
+        # （clear() 后 per-section 的 Stretch 模式会按索引残留并错位到别的列，
+        #   且 Stretch 模式下用户无法手动拉宽，列多时该列会被压缩到看不见）
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
         self.table.resizeColumnsToContents()
 
-        # 拉伸名称列
+        # 名称列保底宽度（容纳 4-6 个汉字），用户可自由拖动调整
         if "name" in cols:
-            self.table.horizontalHeader().setSectionResizeMode(
-                cols.index("name"), QHeaderView.Stretch)
+            idx = cols.index("name")
+            self.table.setColumnWidth(idx, max(110, self.table.columnWidth(idx)))
+
+        # 防止单列过宽挤占空间
+        for c in range(len(cols)):
+            if self.table.columnWidth(c) > 260:
+                self.table.setColumnWidth(c, 260)
 
     def _on_select(self):
         """选中行时显示明细（pick_reason / inst_detail）。"""
