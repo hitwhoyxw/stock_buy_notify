@@ -992,14 +992,28 @@ def get_csi1000_constituents() -> pd.DataFrame:
     return _memo("csi1000_constituents", _fetch_csi1000_constituents)
 
 
-@disk_cache(ttl_hours=24)
+def get_csi500_constituents() -> pd.DataFrame:
+    """中证500（000905）成分股。返回 code, name, weight。"""
+    return _memo("csi500_constituents", _fetch_csi500_constituents)
+
+
 def _fetch_csi1000_constituents() -> pd.DataFrame:
+    return _fetch_csindex_constituents("000852", "中证1000")
+
+
+def _fetch_csi500_constituents() -> pd.DataFrame:
+    return _fetch_csindex_constituents("000905", "中证500")
+
+
+@disk_cache(ttl_hours=24)
+def _fetch_csindex_constituents(symbol: str, label: str) -> pd.DataFrame:
+    """从中证指数官网拉成分股（含权重接口优先，降级纯成分接口）。"""
     import akshare as ak
 
     df = pd.DataFrame()
     weight_col = None
     try:
-        raw = ak.index_stock_cons_weight_csindex(symbol="000852")
+        raw = ak.index_stock_cons_weight_csindex(symbol=symbol)
         if raw is not None and not raw.empty:
             df = raw
             weight_col = next((c for c in raw.columns
@@ -1009,11 +1023,11 @@ def _fetch_csi1000_constituents() -> pd.DataFrame:
 
     if df.empty:
         try:
-            raw = ak.index_stock_cons_csindex(symbol="000852")
+            raw = ak.index_stock_cons_csindex(symbol=symbol)
             if raw is not None and not raw.empty:
                 df = raw
         except Exception as e:
-            print(f"[data_fetch] 中证1000成分股拉取失败：{e}", file=sys.stderr)
+            print(f"[data_fetch] {label}成分股拉取失败：{e}", file=sys.stderr)
             return pd.DataFrame()
 
     if df.empty:
@@ -1029,7 +1043,7 @@ def _fetch_csi1000_constituents() -> pd.DataFrame:
                       if "名称" in c and "指数" not in c and "英文" not in c]
         col_name = candidates[0] if candidates else None
     if col_code is None:
-        print(f"[data_fetch] 中证1000成分列名解析失败：{list(df.columns)}", file=sys.stderr)
+        print(f"[data_fetch] {label}成分列名解析失败：{list(df.columns)}", file=sys.stderr)
         return pd.DataFrame()
 
     out = pd.DataFrame({

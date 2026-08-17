@@ -2,7 +2,7 @@
 
 三桶各自的筛选逻辑：
 - A 桶（红利逆向）：中证红利成分 → 股息率/PB/ROE 过滤 → quality_score 排序
-- B 桶（成长）：中证1000成分 → 市值/CAGR/增速/ROE/现金流/PEG 过滤 → 1/PEG 排序
+- B 桶（成长）：中证1000+中证500成分 → 市值/CAGR/增速/ROE/现金流/PEG 过滤 → 1/PEG 排序
 - C 桶（热点周期）：T4 文本判定 PASS → 数据验证（单季扣非 + 合同负债 + 价格指数）
 
 产出：data/skill_input_T6.md（LLM 消费用，格式对齐 skills/t6_semantic_ranking.md）
@@ -31,6 +31,7 @@ from lib.config import get_config, get_yaml_tag
 from lib.data_fetch import (
     get_csi_dividend_constituents,
     get_csi1000_constituents,
+    get_csi500_constituents,
     get_batch_fundamentals,
     get_profit_quality_snapshot,
     get_growth_snapshot,
@@ -284,9 +285,10 @@ def screen_bucket_a() -> pd.DataFrame:
 # ============================================================
 
 def screen_bucket_b() -> pd.DataFrame:
-    """B 桶硬门槛筛选（中证1000 中盘成长股）。
+    """B 桶硬门槛筛选（中证1000 + 中证500 中大盘成长股）。
 
-    候选池：中证1000（000852）全部成分股，剔除 ST/退。
+    候选池：中证1000（000852）+ 中证500（000905）全部成分股（合并去重），剔除 ST/退。
+    （中证500 于 2026-08 纳入：大中盘成长如科达利等原被池子排除在外）
     硬门槛（阈值读 config bucket_B.batch_screen，默认值如下）：
     - 总市值 ≥ 50 亿（统一亿元口径）
     - 净利 3 年 CAGR ≥ 20%（2022→2025 年报首末期水平，基期/末期净利均须为正）
@@ -303,14 +305,21 @@ def screen_bucket_b() -> pd.DataFrame:
     批量口径：成分/业绩/现金流全部来自全市场快照 merge，绝不逐票请求。
     非批量指标（商誉、应收、研发、渗透率、PE 历史分位）留 LLM 层验证。
     """
-    print("[T6-B] 中证1000 中盘成长筛选...")
+    print("[T6-B] 中证1000+中证500 中大盘成长筛选...")
 
-    cons = get_csi1000_constituents()
-    if cons.empty:
-        print("[T6-B] [WARN] 中证1000 成分数据为空，跳过 B 桶", file=sys.stderr)
+    cons1000 = get_csi1000_constituents()
+    cons500 = get_csi500_constituents()
+    if cons1000.empty and cons500.empty:
+        print("[T6-B] [WARN] 中证1000/中证500 成分数据均为空，跳过 B 桶",
+              file=sys.stderr)
         return pd.DataFrame()
+    if cons1000.empty or cons500.empty:
+        which = "中证500" if cons500.empty else "中证1000"
+        print(f"[T6-B] [WARN] {which} 成分数据为空，仅用另一指数", file=sys.stderr)
+    cons = pd.concat([cons1000, cons500], ignore_index=True) \
+        .drop_duplicates(subset="code").reset_index(drop=True)
 
-    # ST/退市风险票剔除（中证1000 编制规则本就排除，这里双保险）
+    # ST/退市风险票剔除（指数编制规则本就排除，这里双保险）
     before = len(cons)
     cons = cons[~cons["name"].astype(str).str.contains("ST|退", regex=True)]
     print(f"[T6-B] 成分 {before} 只，剔 ST/退 后 {len(cons)} 只")
@@ -725,7 +734,7 @@ def _rules_note_b(df: pd.DataFrame) -> str:
     max_pe = bs.get("pe_ttm_max", 60.0)
     max_peg = bs.get("peg_max", 1.2)
     lines = [
-        f"筛选规则: 中证1000成分(剔ST/退) + 总市值≥{min_mv:.0f}亿"
+        f"筛选规则: 中证1000+中证500成分(剔ST/退) + 总市值≥{min_mv:.0f}亿"
         f" + 净利3年CAGR≥{min_np_cagr:.0f}%(年报首末期,基期须为正)"
         f" + 营收3年CAGR≥{min_rev_cagr:.0f}%"
         f" + 最新报告期净利同比≥{min_np_yoy:.0f}%"
