@@ -137,8 +137,9 @@ bucket_B:
   # 批量静态筛选层（scripts/t6_candidate_pool.py screen_bucket_b 读取）
   # 只用全市场批量接口可得的指标；商誉/应收/研发/渗透率/PE分位留 LLM 层验证
   batch_screen:
-    universe_index: ["000852.SH", "000905.SH"]  # 中证1000+中证500（2026-08扩池：
-                                                # 大中盘成长如科达利原被中证1000排除）
+    universe_index: ["000852.SH", "000905.SH", "000510.SH", "000906.SH"]
+    # 中证1000+500+A500+800 全市场大中盘（2026-08 扩池：
+    # 800=沪深300+500，故沪深300大盘股亦纳入；去重后约1800+只）
     exclude_st: true
     total_mv_min_yi: 30              # 放宽 50→30，拉大候选池到50+
     np_cagr_3y_min_pct: 15           # 放宽 20→15

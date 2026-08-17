@@ -997,12 +997,30 @@ def get_csi500_constituents() -> pd.DataFrame:
     return _memo("csi500_constituents", _fetch_csi500_constituents)
 
 
+def get_csi_a500_constituents() -> pd.DataFrame:
+    """中证A500（000510）成分股。返回 code, name, weight。"""
+    return _memo("csi_a500_constituents", _fetch_csi_a500_constituents)
+
+
+def get_csi800_constituents() -> pd.DataFrame:
+    """中证800（000906，=沪深300+中证500）成分股。返回 code, name, weight。"""
+    return _memo("csi800_constituents", _fetch_csi800_constituents)
+
+
 def _fetch_csi1000_constituents() -> pd.DataFrame:
     return _fetch_csindex_constituents("000852", "中证1000")
 
 
 def _fetch_csi500_constituents() -> pd.DataFrame:
     return _fetch_csindex_constituents("000905", "中证500")
+
+
+def _fetch_csi_a500_constituents() -> pd.DataFrame:
+    return _fetch_csindex_constituents("000510", "中证A500")
+
+
+def _fetch_csi800_constituents() -> pd.DataFrame:
+    return _fetch_csindex_constituents("000906", "中证800")
 
 
 @disk_cache(ttl_hours=24)
