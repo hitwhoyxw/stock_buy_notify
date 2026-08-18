@@ -259,7 +259,9 @@ class DataManager:
         if not os.path.exists(path):
             return pd.DataFrame()
         try:
-            return pd.read_csv(path)
+            # dtype=str：防止 code 等全数字列被推断为 int 丢失前导零（000426→426）。
+            # 需要数值的调用方自行 pd.to_numeric 转换（load_nav 已做）。
+            return pd.read_csv(path, dtype=str)
         except Exception:
             return pd.DataFrame()
 
