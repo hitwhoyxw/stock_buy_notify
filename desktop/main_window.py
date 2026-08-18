@@ -32,6 +32,7 @@ from watchlist_store import WatchlistStore
 from monitor import MonitorEngine, send_alert_email
 from tab_dashboard import DashboardTab
 from tab_candidates import CandidatesTab
+from tab_analysis import AnalysisTab
 from tab_llm import LLMBridgeTab
 from tab_reports import ReportsTab
 from tab_portfolio import PortfolioTab
@@ -360,9 +361,11 @@ class MainWindow(QMainWindow):
         self.tab_dashboard = DashboardTab(self.engine)
         self.tab_portfolio = PortfolioTab(self.dm)
         self.tab_candidates = CandidatesTab(self.dm, self.watchlist_store)
+        self.tab_analysis = AnalysisTab(self.dm)
         self.tab_watchlist = WatchlistTab(
             self.watchlist_store, self.monitor,
-            on_manage_strategies=lambda: self.tabs.setCurrentIndex(4))
+            on_manage_strategies=lambda: self.tabs.setCurrentIndex(
+                self.tabs.indexOf(self.tab_strategy)))
         self.tab_strategy = StrategyTab(self.watchlist_store)
         self.tab_llm = LLMBridgeTab(self.dm, self.engine)
         self.tab_reports = ReportsTab(self.dm)
@@ -371,6 +374,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.tab_dashboard, "📊 任务面板")
         tabs.addTab(self.tab_portfolio, "💼 持仓总览")
         tabs.addTab(self.tab_candidates, "📋 候选池")
+        tabs.addTab(self.tab_analysis, "🧠 LLM 分析")
         tabs.addTab(self.tab_watchlist, "🎯 监控自选")
         tabs.addTab(self.tab_strategy, "🧭 策略管理")
         tabs.addTab(self.tab_llm, "🤖 LLM 桥接")
@@ -415,8 +419,8 @@ class MainWindow(QMainWindow):
 
     def _goto_watchlist(self):
         self.showNormal()
-        if hasattr(self, "tabs"):
-            self.tabs.setCurrentIndex(3)
+        if hasattr(self, "tabs") and hasattr(self, "tab_watchlist"):
+            self.tabs.setCurrentIndex(self.tabs.indexOf(self.tab_watchlist))
 
     def _quit_app(self):
         """托盘菜单真正退出（区别于关闭窗口=最小化到托盘）。"""
