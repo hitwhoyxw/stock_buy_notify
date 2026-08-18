@@ -22,12 +22,13 @@ WATCHLIST_COLUMNS = [
 
 STRATEGY_COLUMNS = [
     "id", "name", "type", "indicator", "operator", "threshold",
-    "action", "priority", "enabled",
+    "condition", "action", "priority", "enabled",
 ]
 
 STRATEGY_TYPES = {"buy": "买入建议", "hold": "持有观察", "sell": "卖出建议"}
 
 # 首次初始化写入的默认策略（enabled 默认启用，但监控池为空不会误触发）
+# condition 列存条件树 JSON（复合策略）；简单策略留空，走 indicator 三列
 DEFAULT_STRATEGIES = [
     {"id": "S1", "name": "跌破MA60减仓", "type": "sell",
      "indicator": "price_vs_ma60", "operator": "<", "threshold": "0",

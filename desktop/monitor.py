@@ -1,15 +1,11 @@
 """监控引擎：自选池 × 策略 → 周期检查 → 提醒（弹窗信号 + 邮件）。
 
-指标全部基于腾讯免费行情（实时价 + 日K），不依赖 akshare：
-  price                    现价(元)
-  day_change_pct           当日涨跌幅(%)
-  price_vs_ma20            现价相对 MA20 (%)
-  price_vs_ma60            现价相对 MA60 (%)
-  drawdown_from_high_180d  距 180 日高点回撤(%)
-  gain_from_low_180d       距 180 日低点涨幅(%)
-  volume_ratio_20d         量比 = 今日量 / 20 日均量
-  pe_ttm                   市盈率TTM
-  cost_basis_gain          相对持仓成本浮盈(%，无持仓时策略跳过)
+行情全部基于腾讯免费行情（实时价 + 日K），不依赖 akshare。
+指标计算与策略求值由 strategy_engine 提供：
+  · 简单策略（strategies.csv 的 indicator/operator/threshold 三列）
+  · 复合策略（condition 列的条件树 JSON，支持 AND/OR/NOT 嵌套、
+    形态类（如均线多头排列）、交叉类（MACD/均线金叉死叉））
+  两类统一走 evaluate_strategy()，旧策略零迁移自动兼容。
 
 提醒去重：同一 (日期, 策略ID, 代码) 当天只提醒一次。
 监控节奏：盘中按用户设定间隔；盘外(工作日)至少5分钟；周末跳过。
@@ -18,6 +14,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import time
 import traceback
 from typing import Dict, List, Optional
@@ -25,9 +22,13 @@ from typing import Dict, List, Optional
 import pandas as pd
 from PyQt5.QtCore import QThread, pyqtSignal
 
+from strategy_engine import (
+    IndicatorContext, StrategyConfigError, describe_condition,
+    evaluate_strategy, legacy_condition_text, primary_value,
+)
 from watchlist_store import WatchlistStore, STRATEGY_TYPES
 
-# 指标注册表：key -> (中文标签, 单位)
+# 旧版简单策略的指标标签（UI 展示用；条件树指标见 strategy_engine.INDICATOR_DEFS）
 INDICATORS = {
     "price": "现价(元)",
     "day_change_pct": "当日涨跌幅(%)",
@@ -126,63 +127,18 @@ def fetch_kline(code: str, days: int = 200) -> Optional[pd.DataFrame]:
 
 
 # ============================================================
-# 指标计算与策略判断
+# 策略判断（简单三列 + 条件树 统一入口见 strategy_engine.evaluate_strategy）
 # ============================================================
 
-def compute_indicators(quote: dict, kline: Optional[pd.DataFrame],
-                       cost: Optional[float]) -> Dict[str, Optional[float]]:
-    """根据实时行情 + 日K + 持仓成本计算全部指标（算不出的为 None）。"""
-    ind: Dict[str, Optional[float]] = {k: None for k in INDICATORS}
-    price = quote.get("price")
-    if price is None:
-        return ind
-    ind["price"] = price
-    ind["day_change_pct"] = quote.get("change_pct")
-    ind["pe_ttm"] = quote.get("pe_ttm")
-
-    if kline is not None and not kline.empty:
-        closes = kline["close"]
+def strategy_condition_text(s: dict) -> str:
+    """策略条件的中文可读文本（复合条件树降级展示，简单策略走旧样式）。"""
+    raw = str(s.get("condition") or "").strip()
+    if raw:
         try:
-            if len(closes) >= 60:
-                ma60 = closes.rolling(60).mean().iloc[-1]
-                if ma60 > 0:
-                    ind["price_vs_ma60"] = (price / ma60 - 1) * 100
-            if len(closes) >= 20:
-                ma20 = closes.rolling(20).mean().iloc[-1]
-                if ma20 > 0:
-                    ind["price_vs_ma20"] = (price / ma20 - 1) * 100
-                vol = kline["volume"]
-                base = vol.iloc[-21:-1].mean()
-                if base and base > 0:
-                    ind["volume_ratio_20d"] = vol.iloc[-1] / base
-            tail = kline.tail(180)
-            hi = tail["high"].max()
-            lo = tail["low"].min()
-            if hi > 0:
-                ind["drawdown_from_high_180d"] = (price / hi - 1) * 100
-            if lo > 0:
-                ind["gain_from_low_180d"] = (price / lo - 1) * 100
-        except Exception:
-            pass
-
-    if cost and cost > 0:
-        ind["cost_basis_gain"] = (price / cost - 1) * 100
-    return ind
-
-
-def evaluate(strategy: dict, ind: Dict[str, Optional[float]]) -> Optional[bool]:
-    """判断策略条件。指标缺失/配置错误返回 None（跳过），否则 True/False。"""
-    v = ind.get(str(strategy.get("indicator", "")))
-    if v is None:
-        return None
-    try:
-        t = float(strategy.get("threshold", ""))
-    except (ValueError, TypeError):
-        return None
-    op = str(strategy.get("operator", ""))
-    return {
-        "<": v < t, "<=": v <= t, ">": v > t, ">=": v >= t,
-    }.get(op)
+            return describe_condition(json.loads(raw))
+        except json.JSONDecodeError:
+            return raw[:80]
+    return legacy_condition_text(s)
 
 
 def fmt_value(v: Optional[float]) -> str:
@@ -250,6 +206,7 @@ class MonitorEngine(QThread):
         self._active = False
         self._kline_cache: Dict[str, tuple] = {}  # code -> (date, df|None)
         self._last_check = ""
+        self._cfg_errors: set = set()  # 已上报过的策略配置错误（去重）
 
     # ── 对外控制 ──
 
@@ -368,18 +325,25 @@ class MonitorEngine(QThread):
             if not sids or not quote:
                 continue
             kline = self._get_kline(code)
-            ind = compute_indicators(quote, kline, costs.get(code))
+            ctx = IndicatorContext(quote, kline, costs.get(code))
             for sid in sids:
                 s = smap.get(sid)
                 if s is None:
                     continue
-                if evaluate(s, ind) is not True:
+                try:
+                    if evaluate_strategy(s, ctx) is not True:
+                        continue
+                except StrategyConfigError as e:
+                    # 配置错误：状态栏上报一次（去重）并跳过，绝不静默当 false
+                    msg = f"策略 {sid} 配置错误: {e}"
+                    if msg not in self._cfg_errors:
+                        self._cfg_errors.add(msg)
+                        self.status_message.emit(f"[监控] {msg}")
                     continue
                 hit_count += 1
                 key = f"{today}|{sid}|{code}"
                 if key in seen:
                     continue
-                v = ind.get(str(s.get("indicator")))
                 alerts.append({
                     "dedup_key": key,
                     "time": f"{today} {now_str}",
@@ -389,11 +353,10 @@ class MonitorEngine(QThread):
                     "strategy_name": str(s.get("name", "")),
                     "type": str(s.get("type", "")),
                     "indicator": str(s.get("indicator", "")),
-                    "indicator_label": INDICATORS.get(
-                        str(s.get("indicator")), str(s.get("indicator"))),
-                    "value": fmt_value(v),
-                    "op": str(s.get("operator", "")),
-                    "threshold": str(s.get("threshold", "")),
+                    "indicator_label": strategy_condition_text(s),
+                    "value": fmt_value(primary_value(s, ctx)),
+                    "op": "",
+                    "threshold": "",
                     "action": str(s.get("action", "")),
                     "priority": str(s.get("priority", "")),
                 })
@@ -412,10 +375,16 @@ class MonitorEngine(QThread):
     def _send_mail(self, alerts: List[dict]):
         lines = []
         for e in alerts:
+            # 简单策略历史数据可能仍带 op/threshold，新提醒统一为条件描述 + 当前值
+            detail = f"{e['indicator_label']}"
+            if e.get("op"):
+                detail += f" {e['op']} {e.get('threshold', '')}"
+            if e.get("value") and e["value"] != "--":
+                detail += f" = {e['value']}"
             lines.append(
                 f"■ {e['name']}({e['code']})  [{e['priority']}] "
                 f"{TYPE_EMOJI.get(e['type'], '')} {e['strategy_name']}\n"
-                f"  {e['indicator_label']} = {e['value']} {e['op']} {e['threshold']}\n"
+                f"  触发条件: {detail}\n"
                 f"  建议: {e['action']}\n"
                 f"  时间: {e['time']}")
         subject = f"[三桶监控] {len(alerts)} 条策略提醒 {alerts[0]['time']}"

@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
     QInputDialog,
 )
 
-from monitor import MonitorEngine, INDICATORS, TYPE_EMOJI
+from monitor import MonitorEngine, TYPE_EMOJI, strategy_condition_text
 from watchlist_store import WatchlistStore, STRATEGY_TYPES
 
 
@@ -102,8 +102,7 @@ class ApplyStrategyDialog(QDialog):
             sid = str(row["id"])
             stype = str(row["type"])
             label = (f"[{sid}] {STRATEGY_TYPES.get(stype, stype)} · "
-                     f"{row['name']} — {INDICATORS.get(str(row['indicator']), '')} "
-                     f"{row['operator']} {row['threshold']}")
+                     f"{row['name']} — {strategy_condition_text(row.to_dict())}")
             item = QListWidgetItem(label)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(
@@ -407,8 +406,7 @@ class WatchlistTab(QWidget):
                 str(e.get("name", "")),
                 TYPE_EMOJI.get(str(e.get("type", "")), ""),
                 str(e.get("strategy_name", "")),
-                f"{e.get('indicator_label', '')} {e.get('op', '')} "
-                f"{e.get('threshold', '')}",
+                str(e.get("indicator_label", "")),
                 str(e.get("value", "")), str(e.get("action", "")),
             ]
             for c, v in enumerate(vals):
