@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QColor, QFont
 from datetime import date as _dt_date, datetime
 
-from engine import DataManager
+from engine import DataManager, should_refresh_quotes
 
 # pyqtgraph 可选
 try:
@@ -380,13 +380,14 @@ class PortfolioTab(QWidget):
         self.dm = dm
         self._prices: Dict[str, float] = {}
         self._names: Dict[str, str] = {}  # code -> 名称（自动补全用）
+        self._last_fetch_dt: Optional[datetime] = None  # 上次成功拉取时间（盘外节流）
         self._kline_thread: Optional[KlineFetcher] = None
         self._price_thread: Optional[PriceFetcher] = None
         self._build()
-        # 60 秒自动刷新行情（静默：无交易记录/线程还在跑则跳过）
+        # 60 秒自动刷新：盘中持续拉；盘外数据不变，仅在最近定盘后未拉过时拉一次
         self._auto_timer = QTimer(self)
         self._auto_timer.setInterval(60_000)
-        self._auto_timer.timeout.connect(lambda: self._refresh_prices(silent=True))
+        self._auto_timer.timeout.connect(self._auto_tick)
         self._auto_timer.start()
 
     def _build(self):
@@ -562,7 +563,7 @@ class PortfolioTab(QWidget):
     def showEvent(self, e):
         super().showEvent(e)
         self._load()
-        self._refresh_prices(silent=True)  # 打开页面即拉一次行情/名称
+        self._auto_tick()  # 进入页面拉一次行情/名称（盘外已拉过则跳过）
 
     def _load(self):
         """加载持仓数据和图表。"""
@@ -1032,6 +1033,16 @@ class PortfolioTab(QWidget):
 
     # ── 刷新行情 ──
 
+    def _auto_tick(self):
+        """定时/进入页面时的行情刷新入口（盘外数据不变时跳过）。
+
+        盘中（含集合竞价/收盘缓冲）恒刷新；盘外仅在最近定盘后
+        未拉过时拉一次 —— 手动刷新按钮不受此节流限制。
+        """
+        if not should_refresh_quotes(self._last_fetch_dt):
+            return
+        self._refresh_prices(silent=True)
+
     def _refresh_prices(self, silent: bool = False):
         """拉取实时行情（含名称）。silent=True 用于 60s 定时/首刷：静默跳过，不弹提示。"""
         df = self.dm.read_trades()
@@ -1057,6 +1068,8 @@ class PortfolioTab(QWidget):
             {c: q["price"] for c, q in quotes.items() if "price" in q})
         self._names.update(
             {c: q["name"] for c, q in quotes.items() if q.get("name")})
+        if quotes:
+            self._last_fetch_dt = datetime.now()  # 盘外节流锚点
         self.refresh_btn.setEnabled(True)
         self.refresh_btn.setText("🔄 刷新行情")
         # 名称自动补全：流水里名称空白的行用行情名称回写 CSV

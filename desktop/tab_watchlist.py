@@ -9,6 +9,7 @@ MonitorEngine 周期判断，触发 → 托盘弹窗 + 邮件 + 本页历史记�
 from __future__ import annotations
 
 from typing import Optional
+from datetime import datetime
 
 from PyQt5.QtCore import Qt, QPoint, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QColor
@@ -19,6 +20,7 @@ from PyQt5.QtWidgets import (
     QInputDialog,
 )
 
+from engine import should_refresh_quotes
 from monitor import MonitorEngine, TYPE_EMOJI, strategy_condition_text, fetch_quotes
 from watchlist_store import WatchlistStore, STRATEGY_TYPES
 
@@ -198,6 +200,7 @@ class WatchlistTab(QWidget):
         self.monitor = monitor
         self._on_manage_strategies = on_manage_strategies
         self._quote_thread: Optional[QuoteFetcher] = None
+        self._last_fetch_dt: Optional[datetime] = None  # 上次成功拉取时间（盘外节流）
         self._build()
 
     def _build(self):
@@ -232,7 +235,7 @@ class WatchlistTab(QWidget):
 
         refresh_btn = QPushButton("🔄 刷新")
         refresh_btn.setStyleSheet("padding:6px 14px")
-        refresh_btn.clicked.connect(self._load)
+        refresh_btn.clicked.connect(lambda: self._force_refresh_quotes())
         bar.addWidget(refresh_btn)
 
         lay.addLayout(bar)
@@ -283,7 +286,8 @@ class WatchlistTab(QWidget):
         self._load()
         self._load_history()
 
-        # 60 秒自动拉行情：未启动监控也能看到现价/涨跌，并补全空白名称
+        # 60 秒自动拉行情：盘中持续刷新；盘外数据不变仅在最近定盘后拉一次。
+        # 未启动监控也能看到现价/涨跌，并补全空白名称。
         self._auto_timer = QTimer(self)
         self._auto_timer.setInterval(60_000)
         self._auto_timer.timeout.connect(self._auto_refresh_quotes)
@@ -361,7 +365,13 @@ class WatchlistTab(QWidget):
     # ── 60s 自动行情：现价/涨跌 + 名称自动补全 ──
 
     def _auto_refresh_quotes(self):
-        """后台拉取自选池行情（静默；未启动监控也刷新）。"""
+        """后台拉取自选池行情（静默；未启动监控也刷新）。
+
+        盘外（含午休/收盘后/周末）数据不变，节流跳过；
+        手动「刷新」按钮不走此入口，不受节流限制。
+        """
+        if not should_refresh_quotes(self._last_fetch_dt):
+            return
         df = self.store.list_watchlist()
         if df.empty:
             return
@@ -376,6 +386,8 @@ class WatchlistTab(QWidget):
 
     def _on_quotes_auto(self, quotes: dict):
         """自动行情回调：更新现价/涨跌，并补全名称空白的股票（回写 CSV）。"""
+        if quotes:
+            self._last_fetch_dt = datetime.now()  # 盘外节流锚点
         self._on_quotes(quotes)
         for r in range(self.table.rowCount()):
             code_item = self.table.item(r, 0)
@@ -386,6 +398,12 @@ class WatchlistTab(QWidget):
             if q and q.get("name") and not name_item.text().strip():
                 name_item.setText(q["name"])
                 self.store.set_name(code_item.text().strip(), q["name"])
+
+    def _force_refresh_quotes(self):
+        """手动刷新：重置节流锚点后立即拉一次（盘外也允许）。"""
+        self._last_fetch_dt = None
+        self._auto_refresh_quotes()
+        self._load()
 
     def _current_code(self) -> (str, str):
         row = self.table.currentRow()

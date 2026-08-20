@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import datetime as dt
 import os
 import sys
 import glob
@@ -19,6 +20,50 @@ from typing import Optional, List
 
 import pandas as pd
 from PyQt5.QtCore import QThread, pyqtSignal
+
+
+# ============================================================
+# A股交易时段判断（行情自动刷新节流用）
+# ============================================================
+
+def is_market_time(now=None) -> bool:
+    """是否处于行情会变化的时段（工作日 9:15-11:30 / 13:00-15:05）。
+
+    含集合竞价（9:15 起）与收盘定盘缓冲（15:05 前）；午休与收盘后
+    行情不再变化。节假日按工作日近似 —— 误差只是多拉一次，无害。
+    """
+    now = now or dt.datetime.now()
+    if now.weekday() >= 5:
+        return False
+    t = now.hour * 60 + now.minute
+    return (9 * 60 + 15 <= t < 11 * 60 + 30) or (13 * 60 <= t < 15 * 60 + 5)
+
+
+def last_settle_time(now=None) -> dt.datetime:
+    """最近一次行情定盘时点（最近工作日的 15:00）。
+
+    盘外节流依据：上次拉取时间晚于该时点，数据不可能再变化。
+    """
+    now = now or dt.datetime.now()
+    if now.weekday() < 5 and (now.hour, now.minute) >= (15, 0):
+        return now.replace(hour=15, minute=0, second=0, microsecond=0)
+    d = now - dt.timedelta(days=1)
+    while d.weekday() >= 5:
+        d = d - dt.timedelta(days=1)
+    return d.replace(hour=15, minute=0, second=0, microsecond=0)
+
+
+def should_refresh_quotes(last_fetch, now=None) -> bool:
+    """行情是否需要拉取：盘中恒 True；盘外仅在最近定盘后未拉过时 True。
+
+    last_fetch: 上次成功拉取的 datetime（从未拉过传 None）。
+    """
+    now = now or dt.datetime.now()
+    if is_market_time(now):
+        return True
+    if last_fetch and last_fetch > last_settle_time(now):
+        return False  # 定盘后已拉过，数据不可能变化
+    return True
 
 
 # ============================================================
