@@ -161,6 +161,20 @@ class WatchlistStore:
         df.loc[idx[0], "note"] = note
         return self._write_csv(self._watchlist_path, df)
 
+    def set_name(self, code: str, name: str) -> bool:
+        """补全/更新名称（仅写入非空名称，用于行情自动补名）。"""
+        if not str(name).strip():
+            return False
+        code = code.split(".")[0].zfill(6)
+        df = self.list_watchlist()
+        if df.empty:
+            return False
+        idx = df.index[df["code"].str.zfill(6) == code]
+        if len(idx) == 0:
+            return False
+        df.loc[idx[0], "name"] = str(name).strip()
+        return self._write_csv(self._watchlist_path, df)
+
     # ============================================================
     # 策略定义
     # ============================================================

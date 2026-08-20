@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt5.QtCore import Qt, QPoint
+from PyQt5.QtCore import Qt, QPoint, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
@@ -19,8 +19,23 @@ from PyQt5.QtWidgets import (
     QInputDialog,
 )
 
-from monitor import MonitorEngine, TYPE_EMOJI, strategy_condition_text
+from monitor import MonitorEngine, TYPE_EMOJI, strategy_condition_text, fetch_quotes
 from watchlist_store import WatchlistStore, STRATEGY_TYPES
+
+
+class QuoteFetcher(QThread):
+    """后台批量拉行情（复用 monitor.fetch_quotes，含名称/现价/涨跌幅）。
+
+    用于本页 60s 自动刷新与添加对话框的"只填代码自动取名"。
+    """
+    done = pyqtSignal(dict)
+
+    def __init__(self, codes: list):
+        super().__init__()
+        self.codes = [str(c).split(".")[0].zfill(6) for c in codes]
+
+    def run(self):
+        self.done.emit(fetch_quotes(self.codes))
 
 
 # ============================================================
@@ -28,20 +43,23 @@ from watchlist_store import WatchlistStore, STRATEGY_TYPES
 # ============================================================
 
 class AddWatchDialog(QDialog):
-    """手动添加监控股票。"""
+    """手动添加监控股票（只填代码时自动获取名称）。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("➕ 添加监控股票")
         self.setMinimumWidth(380)
+        self._name_thread: Optional[QuoteFetcher] = None
         form = QFormLayout()
 
         self.code_edit = QLineEdit()
         self.code_edit.setPlaceholderText("6 位数字，如 600519")
+        # 代码录入完成（失焦/回车）且名称为空 → 后台拉名称自动回填
+        self.code_edit.editingFinished.connect(self._try_fetch_name)
         form.addRow("代码:", self.code_edit)
 
         self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("名称（可选，可自动获取）")
+        self.name_edit.setPlaceholderText("名称（可选，只填代码可自动获取）")
         form.addRow("名称:", self.name_edit)
 
         self.note_edit = QLineEdit()
@@ -62,6 +80,28 @@ class AddWatchDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addLayout(form)
         lay.addLayout(btns)
+
+    def _try_fetch_name(self):
+        """只填代码时自动获取名称（名称已填则不打扰）。"""
+        code = self.code_edit.text().strip()
+        if not (code.isdigit() and len(code) in (5, 6)):
+            return
+        if self.name_edit.text().strip():
+            return
+        if self._name_thread and self._name_thread.isRunning():
+            return
+        self._name_thread = QuoteFetcher([code])
+        self._name_thread.done.connect(self._on_name_fetched)
+        self._name_thread.start()
+
+    def _on_name_fetched(self, quotes: dict):
+        """名称拉取回调：对话框仍打开且名称仍空 → 回填。"""
+        if not self.isVisible():
+            return
+        code = self.code_edit.text().strip().zfill(6)
+        q = quotes.get(code)
+        if q and q.get("name") and not self.name_edit.text().strip():
+            self.name_edit.setText(q["name"])
 
     def accept(self):
         code = self.code_edit.text().strip()
@@ -157,6 +197,7 @@ class WatchlistTab(QWidget):
         self.store = store
         self.monitor = monitor
         self._on_manage_strategies = on_manage_strategies
+        self._quote_thread: Optional[QuoteFetcher] = None
         self._build()
 
     def _build(self):
@@ -242,11 +283,18 @@ class WatchlistTab(QWidget):
         self._load()
         self._load_history()
 
+        # 60 秒自动拉行情：未启动监控也能看到现价/涨跌，并补全空白名称
+        self._auto_timer = QTimer(self)
+        self._auto_timer.setInterval(60_000)
+        self._auto_timer.timeout.connect(self._auto_refresh_quotes)
+        self._auto_timer.start()
+
     def showEvent(self, e):
         super().showEvent(e)
         self._load()
         self._load_history()
         self._sync_monitor_btn()
+        self._auto_refresh_quotes()  # 打开页面即拉一次
 
     # ============================================================
     # 自选池表
@@ -289,7 +337,7 @@ class WatchlistTab(QWidget):
         return {str(r["id"]): str(r["name"]) for _, r in df.iterrows()}
 
     def _on_quotes(self, quotes: dict):
-        """MonitorEngine 每 tick 推送的实时行情 → 更新现价/涨跌列。"""
+        """行情到达 → 更新现价/涨跌列（MonitorEngine 推送与本页自动拉取共用）。"""
         for r in range(self.table.rowCount()):
             item = self.table.item(r, 0)
             if not item:
@@ -309,6 +357,35 @@ class WatchlistTab(QWidget):
                 chg_item.setForeground(
                     QColor("#e74c3c") if pct > 0 else
                     QColor("#27ae60") if pct < 0 else QColor("#333"))
+
+    # ── 60s 自动行情：现价/涨跌 + 名称自动补全 ──
+
+    def _auto_refresh_quotes(self):
+        """后台拉取自选池行情（静默；未启动监控也刷新）。"""
+        df = self.store.list_watchlist()
+        if df.empty:
+            return
+        if self._quote_thread and self._quote_thread.isRunning():
+            return  # 上一轮还在拉取
+        codes = [str(c).strip() for c in df["code"] if str(c).strip()]
+        if not codes:
+            return
+        self._quote_thread = QuoteFetcher(codes)
+        self._quote_thread.done.connect(self._on_quotes_auto)
+        self._quote_thread.start()
+
+    def _on_quotes_auto(self, quotes: dict):
+        """自动行情回调：更新现价/涨跌，并补全名称空白的股票（回写 CSV）。"""
+        self._on_quotes(quotes)
+        for r in range(self.table.rowCount()):
+            code_item = self.table.item(r, 0)
+            name_item = self.table.item(r, 1)
+            if not code_item or not name_item:
+                continue
+            q = quotes.get(code_item.text().strip())
+            if q and q.get("name") and not name_item.text().strip():
+                name_item.setText(q["name"])
+                self.store.set_name(code_item.text().strip(), q["name"])
 
     def _current_code(self) -> (str, str):
         row = self.table.currentRow()

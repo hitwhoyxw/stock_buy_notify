@@ -18,9 +18,10 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QGridLayout,
     QLabel, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QFrame, QComboBox, QMessageBox, QDialog, QFormLayout, QDateEdit,
-    QDoubleSpinBox, QSpinBox, QLineEdit, QStackedWidget,
+    QDoubleSpinBox, QSpinBox, QLineEdit, QStackedWidget, QMenu, QAction,
 )
 from PyQt5.QtGui import QColor, QFont
+from datetime import date as _dt_date, datetime
 
 from engine import DataManager
 
@@ -61,8 +62,19 @@ def _to_tencent_symbol(code: str) -> str:
     return f"sz{pure}"
 
 
+# 交易流水表列（与 DataManager.TRADE_COLUMNS 前 11 列一致，用于内联编辑回写）
+TRADE_COLS = [
+    "日期", "方向", "桶", "代码", "名称", "申万一级行业",
+    "价格", "股数", "金额", "触发规则ID", "决策理由(一句话)",
+]
+
+
 class PriceFetcher(QThread):
-    """后台拉取实时行情（腾讯源）。"""
+    """后台拉取实时行情（腾讯源）。
+
+    done 信号发射 {code: {"price": 现价, "name": 名称}}；
+    价格用于盈亏计算，名称用于"录入时只填代码、自动补全名称"。
+    """
     done = pyqtSignal(dict)
 
     def __init__(self, codes: list):
@@ -71,7 +83,7 @@ class PriceFetcher(QThread):
 
     def run(self):
         import requests
-        result: Dict[str, float] = {}
+        result: Dict[str, dict] = {}
         for i in range(0, len(self.codes), 60):
             chunk = self.codes[i:i + 60]
             q = ",".join(_to_tencent_symbol(c) for c in chunk)
@@ -93,12 +105,15 @@ class PriceFetcher(QThread):
                 if len(f) < 47:
                     continue
                 code = f[2]
+                info = {"name": f[1].strip() if len(f) > 1 else ""}
                 try:
                     price = float(f[3])
                     if price > 0:
-                        result[code] = price
+                        info["price"] = price
                 except (ValueError, TypeError):
                     pass
+                if info["name"] or "price" in info:
+                    result[code] = info
         self.done.emit(result)
 
 
@@ -188,10 +203,35 @@ class TradeDialog(QDialog):
         self.setWindowTitle("编辑交易" if trade else "➕ 记一笔交易")
         self.setMinimumWidth(440)
         self._build()
+        self._name_thread: Optional[PriceFetcher] = None
+        # 代码录入完成（失焦/回车）且名称为空 → 后台拉名称自动回填
+        self.code_edit.editingFinished.connect(self._try_fetch_name)
         if trade:
             self._fill(trade)
         else:
             self.shares_spin.setValue(100)
+
+    def _try_fetch_name(self):
+        """只填代码时自动获取名称（名称已填则不打扰）。"""
+        code = self.code_edit.text().strip()
+        if not (code.isdigit() and len(code) in (5, 6)):
+            return
+        if self.name_edit.text().strip():
+            return
+        if self._name_thread and self._name_thread.isRunning():
+            return
+        self._name_thread = PriceFetcher([code])
+        self._name_thread.done.connect(self._on_name_fetched)
+        self._name_thread.start()
+
+    def _on_name_fetched(self, quotes: dict):
+        """名称拉取回调：对话框仍打开且名称仍空 → 回填。"""
+        if not self.isVisible():
+            return
+        code = self.code_edit.text().strip().zfill(6)
+        q = quotes.get(code)
+        if q and q.get("name") and not self.name_edit.text().strip():
+            self.name_edit.setText(q["name"])
 
     def _build(self):
         form = QFormLayout()
@@ -339,9 +379,15 @@ class PortfolioTab(QWidget):
         super().__init__()
         self.dm = dm
         self._prices: Dict[str, float] = {}
+        self._names: Dict[str, str] = {}  # code -> 名称（自动补全用）
         self._kline_thread: Optional[KlineFetcher] = None
         self._price_thread: Optional[PriceFetcher] = None
         self._build()
+        # 60 秒自动刷新行情（静默：无交易记录/线程还在跑则跳过）
+        self._auto_timer = QTimer(self)
+        self._auto_timer.setInterval(60_000)
+        self._auto_timer.timeout.connect(lambda: self._refresh_prices(silent=True))
+        self._auto_timer.start()
 
     def _build(self):
         lay = QVBoxLayout(self)
@@ -372,7 +418,7 @@ class PortfolioTab(QWidget):
             "QPushButton{background:#3498db;color:white;border:none;"
             "padding:6px 16px;border-radius:4px;font-size:13px}"
             "QPushButton:hover{background:#2980b9}")
-        self.refresh_btn.clicked.connect(self._refresh_prices)
+        self.refresh_btn.clicked.connect(lambda: self._refresh_prices(silent=False))
         bar.addWidget(self.refresh_btn)
         lay.addLayout(bar)
 
@@ -403,7 +449,7 @@ class PortfolioTab(QWidget):
         left = QWidget()
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(0, 0, 0, 0)
-        left_lay.addWidget(QLabel("<b>持仓明细</b>"))
+        left_lay.addWidget(QLabel("<b>持仓明细</b>（右键行可 <font color='#27ae60'>加仓</font> / <font color='#e74c3c'>减仓</font> / <font color='#e74c3c'>清仓</font>）"))
         self.table = QTableWidget()
         self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels(
@@ -412,6 +458,8 @@ class PortfolioTab(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.clicked.connect(self._on_row_clicked)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_pos_context_menu)
         left_lay.addWidget(self.table)
         splitter.addWidget(left)
 
@@ -469,7 +517,7 @@ class PortfolioTab(QWidget):
         trades_lay.setContentsMargins(0, 0, 0, 0)
 
         trades_bar = QHBoxLayout()
-        hint = QLabel("双击行或点按钮编辑；增删改后持仓与图表自动刷新")
+        hint = QLabel("双击单元格可直接修改（代码/名称/价格/股数等）；✏️ 按钮可打开完整编辑（含方向/桶下拉）")
         hint.setStyleSheet("color:#999;font-size:11px")
         trades_bar.addWidget(hint)
         trades_bar.addStretch()
@@ -501,9 +549,11 @@ class PortfolioTab(QWidget):
         self.trades_table.horizontalHeader().setStretchLastSection(True)
         self.trades_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.trades_table.setSelectionMode(QTableWidget.SingleSelection)
-        self.trades_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.trades_table.doubleClicked.connect(
-            lambda idx: self._on_edit_trade(idx))
+        # 双击单元格直接编辑（校验后回写 live_trade_log.csv）；
+        # 完整编辑（含方向/桶下拉、金额自动算）走 ✏️ 按钮对话框
+        self.trades_table.setEditTriggers(
+            QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed)
+        self.trades_table.itemChanged.connect(self._on_trade_item_changed)
         trades_lay.addWidget(self.trades_table)
 
         self.stack.addWidget(page_trades)
@@ -512,6 +562,7 @@ class PortfolioTab(QWidget):
     def showEvent(self, e):
         super().showEvent(e)
         self._load()
+        self._refresh_prices(silent=True)  # 打开页面即拉一次行情/名称
 
     def _load(self):
         """加载持仓数据和图表。"""
@@ -530,16 +581,16 @@ class PortfolioTab(QWidget):
     # ── 交易流水 CRUD ──
 
     def _load_trades(self):
-        """加载交易流水表。"""
+        """加载交易流水表（blockSignals 防止重建触发 itemChanged）。"""
         df = self.dm.read_trades()
+        self.trades_table.blockSignals(True)
         self.trades_table.setRowCount(0)
         if df.empty:
+            self.trades_table.blockSignals(False)
             return
-        cols = ["日期", "方向", "桶", "代码", "名称", "申万一级行业",
-                "价格", "股数", "金额", "触发规则ID", "决策理由(一句话)"]
         self.trades_table.setRowCount(len(df))
         for i, (_, row) in enumerate(df.iterrows()):
-            for j, c in enumerate(cols):
+            for j, c in enumerate(TRADE_COLS):
                 text = str(row.get(c, ""))
                 item = QTableWidgetItem(text)
                 if c == "方向":
@@ -549,6 +600,98 @@ class PortfolioTab(QWidget):
                     item.setForeground(
                         QColor(BUCKET_COLORS.get(text.strip().upper(), "#333")))
                 self.trades_table.setItem(i, j, item)
+        self.trades_table.blockSignals(False)
+
+    # ── 流水表内联编辑（双击单元格 → 校验 → 回写 CSV）──
+
+    def _on_trade_item_changed(self, item: QTableWidgetItem):
+        """单元格编辑提交后：校验 → 归一化 → 回写 live_trade_log.csv。"""
+        row, col = item.row(), item.column()
+        if col < 0 or col >= len(TRADE_COLS):
+            return
+        field = TRADE_COLS[col]
+        new_val = item.text().strip()
+        df = self.dm.read_trades()
+        if row >= len(df):
+            return
+        old_val = str(df.iloc[row].get(field, "")).strip()
+        if new_val == old_val:
+            return
+
+        err = self._validate_trade_field(field, new_val)
+        if err:
+            QMessageBox.warning(self, "修改无效", f"【{field}】{err}")
+            self._set_item_text(row, col, old_val)
+            return
+
+        norm = self._normalize_trade_field(field, new_val)
+        if self.dm.update_trade(row, {field: norm}):
+            if norm != item.text():
+                self._set_item_text(row, col, norm)
+            # 方向/桶颜色随新值刷新
+            if field == "方向":
+                item.setForeground(
+                    QColor("#e74c3c" if norm == "买入" else "#27ae60"))
+            elif field == "桶":
+                item.setForeground(
+                    QColor(BUCKET_COLORS.get(norm, "#333")))
+            self._load_positions()  # 持仓/摘要卡片立即重算
+            self._load_pie()
+        else:
+            QMessageBox.critical(
+                self, "保存失败", "写入 live_trade_log.csv 失败，请检查文件是否被占用。")
+            self._set_item_text(row, col, old_val)
+
+    def _set_item_text(self, row: int, col: int, text: str):
+        """程序化改单元格文本（屏蔽信号防递归）。"""
+        self.trades_table.blockSignals(True)
+        it = self.trades_table.item(row, col)
+        if it:
+            it.setText(text)
+        self.trades_table.blockSignals(False)
+
+    @staticmethod
+    def _validate_trade_field(field: str, val: str) -> str:
+        """内联编辑校验：返回错误文案，空串表示通过。"""
+        if not val and field in ("日期", "方向", "桶", "代码", "价格", "股数", "金额"):
+            return "不能为空"
+        if field == "代码":
+            if not (val.isdigit() and len(val) in (5, 6)):
+                return "必须是 5-6 位数字（5 位自动补零，如 600519）"
+        elif field == "方向":
+            if val not in ("买入", "卖出"):
+                return "只能是 买入 / 卖出"
+        elif field == "桶":
+            if val.upper() not in ("A", "B", "C", "D"):
+                return "只能是 A / B / C / D"
+        elif field == "日期":
+            try:
+                datetime.strptime(val, "%Y-%m-%d")
+            except ValueError:
+                return "格式必须是 YYYY-MM-DD（如 2026-08-20）"
+        elif field in ("价格", "股数", "金额"):
+            try:
+                v = float(val)
+            except ValueError:
+                return f"必须是数字（当前输入：{val}）"
+            if v <= 0:
+                return "必须大于 0"
+        return ""
+
+    @staticmethod
+    def _normalize_trade_field(field: str, val: str) -> str:
+        """归一化：桶大写、代码补零、数值格式与 TradeDialog 输出一致。"""
+        if field == "桶":
+            return val.upper()
+        if field == "代码":
+            return val.zfill(6)
+        if field == "价格":
+            return f"{float(val):.3f}"
+        if field == "股数":
+            return str(int(float(val)))
+        if field == "金额":
+            return f"{float(val):.2f}"
+        return val
 
     def _on_add_trade(self):
         """记一笔交易（新增）。"""
@@ -618,6 +761,157 @@ class PortfolioTab(QWidget):
     def _after_trade_changed(self):
         """增删改交易后刷新持仓、图表、流水表。"""
         self._load()
+
+    # ── 持仓表右键快捷操作 ──
+
+    def _on_pos_context_menu(self, pos):
+        """持仓明细表右键：加仓 / 减仓 / 清仓 / 查看流水。"""
+        row = self.table.rowAt(pos.y())
+        if row < 0:
+            return
+        code_item = self.table.item(row, 0)
+        name_item = self.table.item(row, 1)
+        bucket_item = self.table.item(row, 2)
+        shares_item = self.table.item(row, 3)
+        price_item = self.table.item(row, 5)
+        if not code_item:
+            return
+        code = code_item.text().strip()
+        name = name_item.text().strip() if name_item else ""
+        bucket = (bucket_item.text().strip() or "A")
+        try:
+            held = float(shares_item.text()) if shares_item else 0.0
+        except (ValueError, TypeError):
+            held = 0.0
+        # 优先用已拉取的实时价，否则用表内现价
+        price = self._prices.get(code.zfill(6), 0.0)
+        if not price and price_item:
+            try:
+                price = float(price_item.text())
+            except (ValueError, TypeError):
+                price = 0.0
+
+        # 减仓默认股数：半仓取整到 100，且不超过当前持仓
+        reduce_shares = max(100, int(held / 2 // 100 * 100))
+        reduce_shares = min(reduce_shares, int(held)) if held > 0 else 100
+
+        menu = QMenu(self)
+        act_add = QAction(f"📈 加仓（{name or code}）", self)
+        act_add.triggered.connect(
+            lambda: self._quick_trade(code, name, bucket, price, "买入", 100))
+        menu.addAction(act_add)
+
+        act_reduce = QAction(f"📉 减仓（{name or code}）", self)
+        act_reduce.triggered.connect(
+            lambda: self._quick_trade(code, name, bucket, price, "卖出", reduce_shares))
+        menu.addAction(act_reduce)
+
+        act_clear = QAction(f"🗑 清仓（{name or code}）", self)
+        act_clear.triggered.connect(
+            lambda: self._quick_clear(code, name, bucket, price, held))
+        menu.addAction(act_clear)
+
+        menu.addSeparator()
+        act_trades = QAction("📜 查看该标的全部交易", self)
+        act_trades.triggered.connect(lambda: self._switch_to_trades(code))
+        menu.addAction(act_trades)
+
+        menu.exec_(self.table.viewport().mapToGlobal(pos))
+
+    def _quick_trade(self, code, name, bucket, price, direction, default_shares):
+        """加仓/减仓：预填对话框，保存即追加一笔交易，持仓与成本自动重算。
+
+        底层存的是交易流水，加仓=追加买入、减仓=追加卖出；
+        load_positions() 会按加权成本法重新聚合，成本与盈亏自动更新。
+        """
+        trade = {
+            "日期": _dt_date.today().isoformat(),
+            "方向": direction,
+            "桶": bucket,
+            "代码": code,
+            "名称": name,
+            "申万一级行业": "",
+            "价格": f"{price:.3f}" if price > 0 else "",
+            "股数": str(int(default_shares)),
+            "金额": f"{price * default_shares:.2f}" if price > 0 else "",
+            "触发规则ID": "",
+            "决策理由(一句话)": "右键加仓" if direction == "买入" else "右键减仓",
+        }
+        dlg = TradeDialog(self, trade=trade)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        record = dlg.get_record()
+        if record["方向"] == "卖出":
+            held = self.dm.shares_of(record["代码"])
+            if float(record["股数"]) > held:
+                ret = QMessageBox.warning(
+                    self, "卖出超过持仓",
+                    f"{record['代码']} 当前净持仓 {held:.0f} 股，"
+                    f"本次卖出 {record['股数']} 股，将出现负持仓。\n仍要保存吗？",
+                    QMessageBox.Yes | QMessageBox.No)
+                if ret != QMessageBox.Yes:
+                    return
+        if self.dm.append_trade(record):
+            self._after_trade_changed()
+        else:
+            QMessageBox.critical(
+                self, "保存失败", "写入 live_trade_log.csv 失败，请检查文件是否被占用。")
+
+    def _quick_clear(self, code, name, bucket, price, held):
+        """清仓：确认后预填一笔全额卖出，保存即清零该标的持仓。"""
+        if held <= 0:
+            QMessageBox.information(self, "提示", f"{code} {name} 当前无持仓。")
+            return
+        ret = QMessageBox.question(
+            self, "确认清仓",
+            f"确定清仓 {code} {name}？\n\n"
+            f"当前持仓 {held:.0f} 股"
+            + (f"，现价约 {price:.2f} 元，预计回收 {price * held:,.0f} 元" if price > 0 else "")
+            + f"。\n将追加一笔卖出记录，剩余持仓归零、成本与盈亏自动重算。",
+            QMessageBox.Yes | QMessageBox.No)
+        if ret != QMessageBox.Yes:
+            return
+        trade = {
+            "日期": _dt_date.today().isoformat(),
+            "方向": "卖出",
+            "桶": bucket,
+            "代码": code,
+            "名称": name,
+            "申万一级行业": "",
+            "价格": f"{price:.3f}" if price > 0 else "",
+            "股数": str(int(held)),
+            "金额": f"{price * held:.2f}" if price > 0 else "",
+            "触发规则ID": "",
+            "决策理由(一句话)": "右键清仓",
+        }
+        dlg = TradeDialog(self, trade=trade)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        record = dlg.get_record()
+        held_new = self.dm.shares_of(record["代码"])
+        if float(record["股数"]) > held_new:
+            r2 = QMessageBox.warning(
+                self, "卖出超过持仓",
+                f"{record['代码']} 当前净持仓 {held_new:.0f} 股，"
+                f"本次清仓 {record['股数']} 股，将出现负持仓。\n仍要保存吗？",
+                QMessageBox.Yes | QMessageBox.No)
+            if r2 != QMessageBox.Yes:
+                return
+        if self.dm.append_trade(record):
+            self._after_trade_changed()
+        else:
+            QMessageBox.critical(
+                self, "保存失败", "写入 live_trade_log.csv 失败。")
+
+    def _switch_to_trades(self, code: str):
+        """切到交易流水页并选中该标的。"""
+        self.view_combo.setCurrentIndex(1)
+        for i in range(self.trades_table.rowCount()):
+            item = self.trades_table.item(i, 3)  # 代码列
+            if item and item.text().strip().zfill(6) == code.zfill(6):
+                self.trades_table.selectRow(i)
+                self.trades_table.scrollToItem(item)
+                break
 
     # ── 持仓表 ──
 
@@ -738,24 +1032,39 @@ class PortfolioTab(QWidget):
 
     # ── 刷新行情 ──
 
-    def _refresh_prices(self):
-        pos = self.dm.load_positions()
-        if pos.empty:
-            QMessageBox.information(self, "提示", "当前无持仓，无需刷新。")
+    def _refresh_prices(self, silent: bool = False):
+        """拉取实时行情（含名称）。silent=True 用于 60s 定时/首刷：静默跳过，不弹提示。"""
+        df = self.dm.read_trades()
+        if df.empty:
+            if not silent:
+                QMessageBox.information(self, "提示", "当前无交易记录，无需刷新。")
             return
-        codes = [str(r["代码"]).strip() for _, r in pos.iterrows() if str(r["代码"]).strip()]
-        self.refresh_btn.setEnabled(False)
-        self.refresh_btn.setText("⏳ 拉取中...")
+        if self._price_thread and self._price_thread.isRunning():
+            return  # 上一轮还在拉取
+        codes = sorted({str(c).strip() for c in df["代码"] if str(c).strip()})
+        if not codes:
+            return
+        if not silent:
+            self.refresh_btn.setEnabled(False)
+            self.refresh_btn.setText("⏳ 拉取中...")
         self._price_thread = PriceFetcher(codes)
         self._price_thread.done.connect(self._on_prices_done)
         self._price_thread.start()
 
-    def _on_prices_done(self, prices: dict):
-        self._prices.update(prices)
+    def _on_prices_done(self, quotes: dict):
+        # quotes: {code: {"price": float, "name": str}}
+        self._prices.update(
+            {c: q["price"] for c, q in quotes.items() if "price" in q})
+        self._names.update(
+            {c: q["name"] for c, q in quotes.items() if q.get("name")})
         self.refresh_btn.setEnabled(True)
         self.refresh_btn.setText("🔄 刷新行情")
+        # 名称自动补全：流水里名称空白的行用行情名称回写 CSV
+        filled = self.dm.fill_trade_names(self._names)
         self._load_positions()
         self._load_nav()
+        if filled:
+            self._load_trades()  # 流水表同步显示新名称
 
     # ── K线图 ──
 

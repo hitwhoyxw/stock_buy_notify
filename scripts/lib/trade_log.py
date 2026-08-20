@@ -76,31 +76,76 @@ def append_trade(record: Dict[str, Any]) -> None:
 
 
 def current_positions() -> pd.DataFrame:
-    """按代码汇总当前持仓。返回列：代码, 名称, 桶, 申万一级行业, 净股数, 累计成本金额, 平均成本。"""
+    """按代码汇总当前持仓（加权成本法，支持加仓/减仓/清仓）。
+
+    返回列：代码, 名称, 桶, 申万一级行业, 净股数, 累计成本金额, 平均成本。
+
+    成本口径（加权平均成本法，与 desktop/engine.py 保持一致）：
+    - 买入：成本池 += 金额，股数 += 股数
+    - 卖出：按当时加权均价结转成本（realized 不进成本池），
+            成本池 -= 加权均价 × 卖出股数，股数 -= 卖出股数
+    - 剩余持仓 平均成本 = 成本池 / 净股数
+    """
     df = read_all()
     if df.empty:
         return pd.DataFrame(columns=["代码", "名称", "桶", "申万一级行业", "净股数", "累计成本金额", "平均成本"])
 
     df["股数"] = pd.to_numeric(df["股数"], errors="coerce").fillna(0)
     df["金额"] = pd.to_numeric(df["金额"], errors="coerce").fillna(0)
-    df["signed_shares"] = df.apply(
-        lambda r: r["股数"] if str(r["方向"]).strip() in ("买入", "buy", "BUY") else -r["股数"], axis=1
-    )
-    df["signed_amount"] = df.apply(
-        lambda r: r["金额"] if str(r["方向"]).strip() in ("买入", "buy", "BUY") else -r["金额"], axis=1
-    )
 
-    agg = df.groupby("代码").agg(
-        名称=("名称", "last"),
-        桶=("桶", "last"),
-        申万一级行业=("申万一级行业", "last"),
-        净股数=("signed_shares", "sum"),
-        累计成本金额=("signed_amount", "sum"),
-    ).reset_index()
+    # 按日期排序，保证买卖顺序正确
+    d = df.copy()
+    d["_dt"] = pd.to_datetime(d.get("日期", ""), errors="coerce")
+    d = d.sort_values("_dt", kind="stable").reset_index(drop=True)
 
-    agg = agg[agg["净股数"] > 0].copy()
-    agg["平均成本"] = agg["累计成本金额"] / agg["净股数"].replace(0, pd.NA)
-    return agg
+    BUY = ("买入", "buy", "BUY")
+    st: Dict[str, dict] = {}
+    for _, r in d.iterrows():
+        code = str(r.get("代码", "")).strip()
+        if not code:
+            continue
+        is_buy = str(r.get("方向", "")).strip() in BUY
+        shares = float(r.get("股数", 0) or 0)
+        amount = float(r.get("金额", 0) or 0)
+        rec = st.get(code)
+        if rec is None:
+            rec = {"名称": "", "桶": "", "申万一级行业": "",
+                   "shares": 0.0, "cost": 0.0}
+            st[code] = rec
+        nm = str(r.get("名称", "") or "").strip()
+        bk = str(r.get("桶", "") or "").strip()
+        ind = str(r.get("申万一级行业", "") or "").strip()
+        if nm:
+            rec["名称"] = nm
+        if bk:
+            rec["桶"] = bk
+        if ind:
+            rec["申万一级行业"] = ind
+
+        if is_buy:
+            rec["shares"] += shares
+            rec["cost"] += amount
+        else:
+            avg = (rec["cost"] / rec["shares"]) if rec["shares"] > 0 else 0.0
+            sold = min(shares, rec["shares"])
+            rec["cost"] -= avg * sold
+            rec["shares"] -= sold
+            if rec["shares"] <= 1e-9:
+                rec["shares"] = 0.0
+                rec["cost"] = 0.0
+
+    rows = []
+    for code, rec in st.items():
+        if rec["shares"] <= 0:
+            continue
+        avg = rec["cost"] / rec["shares"] if rec["shares"] > 0 else 0.0
+        rows.append({
+            "代码": code, "名称": rec["名称"], "桶": rec["桶"],
+            "申万一级行业": rec["申万一级行业"],
+            "净股数": rec["shares"], "累计成本金额": rec["cost"],
+            "平均成本": avg,
+        })
+    return pd.DataFrame(rows)
 
 
 def bucket_weights() -> Dict[str, float]:

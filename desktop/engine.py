@@ -341,9 +341,18 @@ class DataManager:
     # ── 持仓 & 净值 ──
 
     def load_positions(self) -> pd.DataFrame:
-        """从 live_trade_log.csv 解析当前持仓（dtype=str 读，保留代码前导零）。
+        """从 live_trade_log.csv 解析当前持仓（加权成本法，支持加仓/减仓/清仓）。
 
         返回列：代码, 名称, 桶, 申万一级行业, 净股数, 累计成本金额, 平均成本
+
+        成本口径（加权平均成本法）：
+        - 买入：成本池 += 金额，股数 += 股数
+        - 卖出：按「当时成本池 / 当时股数」的加权均价结转（realized 盈亏不进成本池），
+                成本池 -= 加权均价 × 卖出股数，股数 -= 卖出股数
+        - 剩余持仓 平均成本 = 成本池 / 净股数
+
+        相比旧的「(Σ买−Σ卖回款)/股数」，本算法在减仓/清仓后仍能给出正确的
+        持仓成本与盈亏%（旧算法卖出后会低估成本、虚高盈亏%）。
         """
         df = self._read_trade_csv()
         if df.empty:
@@ -352,22 +361,60 @@ class DataManager:
         for c in ["股数", "金额"]:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
-        df["signed_shares"] = df.apply(
-            lambda r: r.get("股数", 0) if str(r.get("方向", "")).strip() in ("买入", "buy", "BUY")
-            else -r.get("股数", 0), axis=1)
-        df["signed_amount"] = df.apply(
-            lambda r: r.get("金额", 0) if str(r.get("方向", "")).strip() in ("买入", "buy", "BUY")
-            else -r.get("金额", 0), axis=1)
-        agg = df.groupby("代码").agg(
-            名称=("名称", "last"),
-            桶=("桶", "last"),
-            申万一级行业=("申万一级行业", "last"),
-            净股数=("signed_shares", "sum"),
-            累计成本金额=("signed_amount", "sum"),
-        ).reset_index()
-        agg = agg[agg["净股数"] > 0].copy()
-        agg["平均成本"] = agg["累计成本金额"] / agg["净股数"].replace(0, pd.NA)
-        return agg
+
+        # 按日期排序，保证买卖顺序正确（减仓时按当时加权均价结转成本）
+        d = df.copy()
+        d["_dt"] = pd.to_datetime(d.get("日期", ""), errors="coerce")
+        d = d.sort_values("_dt", kind="stable").reset_index(drop=True)
+
+        BUY = ("买入", "buy", "BUY")
+        st: Dict[str, dict] = {}
+        for _, r in d.iterrows():
+            code = str(r.get("代码", "")).strip()
+            if not code:
+                continue
+            is_buy = str(r.get("方向", "")).strip() in BUY
+            shares = float(r.get("股数", 0) or 0)
+            amount = float(r.get("金额", 0) or 0)
+            rec = st.get(code)
+            if rec is None:
+                rec = {"名称": "", "桶": "", "申万一级行业": "",
+                       "shares": 0.0, "cost": 0.0}
+                st[code] = rec
+            nm = str(r.get("名称", "") or "").strip()
+            bk = str(r.get("桶", "") or "").strip()
+            ind = str(r.get("申万一级行业", "") or "").strip()
+            if nm:
+                rec["名称"] = nm
+            if bk:
+                rec["桶"] = bk
+            if ind:
+                rec["申万一级行业"] = ind
+
+            if is_buy:
+                rec["shares"] += shares
+                rec["cost"] += amount
+            else:
+                avg = (rec["cost"] / rec["shares"]) if rec["shares"] > 0 else 0.0
+                sold = min(shares, rec["shares"])
+                rec["cost"] -= avg * sold
+                rec["shares"] -= sold
+                if rec["shares"] <= 1e-9:
+                    rec["shares"] = 0.0
+                    rec["cost"] = 0.0
+
+        rows = []
+        for code, rec in st.items():
+            if rec["shares"] <= 0:
+                continue
+            avg = rec["cost"] / rec["shares"] if rec["shares"] > 0 else 0.0
+            rows.append({
+                "代码": code, "名称": rec["名称"], "桶": rec["桶"],
+                "申万一级行业": rec["申万一级行业"],
+                "净股数": rec["shares"], "累计成本金额": rec["cost"],
+                "平均成本": avg,
+            })
+        return pd.DataFrame(rows)
 
     def load_nav(self) -> pd.DataFrame:
         """读取 portfolio_nav.csv 净值序列。"""
@@ -442,6 +489,28 @@ class DataManager:
             if c in record:
                 df.iat[row_index, df.columns.get_loc(c)] = str(record.get(c, ""))
         return self._write_trade_csv(df)
+
+    def fill_trade_names(self, names: dict) -> int:
+        """用行情名称补全流水表中空白的名称列，返回填充行数。
+
+        names: {code: 名称}（来自腾讯行情）。只填空白，不覆盖已有名称，
+        用于"录入时只填代码、刷新行情时自动补名"。
+        """
+        if not names:
+            return 0
+        df = self._read_trade_csv()
+        if df.empty:
+            return 0
+        filled = 0
+        name_col = df.columns.get_loc("名称")
+        for i, code in enumerate(df["代码"]):
+            nm = names.get(str(code).strip().zfill(6))
+            if nm and not str(df.iat[i, name_col] or "").strip():
+                df.iat[i, name_col] = str(nm)
+                filled += 1
+        if filled and self._write_trade_csv(df):
+            return filled
+        return 0
 
     def delete_trade(self, row_index: int) -> bool:
         """删除指定行。"""
