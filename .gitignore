@@ -31,3 +31,10 @@ dist/
 # IDE
 .vscode/
 .idea/
+
+# .NET (Avalonia 跨平台重构分支)
+bin/
+obj/
+*.user
+.vs/
+

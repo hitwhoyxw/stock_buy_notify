@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="ThreeBucket.Core/ThreeBucket.Core.csproj" />
+  <Project Path="ThreeBucket.Demo/ThreeBucket.Demo.csproj" />
+  <Project Path="ThreeBucket.UI/ThreeBucket.UI.csproj" />
+</Solution>
