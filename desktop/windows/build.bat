@@ -1,4 +1,5 @@
 @echo off
+echo [OK] build.bat started ...
 chcp 65001 >nul
 REM ============================================================
 REM  三桶策略系统 — Windows 打包脚本（Avalonia / .NET 10）
@@ -12,21 +13,54 @@ set "HERE=%~dp0"
 set "SRC=%HERE%..\..\src"
 set "PUB=%SRC%\ThreeBucket.UI\bin\Release\net10.0\win-x64\publish"
 
-echo [1/2] dotnet publish win-x64 ...
-dotnet publish "%SRC%\ThreeBucket.UI\ThreeBucket.UI.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+echo ========================================
+echo  三桶策略系统 Windows 打包
+echo  版本: %VER%
+echo  项目根: %SRC%
+echo ========================================
+echo.
+
+REM 检查 dotnet 是否可用
+where dotnet >nul 2>&1
 if errorlevel 1 (
-    echo publish 失败
+    echo [错误] 未找到 dotnet 命令！请先安装 .NET 10 SDK
+    echo 下载: https://dotnet.microsoft.com/download
+    echo.
+    pause
     exit /b 1
 )
+echo [OK] dotnet 已就绪
+dotnet --version
+echo.
 
-echo [2/2] 压缩产物 ...
-if not exist "%HERE%dist" mkdir "%HERE%dist"
-powershell -NoProfile -Command "Compress-Archive -Path '%PUB%\*' -DestinationPath '%HERE%dist\ThreeBucket-win-x64-%VER%.zip' -Force"
+echo [1/2] dotnet publish win-x64 ...
+echo  （首次打包约 2-3 分钟，请耐心等待）
+dotnet publish "%SRC%\ThreeBucket.UI\ThreeBucket.UI.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 if errorlevel 1 (
-    echo 压缩失败
+    echo.
+    echo [错误] publish 失败！请检查上方的编译错误信息
+    echo.
+    pause
     exit /b 1
 )
 
 echo.
-echo 完成: %HERE%dist\ThreeBucket-win-x64-%VER%.zip
-echo 解压后直接运行 ThreeBucket.UI.exe（无需安装运行时，无控制台黑窗）
+echo [2/2] 压缩产物 ...
+if not exist "%HERE%dist" mkdir "%HERE%dist"
+powershell -NoProfile -Command "Compress-Archive -Path '%PUB%\*' -DestinationPath '%HERE%dist\ThreeBucket-win-x64-%VER%.zip' -Force"
+if errorlevel 1 (
+    echo.
+    echo [错误] 压缩失败！
+    echo.
+    pause
+    exit /b 1
+)
+
+echo.
+echo ========================================
+echo  打包完成!
+echo  产物: %HERE%dist\ThreeBucket-win-x64-%VER%.zip
+echo  解压后直接运行 ThreeBucket.UI.exe（无需安装运行时）
+echo ========================================
+echo.
+pause
