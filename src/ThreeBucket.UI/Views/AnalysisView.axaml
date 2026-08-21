@@ -20,10 +20,11 @@
           </DataTemplate>
         </ListBox.ItemTemplate>
       </ListBox>
-      <TextBox x:Name="Viewer" Grid.Column="1" Margin="6" IsReadOnly="True"
-               AcceptsReturn="True" TextWrapping="NoWrap"
-               FontFamily="Consolas, Menlo, monospace" FontSize="12"
-               Background="#fafafa" />
+      <!-- markdown 文档渲染区：标题/段落/引用用 TextBlock，
+           | 表格 | 解析成 DataGrid 动态列（同候选池页模式） -->
+      <ScrollViewer Grid.Column="1" Margin="6">
+        <StackPanel x:Name="Doc" />
+      </ScrollViewer>
     </Grid>
   </DockPanel>
 </UserControl>
