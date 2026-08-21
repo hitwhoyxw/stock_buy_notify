@@ -50,8 +50,16 @@ public class TencentMarketDataSource : HttpMarketDataSourceBase
             TryDecimal(p, 10, v => q.Low = v);
             TryDecimal(p, 11, v => q.Bid1 = v);
             TryDecimal(p, 12, v => q.Ask1 = v);
-            if (p.Length >= 2)
-                TryTimestamp(p[p.Length - 2], p[p.Length - 1], t => q.Timestamp = t);
+            // 腾讯时间戳为 14 位数字（yyyyMMddHHmmss），真实响应中位置不固定，扫描匹配
+            foreach (var f in p)
+                if (f.Length == 14 && long.TryParse(f, out _)
+                    && DateTime.TryParseExact(f, "yyyyMMddHHmmss",
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out var t))
+                {
+                    q.Timestamp = t;
+                    break;
+                }
 
             result.Add(q);
         }

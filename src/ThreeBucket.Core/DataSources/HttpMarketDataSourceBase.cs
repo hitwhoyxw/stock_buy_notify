@@ -15,18 +15,12 @@ namespace ThreeBucket.Core.DataSources;
 /// </summary>
 public abstract class HttpMarketDataSourceBase : IMarketDataSource
 {
-    // 注册 GBK 等中文编码提供程序（包 System.Text.Encoding.CodePages）。
-    // 通过反射获取类型，避免与 System.Text.Encoding 类型的命名空间冲突。
+    // 注册 GBK 等中文编码提供程序（包 System.Text.Encoding.CodePages；腾讯/新浪接口均为 GBK）。
+    // 直接引用类型而非反射 —— 短程序集名的 Type.GetType 解析不到时返回 null，会导致 GBK 未注册、
+    // GetEncoding("GBK") 抛 ArgumentException，行情拉取全部失败（静默回退为空结果）。
     static HttpMarketDataSourceBase()
     {
-        var providerType = Type.GetType(
-            "System.Text.Encoding.CodePages.CodePagesEncodingProvider, System.Text.Encoding.CodePages");
-        if (providerType is not null)
-        {
-            var instance = providerType.GetProperty("Instance")?.GetValue(null);
-            if (instance is EncodingProvider provider)
-                Encoding.RegisterProvider(provider);
-        }
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
     }
 
     public abstract MarketDataSourceId Id { get; }

@@ -525,6 +525,104 @@ public class DataStore
             ? Directory.GetFiles(DataDir, "report_*.md").OrderByDescending(File.GetLastWriteTime).ToList()
             : new();
 
+    // ── 云同步快照（跨平台同步策略/流水/自选/提醒） ─────────────────
+
+    /// <summary>同步种类与本地文件的对应（kind 与 Supabase three_bucket_sync 主键一致）。</summary>
+    private static readonly (string Kind, string File, bool IsJson)[] SyncFiles =
+    {
+        ("strategies", "strategies.csv", false),
+        ("trades", "live_trade_log.csv", false),
+        ("watchlist", "watchlist.csv", false),
+        ("alerts", "monitor_alerts.json", true),
+    };
+
+    /// <summary>
+    /// 导出全部可同步数据：kind -> payload（{file, headers, rows} 或 {file, json}）。
+    /// 列结构与 Python 端 CSV 完全一致，云端仅存行数据不存本地路径。
+    /// </summary>
+    public Dictionary<string, object> ExportSyncSnapshot()
+    {
+        var result = new Dictionary<string, object>();
+        foreach (var (kind, file, isJson) in SyncFiles)
+        {
+            if (isJson)
+            {
+                var path = PathOf(file);
+                if (!File.Exists(path)) continue;
+                try
+                {
+                    var doc = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(path));
+                    result[kind] = new Dictionary<string, object> { ["file"] = file, ["json"] = doc };
+                }
+                catch { /* 本地损坏则跳过，不阻断其它种类 */ }
+            }
+            else
+            {
+                var (headers, rows) = ReadCsv(file);
+                result[kind] = new Dictionary<string, object> { ["file"] = file, ["headers"] = headers, ["rows"] = rows };
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// 导入云端快照（覆盖本地对应文件）。覆盖前原文件自动备份到 data/sync_backup/<时间戳>/。
+    /// 返回 (覆盖文件数, 每类结果说明)。
+    /// </summary>
+    public (int count, List<string> details) ImportSyncSnapshot(Dictionary<string, JsonElement> payloads)
+    {
+        var backupDir = Path.Combine(DataDir, "sync_backup", DateTime.Now.ToString("yyyyMMdd_HHmmss"));
+        var count = 0;
+        var details = new List<string>();
+        foreach (var (kind, payload) in payloads)
+        {
+            var map = SyncFiles.FirstOrDefault(f => f.Kind == kind);
+            if (map.File is null) { details.Add($"{kind}: 未知种类，跳过"); continue; }
+            try
+            {
+                // JSON 类（monitor_alerts.json）
+                if (map.IsJson && payload.ValueKind == JsonValueKind.Object
+                    && payload.TryGetProperty("json", out var jsonEl))
+                {
+                    BackupTo(map.File, backupDir);
+                    File.WriteAllText(PathOf(map.File), JsonSerializer.Serialize(jsonEl, JsonOpts));
+                    details.Add($"{kind} → {map.File}: 已覆盖");
+                    count++;
+                }
+                // CSV 类
+                else if (payload.ValueKind == JsonValueKind.Object
+                    && payload.TryGetProperty("headers", out var hEl) && hEl.ValueKind == JsonValueKind.Array
+                    && payload.TryGetProperty("rows", out var rEl) && rEl.ValueKind == JsonValueKind.Array)
+                {
+                    var headers = hEl.EnumerateArray().Select(e => e.GetString() ?? "").ToList();
+                    var rows = new List<Dictionary<string, string>>();
+                    foreach (var row in rEl.EnumerateArray())
+                    {
+                        var dict = new Dictionary<string, string>(StringComparer.Ordinal);
+                        foreach (var prop in row.EnumerateObject())
+                            dict[prop.Name] = prop.Value.GetString() ?? "";
+                        rows.Add(dict);
+                    }
+                    BackupTo(map.File, backupDir);
+                    WriteCsv(map.File, headers, rows);
+                    details.Add($"{kind} → {map.File}: {rows.Count} 行");
+                    count++;
+                }
+                else details.Add($"{kind}: 数据格式不符，跳过");
+            }
+            catch (Exception ex) { details.Add($"{kind}: 导入失败 {ex.Message}"); }
+        }
+        return (count, details);
+    }
+
+    private void BackupTo(string file, string backupDir)
+    {
+        var path = PathOf(file);
+        if (!File.Exists(path)) return;
+        Directory.CreateDirectory(backupDir);
+        File.Copy(path, Path.Combine(backupDir, file), overwrite: true);
+    }
+
     // ── 工具 ───────────────────────────────────────────────────────
 
     public static string NormalizeCode(string code)

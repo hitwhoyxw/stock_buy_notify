@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using ThreeBucket.Core.Services;
 using ThreeBucket.UI.Dialogs;
 using ThreeBucket.UI.Services;
 
@@ -30,6 +31,8 @@ public partial class SettingsView : UserControl, IRefreshable
     private readonly TextBox _smtpUser = new();
     private readonly TextBox _smtpPass = new() { PasswordChar = '*' };
     private readonly TextBox _smtpTo = new();
+    private readonly TextBox _sbUrl = new();
+    private readonly TextBox _sbKey = new() { PasswordChar = '*' };
 
     /// <summary>仅供 XAML 编译器/设计器使用；运行时请用带参构造。</summary>
     public SettingsView() : this(new AppState(), _ => { }) { }
@@ -96,6 +99,35 @@ public partial class SettingsView : UserControl, IRefreshable
             Row("账号:", _smtpUser),
             Row("授权码:", _smtpPass),
             Row("收件人:", _smtpTo),
+        }));
+
+        _sbUrl.Watermark = "https://xxxxx.supabase.co";
+        _sbKey.Watermark = "anon public key（Project Settings → API）";
+        var btnTest = new Button { Content = "🔌 测试连接" };
+        var btnSql = new Button { Content = "📋 复制建表 SQL" };
+        var btnPush = new Button { Content = "☁️ 上传到云端", Background = new SolidColorBrush(Color.Parse("#27ae60")), Foreground = Brushes.White };
+        var btnPull = new Button { Content = "⬇️ 从云端恢复", Background = new SolidColorBrush(Color.Parse("#2980b9")), Foreground = Brushes.White };
+        btnTest.Click += (_, _) => _ = SyncTestAsync();
+        btnSql.Click += (_, _) => CopyTableSql();
+        btnPush.Click += (_, _) => _ = SyncPushAsync();
+        btnPull.Click += (_, _) => _ = SyncPullAsync();
+        var syncBtns = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
+        syncBtns.Children.Add(btnTest);
+        syncBtns.Children.Add(btnSql);
+        syncBtns.Children.Add(btnPush);
+        syncBtns.Children.Add(btnPull);
+        var syncHint = new TextBlock
+        {
+            Text = "首次使用：在 supabase.com 免费建项目 → 复制建表 SQL 到 SQL Editor 执行 →"
+                 + " 填入项目 URL 与 anon key → 测试连接 → 上传。同步范围：策略/交易流水/监控自选/提醒历史（含策略绑定与备注）。",
+            TextWrapping = TextWrapping.Wrap, Foreground = Brushes.Gray, FontSize = 11, Margin = new Thickness(0, 6, 0, 0),
+        };
+        Form.Children.Add(Group("云同步（Supabase 免费层，跨平台同步）", new Control[]
+        {
+            Row("Supabase URL:", _sbUrl),
+            Row("API Key:", _sbKey),
+            syncBtns,
+            syncHint,
         }));
     }
 
@@ -166,6 +198,8 @@ public partial class SettingsView : UserControl, IRefreshable
         _smtpUser.Text = c.SmtpUser;
         _smtpPass.Text = c.SmtpPass;
         _smtpTo.Text = c.SmtpTo;
+        _sbUrl.Text = c.SupabaseUrl;
+        _sbKey.Text = c.SupabaseKey;
     }
 
     private async Task SaveAsync()
@@ -189,6 +223,8 @@ public partial class SettingsView : UserControl, IRefreshable
         c.SmtpUser = _smtpUser.Text?.Trim() ?? "";
         c.SmtpPass = _smtpPass.Text?.Trim() ?? "";
         c.SmtpTo = _smtpTo.Text?.Trim() ?? "";
+        c.SupabaseUrl = _sbUrl.Text?.Trim() ?? "";
+        c.SupabaseKey = _sbKey.Text?.Trim() ?? "";
 
         _app.Store.SaveConfig(c);
         if (VisualRoot is Window owner)
@@ -216,5 +252,65 @@ public partial class SettingsView : UserControl, IRefreshable
     {
         var d = await new OpenFolderDialog { Title = "选择数据目录", Directory = _data.Text }.ShowAsync(this.VisualRoot as Window);
         if (d != null) _data.Text = d;
+    }
+
+    // ── 云同步（Supabase）──
+
+    /// <summary>用输入框当前值构建同步服务（未保存也能直接测）。</summary>
+    private CloudSyncService SyncSvcFromInput() => new(_sbUrl.Text ?? "", _sbKey.Text ?? "");
+
+    private async Task SyncTestAsync()
+    {
+        if (VisualRoot is not Window owner) return;
+        _status("⏳ 测试 Supabase 连接…");
+        var (ok, msg) = await SyncSvcFromInput().TestAsync();
+        _status(msg);
+        await MessageBox.Show(owner, "云同步 · 测试连接", msg);
+    }
+
+    private async Task SyncPushAsync()
+    {
+        if (VisualRoot is not Window owner) return;
+        var snapshot = _app.Store.ExportSyncSnapshot();
+        if (snapshot.Count == 0)
+        { await MessageBox.Show(owner, "云同步 · 上传", "本地没有可同步的数据"); return; }
+        var counts = string.Join(" / ", snapshot.Select(kv => $"{kv.Key} {RowsOf(kv.Value)} 行"));
+        if (!await MessageBox.Ask(owner, "云同步 · 上传",
+            $"将把以下本地数据覆盖上传到云端：\n\n{counts}\n\n确定上传？"))
+            return;
+        _status("⏳ 上传到 Supabase…");
+        var (ok, msg) = await SyncSvcFromInput().PushAsync(snapshot, Environment.MachineName);
+        _status(msg);
+        await MessageBox.Show(owner, "云同步 · 上传", msg);
+    }
+
+    private async Task SyncPullAsync()
+    {
+        if (VisualRoot is not Window owner) return;
+        _status("⏳ 从 Supabase 拉取…");
+        var (rows, error) = await SyncSvcFromInput().PullAsync();
+        if (error.Length > 0)
+        { _status(error); await MessageBox.Show(owner, "云同步 · 恢复", error); return; }
+        if (rows.Count == 0)
+        { await MessageBox.Show(owner, "云同步 · 恢复", "云端还没有数据（先在某一端上传一次）"); return; }
+        var summary = string.Join("\n", rows.Select(r => $"{r.Kind,-11} {r.UpdatedAt:MM-dd HH:mm}（{r.Device}）"));
+        if (!await MessageBox.Ask(owner, "云同步 · 从云端恢复",
+            $"将用以下云端数据覆盖本地对应文件\n（原文件自动备份到 data/sync_backup/）：\n\n{summary}\n\n确定继续？"))
+            return;
+        var (count, details) = _app.Store.ImportSyncSnapshot(rows.ToDictionary(r => r.Kind, r => r.Payload));
+        _status($"云端恢复完成：覆盖 {count} 类文件");
+        await MessageBox.Show(owner, "云同步 · 恢复", string.Join("\n", details) + $"\n\n共 {count} 类文件已覆盖（可切到各页刷新查看）");
+    }
+
+    /// <summary>payload 里行数（仅用于上传确认提示）。</summary>
+    private static string RowsOf(object payload)
+        => payload is Dictionary<string, object> d && d.TryGetValue("rows", out var r) && r is List<Dictionary<string, string>> list
+            ? list.Count.ToString() : "-";
+
+    private void CopyTableSql()
+    {
+        if (VisualRoot is not Window { Clipboard: { } clip } owner) return;
+        _ = clip.SetTextAsync(CloudSyncService.CreateTableSql);
+        _status("建表 SQL 已复制，粘贴到 Supabase SQL Editor 执行一次即可");
     }
 }

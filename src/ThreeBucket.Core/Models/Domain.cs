@@ -106,4 +106,6 @@ public class AppConfig
     public string LlmApiUrl { get; set; } = "";
     public string LlmApiKey { get; set; } = "";
     public string LlmModel { get; set; } = "gpt-4o";
+    public string SupabaseUrl { get; set; } = "";   // 云同步：https://xxxx.supabase.co
+    public string SupabaseKey { get; set; } = "";   // 云同步：anon public key
 }
