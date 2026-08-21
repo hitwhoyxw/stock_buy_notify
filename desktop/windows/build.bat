@@ -1,10 +1,11 @@
 @echo off
-echo [OK] build.bat started ...
-chcp 65001 >nul
 REM ============================================================
-REM  ä¸‰æ¡¶ç­–ç•¥ç³»ç»Ÿ â€” Windows æ‰“åŒ…è„šæœ¬ï¼ˆAvalonia / .NET 10ï¼‰
-REM  ç”¨æ³•: build.bat [ç‰ˆæœ¬å·]        ä¾‹: build.bat v1.1
-REM  äº§ç‰©: dist\ThreeBucket-win-x64-<ç‰ˆæœ¬>.zipï¼ˆè‡ªåŒ…å«å•æ–‡ä»¶ï¼Œå…è£… .NET è¿è¡Œæ—¶ï¼‰
+REM  ÈıÍ°²ßÂÔÏµÍ³ ¡ª Windows ´ò°ü½Å±¾£¨Avalonia / .NET 10£©
+REM  ÓÃ·¨: build.bat [°æ±¾ºÅ]        Àı: build.bat v1.1
+REM  ²úÎï: dist\ThreeBucket-win-x64-<°æ±¾>.zip£¨×Ô°üº¬µ¥ÎÄ¼ş£¬Ãâ×° .NET ÔËĞĞÊ±£©
+REM  ×¢Òâ£º±¾ÎÄ¼ş±ØĞë±£´æÎª ANSI/GBK ±àÂë£¨¼òÌåÖĞÎÄ Windows Ä¬ÈÏ£©¡£
+REM  ÇĞÎğÊ¹ÓÃ UTF-8 + chcp 65001£º´úÂëÒ³ÇĞ»»»áµ¼ÖÂ cmd ×Ö½ÚÆ«ÒÆ´íÎ»¡¢
+REM  ½Å±¾ËÀÑ­»·ÖØ¸´Ö´ĞĞ£¨Êµ²âÑéÖ¤£©¡£GBK ±àÂëÏÂÎŞĞè chcp£¬Ö±½ÓÕıÈ·½âÎö¡£
 REM ============================================================
 setlocal
 set "VER=%~1"
@@ -14,43 +15,43 @@ set "SRC=%HERE%..\..\src"
 set "PUB=%SRC%\ThreeBucket.UI\bin\Release\net10.0\win-x64\publish"
 
 echo ========================================
-echo  ä¸‰æ¡¶ç­–ç•¥ç³»ç»Ÿ Windows æ‰“åŒ…
-echo  ç‰ˆæœ¬: %VER%
-echo  é¡¹ç›®æ ¹: %SRC%
+echo  ÈıÍ°²ßÂÔÏµÍ³ Windows ´ò°ü
+echo  °æ±¾: %VER%
+echo  ÏîÄ¿¸ù: %SRC%
 echo ========================================
 echo.
 
-REM æ£€æŸ¥ dotnet æ˜¯å¦å¯ç”¨
+REM ¼ì²é dotnet ÊÇ·ñ¿ÉÓÃ
 where dotnet >nul 2>&1
 if errorlevel 1 (
-    echo [é”™è¯¯] æœªæ‰¾åˆ° dotnet å‘½ä»¤ï¼è¯·å…ˆå®‰è£… .NET 10 SDK
-    echo ä¸‹è½½: https://dotnet.microsoft.com/download
+    echo [´íÎó] Î´ÕÒµ½ dotnet ÃüÁî£¡ÇëÏÈ°²×° .NET 10 SDK
+    echo ÏÂÔØ: https://dotnet.microsoft.com/download
     echo.
     pause
     exit /b 1
 )
-echo [OK] dotnet å·²å°±ç»ª
+echo [OK] dotnet ÒÑ¾ÍĞ÷
 dotnet --version
 echo.
 
 echo [1/2] dotnet publish win-x64 ...
-echo  ï¼ˆé¦–æ¬¡æ‰“åŒ…çº¦ 2-3 åˆ†é’Ÿï¼Œè¯·è€å¿ƒç­‰å¾…ï¼‰
+echo  £¨Ê×´Î´ò°üÔ¼ 2-3 ·ÖÖÓ£¬ÇëÄÍĞÄµÈ´ı£©
 dotnet publish "%SRC%\ThreeBucket.UI\ThreeBucket.UI.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 if errorlevel 1 (
     echo.
-    echo [é”™è¯¯] publish å¤±è´¥ï¼è¯·æ£€æŸ¥ä¸Šæ–¹çš„ç¼–è¯‘é”™è¯¯ä¿¡æ¯
+    echo [´íÎó] publish Ê§°Ü£¡Çë¼ì²éÉÏ·½µÄ±àÒë´íÎóĞÅÏ¢
     echo.
     pause
     exit /b 1
 )
 
 echo.
-echo [2/2] å‹ç¼©äº§ç‰© ...
+echo [2/2] Ñ¹Ëõ²úÎï ...
 if not exist "%HERE%dist" mkdir "%HERE%dist"
 powershell -NoProfile -Command "Compress-Archive -Path '%PUB%\*' -DestinationPath '%HERE%dist\ThreeBucket-win-x64-%VER%.zip' -Force"
 if errorlevel 1 (
     echo.
-    echo [é”™è¯¯] å‹ç¼©å¤±è´¥ï¼
+    echo [´íÎó] Ñ¹ËõÊ§°Ü£¡
     echo.
     pause
     exit /b 1
@@ -58,9 +59,9 @@ if errorlevel 1 (
 
 echo.
 echo ========================================
-echo  æ‰“åŒ…å®Œæˆ!
-echo  äº§ç‰©: %HERE%dist\ThreeBucket-win-x64-%VER%.zip
-echo  è§£å‹åç›´æ¥è¿è¡Œ ThreeBucket.UI.exeï¼ˆæ— éœ€å®‰è£…è¿è¡Œæ—¶ï¼‰
+echo  ´ò°üÍê³É!
+echo  ²úÎï: %HERE%dist\ThreeBucket-win-x64-%VER%.zip
+echo  ½âÑ¹ºóÖ±½ÓÔËĞĞ ThreeBucket.UI.exe£¨ÎŞĞè°²×°ÔËĞĞÊ±£©
 echo ========================================
 echo.
 pause
