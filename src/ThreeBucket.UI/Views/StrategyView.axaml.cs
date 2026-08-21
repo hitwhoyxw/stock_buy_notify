@@ -19,7 +19,7 @@ public partial class StrategyView : UserControl, IRefreshable
     {
         InitializeComponent();
         _app = app; _status = status;
-        Grid.ItemsSource = _rows;
+        Grid.SetItemsSafe(_rows);
 
         AddBtn.Click += (_, _) => _ = OnAddAsync();
         EditBtn.Click += (_, _) => _ = OnEditAsync();
@@ -33,7 +33,7 @@ public partial class StrategyView : UserControl, IRefreshable
     private void Load()
     {
         _rows = new ObservableCollection<Strategy>(_app.Store.ListStrategies());
-        Grid.ItemsSource = _rows;
+        Grid.SetItemsSafe(_rows);
         _status($"共 {_rows.Count} 条策略");
     }
 

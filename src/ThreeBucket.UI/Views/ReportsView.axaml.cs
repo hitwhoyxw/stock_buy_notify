@@ -39,6 +39,8 @@ public partial class ReportsView : UserControl, IRefreshable
 
     private void LoadList()
     {
+        // Clear 前先清选中：SelectionModel 持有旧行索引，清空集合时枚举越界会崩进程
+        FileList.SelectedItem = null;
         _items.Clear();
         ContentBox.Text = "";
 

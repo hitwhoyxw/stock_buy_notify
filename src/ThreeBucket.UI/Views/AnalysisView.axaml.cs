@@ -39,7 +39,7 @@ public partial class AnalysisView : UserControl, IRefreshable
     {
         InitializeComponent();
         _app = app; _status = status;
-        FileList.ItemsSource = _items;
+        FileList.SetItemsSafe(_items);
         RefreshBtn.Click += (_, _) => LoadList();
         FileList.SelectionChanged += (_, _) =>
         {
@@ -51,6 +51,8 @@ public partial class AnalysisView : UserControl, IRefreshable
 
     private void LoadList()
     {
+        // Clear 前先清选中：SelectionModel 持有旧行索引，清空集合时枚举越界会崩进程
+        FileList.SelectedItem = null;
         _items.Clear();
         Viewer.Text = "← 选择左侧文件查看分析结果";
         var seen = new HashSet<string>();

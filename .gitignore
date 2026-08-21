@@ -46,3 +46,6 @@ src/publish/
 .tmp/
 data/.bak_codefix/
 
+
+# 应用本地配置（含 Supabase/LLM/SMTP 密钥，禁止入库）
+app_config.json

@@ -164,8 +164,14 @@ public partial class PortfolioView : UserControl, IRefreshable
 
     public void Load()
     {
+        // 旧行已拉到的现价按代码继承：切回页面重建集合时现价/盈亏不闪 0
+        var old = _positions.Where(p => p.CurrentPrice > 0)
+            .ToDictionary(p => p.Code, p => p.CurrentPrice);
         _positions = new ObservableCollection<Position>(_store.LoadPositions());
-        PosGrid.ItemsSource = _positions;
+        foreach (var p in _positions)
+            if (old.TryGetValue(p.Code, out var px) && p.CurrentPrice <= 0)
+                p.CurrentPrice = px;
+        PosGrid.SetItemsSafe(_positions);
         UpdateCards();
         UpdateAllocation();
         DrawNav();
@@ -175,7 +181,7 @@ public partial class PortfolioView : UserControl, IRefreshable
     private void LoadTrades()
     {
         _trades = new ObservableCollection<Trade>(_store.ReadTrades());
-        TradesGrid.ItemsSource = _trades;
+        TradesGrid.SetItemsSafe(_trades);
     }
 
     private void UpdateCards()
@@ -244,8 +250,11 @@ public partial class PortfolioView : UserControl, IRefreshable
     {
         NavCanvas.Children.Clear();
         var nav = _store.LoadNav();
-        if (nav.Count == 0 || !nav[0].ContainsKey("nav")) return;
-        var vals = nav.Select(r => double.TryParse(r.GetValueOrDefault("nav", "1"), NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ? v : 1.0).ToList();
+        var vals = nav.Count > 0 && nav[0].ContainsKey("nav")
+            ? nav.Select(r => double.TryParse(r.GetValueOrDefault("nav", "1"), NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ? v : 1.0).ToList()
+            : new List<double>();
+        // 数据不足时显示引导提示而非空白框（至少 2 个交易日才成图）
+        NavHint.IsVisible = vals.Count < 2;
         if (vals.Count < 2) return;
         double w = NavCanvas.Bounds.Width > 0 ? NavCanvas.Bounds.Width : 400;
         double h = NavCanvas.Bounds.Height > 0 ? NavCanvas.Bounds.Height : 150;
@@ -296,7 +305,8 @@ public partial class PortfolioView : UserControl, IRefreshable
                         p.Name = q.Name;
                 }
             }
-            PosGrid.ItemsSource = null; PosGrid.ItemsSource = _positions;
+            // 直接重赋 ItemsSource 会因选中索引越界崩进程（详见 SetItemsSafe 注释）
+            PosGrid.SetItemsSafe(_positions);
             UpdateCards();
 
             // 名称自动补全：流水里名称空白的行用行情名称回写 CSV

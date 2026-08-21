@@ -21,8 +21,9 @@
           <data:DataGridTextColumn Header="代码" Binding="{Binding Code}" Width="90" />
           <data:DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="100" />
           <data:DataGridTextColumn Header="现价" Binding="{Binding Price, StringFormat=F2}" Width="80" />
-          <!-- 格式串必须含数字占位符："+F1" 无占位符会把数字丢掉只输出字面量 "+F1"；\% 转义避免值被乘 100 -->
-          <data:DataGridTextColumn Header="涨跌%" Binding="{Binding ChangePct, StringFormat='+0.0\%;-0.0\%'}" Width="70" />
+          <!-- 格式串必须含数字占位符；XAML 里需 \\% 双反斜杠：编译器会吃掉一层转义，
+               只剩 \% 才是 .NET 的字面百分号（单层 \% 会被解析成 % 占位符使值×100，实测 +2.9% 显示成 +289.9） -->
+          <data:DataGridTextColumn Header="涨跌%" Binding="{Binding ChangePct, StringFormat='+0.0\\%;-0.0\\%'}" Width="70" />
           <data:DataGridTextColumn Header="策略" Binding="{Binding Strategies}" Width="110" />
           <data:DataGridTextColumn Header="备注" Binding="{Binding Note}" Width="120" />
           <data:DataGridTextColumn Header="加入时间" Binding="{Binding AddedAt}" Width="*" />

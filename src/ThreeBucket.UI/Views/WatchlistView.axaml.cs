@@ -47,20 +47,26 @@ public partial class WatchlistView : UserControl, IRefreshable
 
     private void Load()
     {
+        // 旧行已拉到的行情按代码继承：切回页面重建集合时不闪 0
+        // （盘外行情有节流，切回后不一定重拉；不继承会一直显示 0.00）
+        var old = _rows.Where(r => r.Price > 0)
+            .ToDictionary(r => DataStore.NormalizeCode(r.Code), r => (r.Price, r.ChangePct));
         _rows = new ObservableCollection<WatchRow>(
             _app.Store.ListWatchlist().Select(w => new WatchRow
             {
                 Code = w.Code, Name = w.Name, Strategies = w.Strategies,
                 Note = w.Note, AddedAt = w.AddedAt,
+                Price = old.TryGetValue(DataStore.NormalizeCode(w.Code), out var o) ? o.Item1 : 0,
+                ChangePct = old.TryGetValue(DataStore.NormalizeCode(w.Code), out var o2) ? o2.Item2 : 0,
             }));
-        WatchGrid.ItemsSource = _rows;
+        WatchGrid.SetItemsSafe(_rows);
         Info.Text = $"共 {_rows.Count} 只";
         LoadHistory();
     }
 
     private void LoadHistory()
     {
-        HistoryGrid.ItemsSource = new ObservableCollection<AlertEntry>(_app.Store.LoadHistory());
+        HistoryGrid.SetItemsSafe(new ObservableCollection<AlertEntry>(_app.Store.LoadHistory()));
     }
 
     // ── 行情刷新 ──
@@ -103,7 +109,8 @@ public partial class WatchlistView : UserControl, IRefreshable
                     _app.Store.SetName(r.Code, q.Name); // 名称空白自动补全回写 CSV
                 }
             }
-            WatchGrid.ItemsSource = null; WatchGrid.ItemsSource = _rows;
+            // 直接重赋 ItemsSource 会因选中索引越界崩进程（详见 SetItemsSafe 注释）
+            WatchGrid.SetItemsSafe(_rows);
             EvaluateStrategies();
             LoadHistory();
             _status($"✅ 行情已更新（{map.Count} 只）");

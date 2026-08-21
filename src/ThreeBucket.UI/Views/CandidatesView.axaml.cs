@@ -70,14 +70,14 @@ public partial class CandidatesView : UserControl, IRefreshable
 
     private void Apply()
     {
-        if (_full.Count == 0) { Grid.ItemsSource = null; return; }
+        if (_full.Count == 0) { Grid.SetItemsSafe(null); return; }
         var q = _full;
         if (InstFilter.IsChecked == true)
             q = q.Where(r => InstCols.Any(c => r.GetValueOrDefault(c, "") == "是")).ToList();
         var text = SearchBox.Text?.Trim() ?? "";
         if (!string.IsNullOrEmpty(text))
             q = q.Where(r => (r.GetValueOrDefault("code", "") + r.GetValueOrDefault("name", "")).Contains(text, StringComparison.OrdinalIgnoreCase)).ToList();
-        Grid.ItemsSource = new ObservableCollection<Dictionary<string, string>>(q);
+        Grid.SetItemsSafe(new ObservableCollection<Dictionary<string, string>>(q));
     }
 
     private void ShowDetail()

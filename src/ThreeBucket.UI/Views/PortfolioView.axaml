@@ -51,7 +51,10 @@
           <TextBlock x:Name="AllocText" FontSize="11" Foreground="#666" TextWrapping="Wrap" />
           <TextBlock Text="组合净值" FontWeight="Bold" Margin="0,8,0,0" />
           <Border BorderBrush="#ddd" BorderThickness="1" Height="160">
-            <Canvas x:Name="NavCanvas" />
+            <Panel>
+              <TextBlock x:Name="NavHint" Text="净值曲线待积累：跑「任务面板 → T1 日度风控」逐日写入 portfolio_nav.csv，至少 2 个交易日才成图" Foreground="#999" FontSize="11" TextWrapping="Wrap" Margin="10" IsVisible="False" />
+              <Canvas x:Name="NavCanvas" />
+            </Panel>
           </Border>
         </StackPanel>
       </Grid>
