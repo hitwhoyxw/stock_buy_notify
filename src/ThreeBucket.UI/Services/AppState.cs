@@ -18,6 +18,9 @@ public class AppState
     public KlineService Klines { get; }
     public TradingCalendar Calendar { get; }
     public SignalLogStore Signals { get; }
+    public EastMoneyClient EastMoney { get; }
+    public CsIndexClient CsIndex { get; }
+    public TencentSnapshot Tencent { get; }
     public IReadOnlyDictionary<string, IBuiltinTask> BuiltinTasks { get; }
     public TaskSchedulerEngine SchedulerEngine { get; }
 
@@ -34,9 +37,19 @@ public class AppState
         Klines = new KlineService();
         Calendar = new TradingCalendar(DataDir, Klines);
         Signals = new SignalLogStore(DataDir);
+        var cacheDir = Path.Combine(DataDir, "cache");
+        EastMoney = new EastMoneyClient(cacheDir);
+        CsIndex = new CsIndexClient(cacheDir);
+        Tencent = new TencentSnapshot();
         BuiltinTasks = new Dictionary<string, IBuiltinTask>(StringComparer.OrdinalIgnoreCase)
         {
             ["T1"] = new DailyRiskTask(Store, Quotes, Klines, Calendar, Signals),
+            ["T2"] = new WeeklyDividendTask(DataDir, Store, Klines, CsIndex, EastMoney, Signals),
+            ["T3"] = new MonthlyRebalanceTask(DataDir, Store, Signals),
+            ["T4"] = new EarningsScanTask(DataDir, EastMoney, Signals),
+            ["T5"] = new AttributionPrepTask(DataDir, Store, Signals, Klines),
+            ["T6"] = new CandidatePoolTask(DataDir, CsIndex, EastMoney, Tencent, Klines),
+            ["T7"] = new BacktestTask(DataDir, EastMoney, Klines),
             ["T8"] = new SignalLogTask(DataDir, Signals, Klines, Calendar),
         };
         // Func<AppConfig> 实时取最新配置：设置页保存后调度行为立即生效，无需重启

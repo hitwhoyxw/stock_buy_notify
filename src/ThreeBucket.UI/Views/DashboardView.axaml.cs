@@ -18,14 +18,14 @@ public partial class DashboardView : UserControl, IRefreshable
 
     private static readonly Dictionary<string, TaskInfo> Tasks = new()
     {
-        // T1/T8 为 C# 原生内置任务：桌面/移动端通用，不依赖 Python 运行时
+        // T1–T8 全部为 C# 原生内置任务：桌面/移动端通用，不依赖 Python 运行时
         ["T1"] = new("T1", "每日风控", "scripts/t1_daily_risk.py", "MA择时、仓位计算、风控检查", "工作日 16:30", false, "", Builtin: true),
-        ["T2"] = new("T2", "周度红利", "scripts/t2_weekly_dividend.py", "红利股息率检查", "周一 08:30", false, ""),
-        ["T3"] = new("T3", "月度再平衡", "scripts/t3_monthly_rebalance.py", "组合再平衡", "每月1日", false, ""),
-        ["T4"] = new("T4", "财报文本扫描", "scripts/t4_ingest.py", "财报抓取 → LLM 景气判定", "财报季", true, "--prepare"),
-        ["T5"] = new("T5", "季度归因", "scripts/t5_prepare.py", "归因准备 → LLM 分析", "季末", true, ""),
-        ["T6"] = new("T6", "候选池筛选", "scripts/t6_candidate_pool.py", "三桶筛选 → LLM 排序", "周一 08:30", true, "--bucket ABC --top 200"),
-        ["T7"] = new("T7", "回测验证", "scripts/t7_backtest.py", "策略回测", "月度/季度", false, ""),
+        ["T2"] = new("T2", "周度红利", "scripts/t2_weekly_dividend.py", "红利股息率检查", "周一 08:30", false, "", Builtin: true),
+        ["T3"] = new("T3", "月度再平衡", "scripts/t3_monthly_rebalance.py", "组合再平衡", "每月1日", false, "", Builtin: true),
+        ["T4"] = new("T4", "财报文本扫描", "scripts/t4_ingest.py", "财报抓取 → LLM 景气判定", "财报季", true, "--prepare", Builtin: true),
+        ["T5"] = new("T5", "季度归因", "scripts/t5_prepare.py", "归因准备 → LLM 分析", "季末", true, "", Builtin: true),
+        ["T6"] = new("T6", "候选池筛选", "scripts/t6_candidate_pool.py", "三桶筛选 → LLM 排序", "周一 08:30", true, "--bucket ABC --top 200", Builtin: true),
+        ["T7"] = new("T7", "回测验证", "scripts/t7_backtest.py", "策略回测", "月度/季度", false, "", Builtin: true),
         ["T8"] = new("T8", "信号台账", "scripts/t8_signal_log.py", "信号记录与台账更新", "工作日 17:00", false, "", Builtin: true),
     };
 
@@ -130,7 +130,7 @@ public partial class DashboardView : UserControl, IRefreshable
         }
     }
 
-    /// <summary>后台运行任务：T1/T8 走 C# 内置引擎（桌面/移动通用），其余走 Python 脚本（仅桌面）。</summary>
+    /// <summary>后台运行任务：T1–T8 全部走 C# 内置引擎（桌面/移动通用，不依赖 Python）。</summary>
     private async Task RunTaskAsync(string key, string argsStr)
     {
         if (_running) { _status("有任务正在运行，请等待完成"); return; }
@@ -145,7 +145,7 @@ public partial class DashboardView : UserControl, IRefreshable
         // Python 脚本路径：移动端无 Python 运行时，明确拦截
         if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst())
         {
-            _status($"{key} 需要 Python 桌面环境（移动端仅支持 T1/T8 内置任务）");
+            _status($"{key} 需要 Python 桌面环境（当前所有任务已迁移为 C# 内置，此分支理论上不会触发）");
             return;
         }
 

@@ -26,6 +26,10 @@ public class KlineService
     public Task<IReadOnlyList<DailyBar>?> GetStockDailyAsync(string code, int count = 320)
         => GetAsync(StockSymbol(code), count, qfq: true);
 
+    /// <summary>个股日K（不复权，历史真实价；T7 回测 5 年窗口用，口径同 Python 新浪直连）。</summary>
+    public Task<IReadOnlyList<DailyBar>?> GetStockDailyRawAsync(string code, int count = 320)
+        => GetAsync(StockSymbol(code), count, qfq: false);
+
     /// <summary>指数日K（不复权）。code 为 6 位纯代码，如 000300 沪深300、000922 中证红利。</summary>
     public Task<IReadOnlyList<DailyBar>?> GetIndexDailyAsync(string code, int count = 320)
         => GetAsync(IndexSymbol(code), count, qfq: false);
@@ -75,7 +79,8 @@ public class KlineService
         using var resp = await Client.GetAsync(url);
         resp.EnsureSuccessStatusCode();
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
-        if (!doc.RootElement.TryGetProperty("data", out var data)) return null;
+        if (!doc.RootElement.TryGetProperty("data", out var data)
+            || data.ValueKind != JsonValueKind.Object) return null; // data:[] → 腾讯拒绝该 datalen，回退新浪
         if (!data.TryGetProperty(symbol, out var node) || node.ValueKind != JsonValueKind.Object) return null;
 
         JsonElement arr;
@@ -99,9 +104,11 @@ public class KlineService
     }
 
     // 新浪日K（回退源，不复权）：[{day,open,high,low,close,volume},...]
+    // money.finance 站点接口（与 Python 蓝本同源）：quotes.sina.cn 变体不支持 datalen>~1000，
+    // 而 T7 回测需要 2500 根（约 10 年）
     private static async Task<IReadOnlyList<DailyBar>?> FetchSinaAsync(string symbol, int count)
     {
-        var url = $"https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData?symbol={symbol}&scale=240&ma=no&datalen={count}";
+        var url = $"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol={symbol}&scale=240&ma=no&datalen={count}";
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.Referrer = new Uri("https://finance.sina.com.cn");
         using var resp = await Client.SendAsync(req);

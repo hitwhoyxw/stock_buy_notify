@@ -1,11 +1,14 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using ThreeBucket.Core;
+using ThreeBucket.Core.Data;
 using ThreeBucket.Core.DataSources;
 using ThreeBucket.Core.DataSources.Sina;
 using ThreeBucket.Core.DataSources.Tencent;
 using ThreeBucket.Core.Models;
+using ThreeBucket.Core.Services;
 
 // ── 第一部分：真实网络连通性验证（腾讯 / 新浪）──
 Console.WriteLine("=== 三桶 · 数据源真实联网验证 ===\n");
@@ -66,3 +69,52 @@ static void Print(string tag, System.Collections.Generic.IReadOnlyList<RealTimeQ
             $"低={q.Low} 昨收={q.PrevClose} 量(手)={q.VolumeLots} 买一={q.Bid1} 卖一={q.Ask1} 时间={ts}");
     }
 }
+
+// ── 第三部分：T1–T8 任务实例化验证 ──
+Console.WriteLine("\n=== T1–T8 任务实例化验证 ===");
+
+// 定位项目根（含 scripts/ 的目录）
+var rootDir = AppContext.BaseDirectory;
+for (var i = 0; i < 10; i++)
+{
+    if (Directory.Exists(Path.Combine(rootDir, "scripts"))) break;
+    var parent = Path.GetDirectoryName(rootDir);
+    if (parent == null || parent == rootDir) break;
+    rootDir = parent;
+}
+var dataDir = Path.Combine(rootDir, "data");
+var cacheDir = Path.Combine(dataDir, "cache");
+Console.WriteLine($"项目根: {rootDir}");
+Console.WriteLine($"数据目录: {dataDir}");
+
+var store = new DataStore(dataDir);
+var quoteSvc = new QuoteService();
+var klines = new KlineService();
+var calendar = new TradingCalendar(dataDir, klines);
+var signals = new SignalLogStore(dataDir);
+var em = new EastMoneyClient(cacheDir);
+var csi = new CsIndexClient(cacheDir);
+var tencent = new TencentSnapshot();
+
+IBuiltinTask[] tasks =
+{
+    new DailyRiskTask(store, quoteSvc, klines, calendar, signals),
+    new WeeklyDividendTask(dataDir, store, klines, csi, em, signals),
+    new MonthlyRebalanceTask(dataDir, store, signals),
+    new EarningsScanTask(dataDir, em, signals),
+    new AttributionPrepTask(dataDir, store, signals, klines),
+    new CandidatePoolTask(dataDir, csi, em, tencent, klines),
+    new BacktestTask(dataDir, em, klines),
+    new SignalLogTask(dataDir, signals, klines, calendar),
+};
+
+Console.WriteLine($"成功实例化 {tasks.Length} 个任务：");
+foreach (var t in tasks)
+    Console.WriteLine($"  {t.Key} → {t.Name}");
+Console.WriteLine("\n所有任务实例化验证通过。");
+
+// ── 第四部分：T3 端到端实跑验证（最轻量任务，纯本地文件） ──
+Console.WriteLine("\n=== T3 月度再平衡 · 端到端实跑 ===");
+var t3 = tasks.First(t => t.Key == "T3");
+var t3Result = await t3.RunAsync(msg => Console.WriteLine(msg));
+Console.WriteLine($"T3 结果: Ok={t3Result.Ok}, 报告={t3Result.ReportPath}, 摘要={t3Result.Summary}");
