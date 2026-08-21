@@ -232,6 +232,27 @@ public partial class SettingsView : UserControl, IRefreshable
         _status("设置已保存");
     }
 
+    /// <summary>
+    /// 把输入框中的 Supabase 配置立即持久化到 app_config.json。
+    /// 云同步三个操作（测试/上传/恢复）前自动调用——用户填完点“测试连接”即已保存，
+    /// 退出后不丢（此前必须手动点“保存”按钮，极易漏掉导致配置丢失）。
+    /// </summary>
+    private void SaveSupabaseConfig()
+    {
+        _app.Config.SupabaseUrl = _sbUrl.Text?.Trim() ?? "";
+        _app.Config.SupabaseKey = _sbKey.Text?.Trim() ?? "";
+        try
+        {
+            _app.Store.SaveConfig(_app.Config);
+            if (_app.Config.SupabaseUrl.Length > 0)
+                _status("Supabase 配置已自动保存");
+        }
+        catch (Exception ex)
+        {
+            _status($"⚠️ Supabase 配置保存失败: {ex.Message}");
+        }
+    }
+
     // ── 浏览 ──
 
     private async void BrowseRoot()
@@ -262,6 +283,7 @@ public partial class SettingsView : UserControl, IRefreshable
     private async Task SyncTestAsync()
     {
         if (VisualRoot is not Window owner) return;
+        SaveSupabaseConfig();
         _status("⏳ 测试 Supabase 连接…");
         var (ok, msg) = await SyncSvcFromInput().TestAsync();
         _status(msg);
@@ -271,6 +293,7 @@ public partial class SettingsView : UserControl, IRefreshable
     private async Task SyncPushAsync()
     {
         if (VisualRoot is not Window owner) return;
+        SaveSupabaseConfig();
         var snapshot = _app.Store.ExportSyncSnapshot();
         if (snapshot.Count == 0)
         { await MessageBox.Show(owner, "云同步 · 上传", "本地没有可同步的数据"); return; }
@@ -287,6 +310,7 @@ public partial class SettingsView : UserControl, IRefreshable
     private async Task SyncPullAsync()
     {
         if (VisualRoot is not Window owner) return;
+        SaveSupabaseConfig();
         _status("⏳ 从 Supabase 拉取…");
         var (rows, error) = await SyncSvcFromInput().PullAsync();
         if (error.Length > 0)
