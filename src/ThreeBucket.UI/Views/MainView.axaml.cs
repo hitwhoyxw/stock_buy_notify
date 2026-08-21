@@ -19,6 +19,9 @@ public partial class MainView : UserControl
         // 内置定时器（C# 任务引擎）状态上报 → 底部状态栏；事件来自后台线程，需 Post 回 UI 线程
         _app.SchedulerEngine.Status += msg => Dispatcher.UIThread.Post(() => SetStatus(msg));
 
+        // 自动云同步状态上报（后台线程触发，同样 Post 回 UI 线程）
+        _app.AutoSync.Status += msg => Dispatcher.UIThread.Post(() => SetStatus(msg));
+
         var tabs = Tabs;
         void Add(string header, Control content)
         {
@@ -36,9 +39,16 @@ public partial class MainView : UserControl
         Add("📈 报告", new ReportsView(_app, SetStatus));
         Add("⚙️ 设置", new SettingsView(_app, SetStatus));
 
-        // 切换标签页时刷新对应页面（复刻 PyQt5 showEvent）
+        // 切换标签页时刷新对应页面（复刻 PyQt5 showEvent）。
+        // SelectionChanged 是冒泡路由事件：页面内嵌套的 ListBox/DataGrid 选中变化也会冒泡到
+        // TabControl —— 不过滤会误触发 OnShown 重入（LLM 分析页曾因此在选中更新事务中
+        // 重建集合并抛 "Source collection was modified during selection update"，选中状态损坏后
+        // 页面永久失灵）。以 SelectedItem 是否真正变化判定：冒泡事件到达时 tab 选中并未变。
+        object? lastTab = null;
         tabs.SelectionChanged += (_, _) =>
         {
+            if (ReferenceEquals(tabs.SelectedItem, lastTab)) return;
+            lastTab = tabs.SelectedItem;
             if (tabs.SelectedItem is TabItem { Content: IRefreshable r })
                 r.OnShown();
         };

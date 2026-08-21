@@ -5,6 +5,12 @@
   <DockPanel>
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="6">
       <TextBlock Text="🧠 LLM 分析结果" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+      <!-- 桶快捷切换：直接看对应桶的 T6 分析输出（与左侧文件列表联动） -->
+      <Button x:Name="BtnBucketA" Content="A桶 红利逆向" />
+      <Button x:Name="BtnBucketB" Content="B桶 成长" />
+      <Button x:Name="BtnBucketC" Content="C桶 热点周期" />
+      <Button x:Name="BtnT4C" Content="T4 财报" />
+      <Button x:Name="BtnT5" Content="T5 归因" />
       <TextBlock x:Name="InfoText" Text="" Foreground="#666" FontSize="12" VerticalAlignment="Center" />
       <Button x:Name="RefreshBtn" Content="🔄 刷新" Margin="0,0,0,0" />
     </StackPanel>

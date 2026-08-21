@@ -33,6 +33,7 @@ public partial class SettingsView : UserControl, IRefreshable
     private readonly TextBox _smtpTo = new();
     private readonly TextBox _sbUrl = new();
     private readonly TextBox _sbKey = new() { PasswordChar = '*' };
+    private readonly CheckBox _autoSync = new();
 
     /// <summary>仅供 XAML 编译器/设计器使用；运行时请用带参构造。</summary>
     public SettingsView() : this(new AppState(), _ => { }) { }
@@ -103,6 +104,7 @@ public partial class SettingsView : UserControl, IRefreshable
 
         _sbUrl.Watermark = "https://xxxxx.supabase.co";
         _sbKey.Watermark = "anon public key（Project Settings → API）";
+        _autoSync.Content = "自动同步（启动后自动拉取云端较新数据；本地数据变化 30 秒后自动上传，无需手动点上传）";
         var btnTest = new Button { Content = "🔌 测试连接" };
         var btnSql = new Button { Content = "📋 复制建表 SQL" };
         var btnPush = new Button { Content = "☁️ 上传到云端", Background = new SolidColorBrush(Color.Parse("#27ae60")), Foreground = Brushes.White };
@@ -126,6 +128,7 @@ public partial class SettingsView : UserControl, IRefreshable
         {
             Row("Supabase URL:", _sbUrl),
             Row("API Key:", _sbKey),
+            _autoSync,
             syncBtns,
             syncHint,
         }));
@@ -200,6 +203,7 @@ public partial class SettingsView : UserControl, IRefreshable
         _smtpTo.Text = c.SmtpTo;
         _sbUrl.Text = c.SupabaseUrl;
         _sbKey.Text = c.SupabaseKey;
+        _autoSync.IsChecked = c.AutoSync;
     }
 
     private async Task SaveAsync()
@@ -225,6 +229,7 @@ public partial class SettingsView : UserControl, IRefreshable
         c.SmtpTo = _smtpTo.Text?.Trim() ?? "";
         c.SupabaseUrl = _sbUrl.Text?.Trim() ?? "";
         c.SupabaseKey = _sbKey.Text?.Trim() ?? "";
+        c.AutoSync = _autoSync.IsChecked == true;
 
         _app.Store.SaveConfig(c);
         if (VisualRoot is Window owner)
@@ -241,6 +246,7 @@ public partial class SettingsView : UserControl, IRefreshable
     {
         _app.Config.SupabaseUrl = _sbUrl.Text?.Trim() ?? "";
         _app.Config.SupabaseKey = _sbKey.Text?.Trim() ?? "";
+        _app.Config.AutoSync = _autoSync.IsChecked == true;
         try
         {
             _app.Store.SaveConfig(_app.Config);

@@ -23,6 +23,7 @@ public class AppState
     public TencentSnapshot Tencent { get; }
     public IReadOnlyDictionary<string, IBuiltinTask> BuiltinTasks { get; }
     public TaskSchedulerEngine SchedulerEngine { get; }
+    public AutoSyncService AutoSync { get; }
 
     public AppState()
     {
@@ -54,6 +55,8 @@ public class AppState
         };
         // Func<AppConfig> 实时取最新配置：设置页保存后调度行为立即生效，无需重启
         SchedulerEngine = new TaskSchedulerEngine(() => Config, BuiltinTasks, DataDir);
+        // 自动云同步：同样实时读配置，设置页改开关/密钥后无需重启
+        AutoSync = new AutoSyncService(() => Config, Store, DataDir);
     }
 
     /// <summary>从 exe 目录逐级向上查找含 scripts/ 的目录作为项目根；移动端直接用应用沙盒可写目录。</summary>
