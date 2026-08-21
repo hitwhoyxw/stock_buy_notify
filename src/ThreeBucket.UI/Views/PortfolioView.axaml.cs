@@ -3,6 +3,7 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Shapes;
+using Avalonia.Controls.Templates;
 using Avalonia.Data.Converters;
 using Avalonia.Media;
 using Avalonia.Threading;
@@ -91,18 +92,57 @@ public partial class PortfolioView : UserControl, IRefreshable
         var b = new BucketColorConverter(); var p = new PnlColorConverter();
         AddCol("代码", nameof(Position.Code), 90);
         AddCol("名称", nameof(Position.Name), 90);
-        AddCol("桶", nameof(Position.Bucket), 50, b);
+        ColorCol("桶", nameof(Position.Bucket), 50, b, null);
         AddCol("股数", nameof(Position.Shares), 80, fmt: "F0", right: true);
         AddCol("成本", nameof(Position.AvgCost), 80, fmt: "F2", right: true);
         AddCol("现价", nameof(Position.CurrentPrice), 80, fmt: "F2", right: true);
         AddCol("市值", nameof(Position.MarketValue), 90, fmt: "F0", right: true);
-        AddCol("盈亏", nameof(Position.Pnl), 90, fmt: "+F0", right: true, conv: p);
-        AddCol("盈亏%", nameof(Position.PnlPct), 80, fmt: "+F1", right: true, conv: p);
+        ColorCol("盈亏", nameof(Position.Pnl), 90, p, "+#,##0;-#,##0", right: true);
+        ColorCol("盈亏%", nameof(Position.PnlPct), 80, p, "+0.0\\%;-0.0\\%", right: true);
 
         void AddCol(string h, string prop, int w, IValueConverter? conv = null, string fmt = "", bool right = false)
         {
-            var col = new DataGridTextColumn { Header = h, Binding = new Avalonia.Data.Binding(prop) { Converter = conv, StringFormat = fmt }, Width = new DataGridLength(w) };
+            // StringFormat 为空串时 Avalonia 会执行 string.Format("", v) 得到空文本，必须传 null
+            var col = new DataGridTextColumn
+            {
+                Header = h,
+                Binding = new Avalonia.Data.Binding(prop)
+                {
+                    Converter = conv,
+                    StringFormat = string.IsNullOrEmpty(fmt) ? null : fmt,
+                },
+                Width = new DataGridLength(w),
+            };
             if (right) col.CellStyleClasses.Add("right");
+            PosGrid.Columns.Add(col);
+        }
+
+        // 需要按值上色的列（桶色/红绿盈亏）：Text 绑值 + Foreground 绑颜色，两个绑定同一属性。
+        // 不能用 DataGridTextColumn——Converter 返回 Brush 会被当文本渲染成 "#ff27ae60"。
+        // 格式串必须含数字占位符（0/#）："+F0" 这类无占位符串会把数字丢掉只输出字面量。
+        void ColorCol(string h, string prop, int w, IValueConverter conv, string? fmt, bool right = false)
+        {
+            var col = new DataGridTemplateColumn
+            {
+                Header = h,
+                Width = new DataGridLength(w),
+                CellTemplate = new FuncDataTemplate<Position>((_, _) =>
+                {
+                    // 注意：View 基类（Layoutable）有同名实例属性会遮蔽枚举类型名，必须命名空间限定
+                    var tb = new TextBlock
+                    {
+                        VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                    };
+                    if (right)
+                    {
+                        tb.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right;
+                        tb.Margin = new Thickness(0, 0, 8, 0);
+                    }
+                    tb[!TextBlock.TextProperty] = new Avalonia.Data.Binding(prop) { StringFormat = fmt };
+                    tb[!TextBlock.ForegroundProperty] = new Avalonia.Data.Binding(prop) { Converter = conv };
+                    return tb;
+                }),
+            };
             PosGrid.Columns.Add(col);
         }
     }
@@ -227,7 +267,10 @@ public partial class PortfolioView : UserControl, IRefreshable
     private async Task AutoTickAsync()
     {
         if (!MarketTimes.ShouldRefreshQuotes(_lastFetch)) return;
-        await RefreshQuotesAsync();
+        // DispatcherTimer.Tick 里丢弃的 async 任务异常默认不进 UnhandledException，
+        // 但同步段抛出会直接崩进程（WinExe 无控制台=静默退出），这里整体兜底
+        try { await RefreshQuotesAsync(); }
+        catch (Exception ex) { _status($"⚠️ 行情刷新异常: {ex.Message}"); }
     }
 
     public async Task RefreshQuotesAsync()

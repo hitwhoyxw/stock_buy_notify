@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0-android;net10.0-ios</TargetFrameworks>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>ThreeBucket.UI</RootNamespace>
+    <AssemblyName>ThreeBucket.Mobile</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <ApplicationId>workbuddy.threebucket</ApplicationId>
+    <ApplicationTitle>三桶策略系统</ApplicationTitle>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">14.2</SupportedOSPlatformVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.2" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.2" />
+    <PackageReference Include="Avalonia.Android" Version="11.3.2" Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'" />
+    <PackageReference Include="Avalonia.iOS" Version="11.3.2" Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ThreeBucket.Core\ThreeBucket.Core.csproj" />
+  </ItemGroup>
+
+  <!-- 共享桌面 UI 全部源码与 axaml（链接而非复制，桌面项目保持零改动）。
+       排除桌面专用入口 Program.cs 与 bin/obj 生成代码；移动端入口在 Platforms/ 下。 -->
+  <ItemGroup>
+    <Compile Include="..\ThreeBucket.UI\**\*.cs"
+             Exclude="..\ThreeBucket.UI\Program.cs;..\ThreeBucket.UI\bin\**;..\ThreeBucket.UI\obj\**" />
+    <AvaloniaResource Include="..\ThreeBucket.UI\**\*.axaml"
+             Exclude="..\ThreeBucket.UI\bin\**;..\ThreeBucket.UI\obj\**" />
+  </ItemGroup>
+
+</Project>

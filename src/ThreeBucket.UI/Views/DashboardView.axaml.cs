@@ -14,18 +14,19 @@ public partial class DashboardView : UserControl, IRefreshable
     private readonly Action<string> _status;
     private bool _running;
 
-    private record TaskInfo(string Key, string Name, string Script, string Description, string Schedule, bool NeedsLlm, string DefaultArgs);
+    private record TaskInfo(string Key, string Name, string Script, string Description, string Schedule, bool NeedsLlm, string DefaultArgs, bool Builtin = false);
 
     private static readonly Dictionary<string, TaskInfo> Tasks = new()
     {
-        ["T1"] = new("T1", "每日风控", "scripts/t1_daily_risk.py", "MA择时、仓位计算、风控检查", "工作日 16:30", false, ""),
+        // T1/T8 为 C# 原生内置任务：桌面/移动端通用，不依赖 Python 运行时
+        ["T1"] = new("T1", "每日风控", "scripts/t1_daily_risk.py", "MA择时、仓位计算、风控检查", "工作日 16:30", false, "", Builtin: true),
         ["T2"] = new("T2", "周度红利", "scripts/t2_weekly_dividend.py", "红利股息率检查", "周一 08:30", false, ""),
         ["T3"] = new("T3", "月度再平衡", "scripts/t3_monthly_rebalance.py", "组合再平衡", "每月1日", false, ""),
         ["T4"] = new("T4", "财报文本扫描", "scripts/t4_ingest.py", "财报抓取 → LLM 景气判定", "财报季", true, "--prepare"),
         ["T5"] = new("T5", "季度归因", "scripts/t5_prepare.py", "归因准备 → LLM 分析", "季末", true, ""),
         ["T6"] = new("T6", "候选池筛选", "scripts/t6_candidate_pool.py", "三桶筛选 → LLM 排序", "周一 08:30", true, "--bucket ABC --top 200"),
         ["T7"] = new("T7", "回测验证", "scripts/t7_backtest.py", "策略回测", "月度/季度", false, ""),
-        ["T8"] = new("T8", "信号台账", "scripts/t8_signal_log.py", "信号记录与台账更新", "工作日 17:00", false, ""),
+        ["T8"] = new("T8", "信号台账", "scripts/t8_signal_log.py", "信号记录与台账更新", "工作日 17:00", false, "", Builtin: true),
     };
 
     private class CardRefs
@@ -45,7 +46,7 @@ public partial class DashboardView : UserControl, IRefreshable
         InitializeComponent();
         _app = app; _status = status;
 
-        DailyBtn.Click += (_, _) => _ = RunTaskAsync("T1", "");
+        DailyBtn.Click += (_, _) => _ = RunChainAsync();
         T6Btn.Click += (_, _) => _ = RunTaskAsync("T6", "");
         ClearLogBtn.Click += (_, _) => Log.Text = "";
 
@@ -53,6 +54,13 @@ public partial class DashboardView : UserControl, IRefreshable
     }
 
     public void OnShown() { /* 任务面板无需刷新 */ }
+
+    /// <summary>“风控+台账”一键链：C# 原生 T1 → T8 依次执行（桌面/移动端通用）。</summary>
+    private async Task RunChainAsync()
+    {
+        await RunTaskAsync("T1", "");
+        await RunTaskAsync("T8", "");
+    }
 
     private void BuildCards()
     {
@@ -63,6 +71,8 @@ public partial class DashboardView : UserControl, IRefreshable
                 Watermark = "参数（如 --bucket A）",
                 Text = t.DefaultArgs,
                 FontSize = 12, Margin = new Thickness(0, 4, 0, 4),
+                // 内置任务参数无意义，隐藏输入框
+                IsVisible = !t.Builtin,
             };
             var runBtn = new Button
             {
@@ -96,6 +106,15 @@ public partial class DashboardView : UserControl, IRefreshable
                     HorizontalAlignment = HorizontalAlignment.Left,
                     Child = new TextBlock { Text = "LLM", Foreground = Brushes.White, FontSize = 11, FontWeight = FontWeight.Bold },
                 });
+            if (t.Builtin)
+                stack.Children.Insert(1, new Border
+                {
+                    Background = new SolidColorBrush(Color.Parse("#27ae60")),
+                    CornerRadius = new CornerRadius(8),
+                    Padding = new Thickness(6, 1),
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Child = new TextBlock { Text = "C# 原生", Foreground = Brushes.White, FontSize = 11, FontWeight = FontWeight.Bold },
+                });
 
             var border = new Border
             {
@@ -111,11 +130,24 @@ public partial class DashboardView : UserControl, IRefreshable
         }
     }
 
-    /// <summary>后台运行任务脚本，实时输出到日志区（async，不阻塞 UI 线程）。</summary>
+    /// <summary>后台运行任务：T1/T8 走 C# 内置引擎（桌面/移动通用），其余走 Python 脚本（仅桌面）。</summary>
     private async Task RunTaskAsync(string key, string argsStr)
     {
         if (_running) { _status("有任务正在运行，请等待完成"); return; }
         if (!Tasks.TryGetValue(key, out var t)) return;
+
+        if (t.Builtin)
+        {
+            await RunBuiltinAsync(key);
+            return;
+        }
+
+        // Python 脚本路径：移动端无 Python 运行时，明确拦截
+        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst())
+        {
+            _status($"{key} 需要 Python 桌面环境（移动端仅支持 T1/T8 内置任务）");
+            return;
+        }
 
         var py = string.IsNullOrWhiteSpace(_app.Config.PythonExe) ? "python" : _app.Config.PythonExe;
         var script = Path.Combine(_app.ProjectRoot, t.Script);
@@ -167,6 +199,39 @@ public partial class DashboardView : UserControl, IRefreshable
             refs.Status.Text = $"✗ 异常: {ex.Message}";
             refs.Border.Background = new SolidColorBrush(Color.Parse("#f8d7da"));
             AppendLog(ex.Message);
+        }
+        finally
+        {
+            refs.RunBtn.IsEnabled = true;
+            _running = false;
+        }
+    }
+
+    /// <summary>C# 原生任务执行：进度实时写入日志区，不阻塞 UI 线程。</summary>
+    private async Task RunBuiltinAsync(string key)
+    {
+        if (!_app.BuiltinTasks.TryGetValue(key, out var task)) { _status($"内置任务 {key} 未注册"); return; }
+
+        _running = true;
+        var refs = _cards[key];
+        refs.RunBtn.IsEnabled = false;
+        refs.Status.Text = "运行中…";
+        refs.Border.Background = new SolidColorBrush(Color.Parse("#fff3cd"));
+        Log.Text += $"[{DateTime.Now:HH:mm:ss}] ===== 启动 {key}（C# 内置，跨平台） =====\n";
+        _status($"运行 {key} …");
+        try
+        {
+            var result = await task.RunAsync(msg => Dispatcher.UIThread.Post(() => AppendLog(msg)));
+            refs.Status.Text = result.Ok ? "✓ 成功" : "✗ 失败";
+            refs.Border.Background = new SolidColorBrush(result.Ok ? Color.Parse("#d4edda") : Color.Parse("#f8d7da"));
+            Log.Text += $"[{DateTime.Now:HH:mm:ss}] ===== [{(result.Ok ? "✓ 成功" : "✗ 失败")}] {key}: {result.Summary} =====\n\n";
+            _status($"{key} {(result.Ok ? "成功" : "失败")}：{result.Summary}");
+        }
+        catch (Exception ex)
+        {
+            refs.Status.Text = $"✗ 异常: {ex.Message}";
+            refs.Border.Background = new SolidColorBrush(Color.Parse("#f8d7da"));
+            AppendLog(ex.ToString());
         }
         finally
         {

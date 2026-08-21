@@ -42,3 +42,7 @@ obj/
 src/publish/
 *.zip
 
+# 调试临时产物：UI 回归截图/脚本/验证备份、修复前数据快照
+.tmp/
+data/.bak_codefix/
+

@@ -255,9 +255,16 @@ public class DataStore
     public (bool ok, string msg) AddWatch(string code, string name = "", string from = "manual", string note = "")
     {
         code = code.Trim();
+        // 归一化：兼容 sh600519 / SH600519 / 600519.SH / 600519.XSHG 等常见写法
+        var lower = code.ToLowerInvariant();
+        if (lower.StartsWith("sh") || lower.StartsWith("sz") || lower.StartsWith("bj"))
+            code = code[2..];
+        if (code.Contains('.'))
+            code = code.Split('.')[0];
+        code = code.Trim();
         if (code.Length == 5 && code.All(char.IsDigit)) code = code.PadLeft(6, '0');
         if (!(code.Length == 6 && code.All(char.IsDigit)))
-            return (false, "代码必须是 6 位数字（5 位数字会自动补零）");
+            return (false, "代码必须是 6 位数字（支持 sh600519 / 600519.SH 等写法，5 位数字自动补零）");
         if (InWatchlist(code)) return (false, $"{code} 已在监控池中");
 
         var (headers, rows) = ReadCsv("watchlist.csv", WatchColumns);

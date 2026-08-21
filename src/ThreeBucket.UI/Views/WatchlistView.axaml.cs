@@ -69,7 +69,9 @@ public partial class WatchlistView : UserControl, IRefreshable
     private async Task AutoRefreshAsync()
     {
         if (!MarketTimes.ShouldRefreshQuotes(_lastFetch)) return;
-        await FetchAndEvalAsync();
+        // 兜底定时器链路异常，避免 DispatcherTimer.Tick 同步段抛异常直接崩进程
+        try { await FetchAndEvalAsync(); }
+        catch (Exception ex) { _status($"⚠️ 自选刷新异常: {ex.Message}"); }
     }
 
     /// <summary>手动刷新：重置节流锚点后强制拉一次。</summary>

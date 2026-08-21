@@ -5,7 +5,7 @@ using ThreeBucket.Core.Services;
 
 namespace ThreeBucket.UI.Services;
 
-/// <summary>应用级共享状态：解析项目根与数据目录，提供数据访问与行情服务。</summary>
+/// <summary>应用级共享状态：解析项目根与数据目录，提供数据访问、行情服务与内置任务引擎。</summary>
 public class AppState
 {
     public string ProjectRoot { get; }
@@ -13,6 +13,13 @@ public class AppState
     public DataStore Store { get; }
     public QuoteService Quotes { get; }
     public AppConfig Config { get; set; }
+
+    // ── C# 原生任务体系（桌面/移动端通用，不依赖 Python） ──
+    public KlineService Klines { get; }
+    public TradingCalendar Calendar { get; }
+    public SignalLogStore Signals { get; }
+    public IReadOnlyDictionary<string, IBuiltinTask> BuiltinTasks { get; }
+    public TaskSchedulerEngine SchedulerEngine { get; }
 
     public AppState()
     {
@@ -23,11 +30,26 @@ public class AppState
         Config = Store.LoadConfig();
         if (string.IsNullOrEmpty(Config.DataDir)) Config.DataDir = DataDir;
         if (string.IsNullOrEmpty(Config.ProjectRoot)) Config.ProjectRoot = ProjectRoot;
+
+        Klines = new KlineService();
+        Calendar = new TradingCalendar(DataDir, Klines);
+        Signals = new SignalLogStore(DataDir);
+        BuiltinTasks = new Dictionary<string, IBuiltinTask>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["T1"] = new DailyRiskTask(Store, Quotes, Klines, Calendar, Signals),
+            ["T8"] = new SignalLogTask(DataDir, Signals, Klines, Calendar),
+        };
+        // Func<AppConfig> 实时取最新配置：设置页保存后调度行为立即生效，无需重启
+        SchedulerEngine = new TaskSchedulerEngine(() => Config, BuiltinTasks, DataDir);
     }
 
-    /// <summary>从 exe 目录逐级向上查找含 scripts/ 的目录作为项目根。</summary>
+    /// <summary>从 exe 目录逐级向上查找含 scripts/ 的目录作为项目根；移动端直接用应用沙盒可写目录。</summary>
     private static string DetectProjectRoot()
     {
+        // 移动端（Android/iOS）无项目结构与任意文件系统，直接用应用沙盒可写目录作为数据根
+        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst())
+            return Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
         // AppContext.BaseDirectory：单文件发布时 Assembly.Location 为空串，此属性两种模式均返回 exe 实际目录
         var dir = AppContext.BaseDirectory;
         for (var i = 0; i < 10; i++)

@@ -21,7 +21,8 @@
           <data:DataGridTextColumn Header="代码" Binding="{Binding Code}" Width="90" />
           <data:DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="100" />
           <data:DataGridTextColumn Header="现价" Binding="{Binding Price, StringFormat=F2}" Width="80" />
-          <data:DataGridTextColumn Header="涨跌%" Binding="{Binding ChangePct, StringFormat=+F1}" Width="70" />
+          <!-- 格式串必须含数字占位符："+F1" 无占位符会把数字丢掉只输出字面量 "+F1"；\% 转义避免值被乘 100 -->
+          <data:DataGridTextColumn Header="涨跌%" Binding="{Binding ChangePct, StringFormat='+0.0\%;-0.0\%'}" Width="70" />
           <data:DataGridTextColumn Header="策略" Binding="{Binding Strategies}" Width="110" />
           <data:DataGridTextColumn Header="备注" Binding="{Binding Note}" Width="120" />
           <data:DataGridTextColumn Header="加入时间" Binding="{Binding AddedAt}" Width="*" />

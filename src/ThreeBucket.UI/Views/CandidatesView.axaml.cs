@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
 using ThreeBucket.Core.Data;
 using ThreeBucket.UI.Dialogs;
 using ThreeBucket.UI.Services;
@@ -48,11 +49,20 @@ public partial class CandidatesView : UserControl, IRefreshable
         Grid.Columns.Clear();
         foreach (var h in headers.Where(h => !Hidden.Contains(h)))
         {
-            var col = new DataGridTextColumn
+            // 列名来自 CSV 表头，无法用强类型属性；索引器路径（[key]/['key']）在 Avalonia 版本间
+            // 行为不一致会导致整列空白——改绑行对象本身，ConverterParameter 传列名取值
+            var col = new DataGridTemplateColumn
             {
                 Header = h,
-                Binding = new Avalonia.Data.Binding($"[{h}]"),
                 Width = new DataGridLength(1, DataGridLengthUnitType.Auto),
+                CellTemplate = new FuncDataTemplate<Dictionary<string, string>>((_, _) => new TextBlock
+                {
+                    [!TextBlock.TextProperty] = new Avalonia.Data.Binding
+                    {
+                        Converter = new DictValueConverter(),
+                        ConverterParameter = h,
+                    },
+                }),
             };
             Grid.Columns.Add(col);
         }

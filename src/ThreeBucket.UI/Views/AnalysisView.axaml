@@ -13,7 +13,13 @@
         <ColumnDefinition Width="320" />
         <ColumnDefinition Width="*" />
       </Grid.ColumnDefinitions>
-      <ListBox x:Name="FileList" Grid.Column="0" Margin="6" />
+      <ListBox x:Name="FileList" Grid.Column="0" Margin="6">
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <TextBlock Text="{Binding Display}" TextWrapping="Wrap" FontSize="12" />
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
       <TextBox x:Name="Viewer" Grid.Column="1" Margin="6" IsReadOnly="True"
                AcceptsReturn="True" TextWrapping="NoWrap"
                FontFamily="Consolas, Menlo, monospace" FontSize="12"
