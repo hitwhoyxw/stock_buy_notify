@@ -6,22 +6,13 @@ namespace ThreeBucket.UI;
 
 internal sealed class Program
 {
-    // 注册 GBK 提供程序（新浪/腾讯行情为 GBK 编码）
-    static Program()
-    {
-        var providerType = Type.GetType(
-            "System.Text.Encoding.CodePages.CodePagesEncodingProvider, System.Text.Encoding.CodePages");
-        if (providerType is not null)
-        {
-            var instance = providerType.GetProperty("Instance")?.GetValue(null);
-            if (instance is EncodingProvider provider)
-                Encoding.RegisterProvider(provider);
-        }
-    }
-
     [STAThread]
     public static void Main(string[] args)
     {
+        // 注册 GBK 提供程序（新浪/腾讯行情为 GBK 编码）。直接引用类型注册——
+        // 反射短程序集名解析在 .NET 10 返回 null 且静默跳过，GBK 不会生效（Core 数据源基类同样兜底注册）。
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
         BuildAvaloniaApp()
             .StartWithClassicDesktopLifetime(args);
     }
