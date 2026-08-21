@@ -1,0 +1,71 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:Avalonia.Controls"
+             xmlns:data="using:Avalonia.Controls"
+             xmlns:local="using:ThreeBucket.UI"
+             x:Class="ThreeBucket.UI.Views.PortfolioView"
+             x:CompileBindings="False">
+  <DockPanel>
+    <!-- 顶部工具栏 -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="6">
+      <TextBlock Text="💼 持仓总览" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+      <ComboBox x:Name="ViewCombo" Width="120" SelectedIndex="0">
+        <ComboBoxItem Content="持仓汇总" />
+        <ComboBoxItem Content="交易流水" />
+      </ComboBox>
+      <Button x:Name="AddTradeBtn" Content="➕ 记一笔" Background="#27ae60" Foreground="White" />
+      <Button x:Name="RefreshBtn" Content="🔄 刷新行情" Background="#3498db" Foreground="White" />
+    </StackPanel>
+
+    <!-- 持仓总览视图 -->
+    <Grid x:Name="PosPanel" DockPanel.Dock="Top">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+      </Grid.RowDefinitions>
+
+      <!-- 摘要卡片 -->
+      <UniformGrid Grid.Row="0" Columns="5" Margin="6" x:Name="Cards" />
+
+      <!-- 主体：左持仓表 + 右图表 -->
+      <Grid Grid.Row="1" ColumnDefinitions="3*,2*">
+        <data:DataGrid x:Name="PosGrid" Grid.Column="0" Margin="6"
+                       AutoGenerateColumns="False" IsReadOnly="True"
+                       SelectionMode="Single" GridLinesVisibility="All">
+          <data:DataGrid.ContextMenu>
+            <ContextMenu x:Name="PosMenu">
+              <MenuItem x:Name="MenuAdd" Header="📥 加仓" />
+              <MenuItem x:Name="MenuReduce" Header="📤 减仓" />
+              <MenuItem x:Name="MenuClear" Header="🗑️ 清仓" />
+              <Separator />
+              <MenuItem x:Name="MenuTrades" Header="🔎 查看该股的全部交易" />
+            </ContextMenu>
+          </data:DataGrid.ContextMenu>
+        </data:DataGrid>
+
+        <StackPanel Grid.Column="1" Margin="6" Spacing="8">
+          <TextBlock Text="四桶占比" FontWeight="Bold" />
+          <Border BorderBrush="#ddd" BorderThickness="1" Height="26">
+            <StackPanel x:Name="AllocBar" Orientation="Horizontal" />
+          </Border>
+          <TextBlock x:Name="AllocText" FontSize="11" Foreground="#666" TextWrapping="Wrap" />
+          <TextBlock Text="组合净值" FontWeight="Bold" Margin="0,8,0,0" />
+          <Border BorderBrush="#ddd" BorderThickness="1" Height="160">
+            <Canvas x:Name="NavCanvas" />
+          </Border>
+        </StackPanel>
+      </Grid>
+    </Grid>
+
+    <!-- 交易流水视图 -->
+    <DockPanel x:Name="TradesPanel" IsVisible="False">
+      <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="6">
+        <TextBlock Text="双击单元格可直接修改；🖊️ 打开完整编辑（含方向/桶下拉）" FontSize="11" Foreground="#999" VerticalAlignment="Center" />
+        <Button x:Name="EditTradeBtn" Content="✏️ 编辑选中" Background="#f39c12" Foreground="White" />
+        <Button x:Name="DelTradeBtn" Content="🗑️ 删除选中" Background="#e74c3c" Foreground="White" />
+      </StackPanel>
+      <data:DataGrid x:Name="TradesGrid" Margin="6" AutoGenerateColumns="False"
+                     IsReadOnly="False" SelectionMode="Single" GridLinesVisibility="All" />
+    </DockPanel>
+  </DockPanel>
+</UserControl>

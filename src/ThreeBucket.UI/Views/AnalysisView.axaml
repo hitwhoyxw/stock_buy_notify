@@ -1,0 +1,23 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="ThreeBucket.UI.Views.AnalysisView"
+             x:CompileBindings="False">
+  <DockPanel>
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="6">
+      <TextBlock Text="🧠 LLM 分析结果" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+      <TextBlock x:Name="InfoText" Text="" Foreground="#666" FontSize="12" VerticalAlignment="Center" />
+      <Button x:Name="RefreshBtn" Content="🔄 刷新" Margin="0,0,0,0" />
+    </StackPanel>
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="320" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <ListBox x:Name="FileList" Grid.Column="0" Margin="6" />
+      <TextBox x:Name="Viewer" Grid.Column="1" Margin="6" IsReadOnly="True"
+               AcceptsReturn="True" TextWrapping="NoWrap"
+               FontFamily="Consolas, Menlo, monospace" FontSize="12"
+               Background="#fafafa" />
+    </Grid>
+  </DockPanel>
+</UserControl>

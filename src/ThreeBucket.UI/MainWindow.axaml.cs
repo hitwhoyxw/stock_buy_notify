@@ -1,13 +1,17 @@
 using Avalonia.Controls;
-using ThreeBucket.UI.ViewModels;
+using ThreeBucket.UI.Services;
+using ThreeBucket.UI.Views;
 
 namespace ThreeBucket.UI;
 
 public partial class MainWindow : Window
 {
+    public AppState App { get; }
+
     public MainWindow()
     {
         InitializeComponent();
-        DataContext = new MainWindowViewModel();
+        App = new AppState();
+        Content = new MainView(App);
     }
 }
