@@ -38,3 +38,7 @@ obj/
 *.user
 .vs/
 
+# 跨平台打包产物（desktop/<平台>/dist/ 已被上面 dist/ 规则覆盖）
+src/publish/
+*.zip
+

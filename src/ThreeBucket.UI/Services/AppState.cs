@@ -1,5 +1,4 @@
 using System.IO;
-using System.Reflection;
 using ThreeBucket.Core.Data;
 using ThreeBucket.Core.Models;
 using ThreeBucket.Core.Services;
@@ -29,8 +28,8 @@ public class AppState
     /// <summary>从 exe 目录逐级向上查找含 scripts/ 的目录作为项目根。</summary>
     private static string DetectProjectRoot()
     {
-        var dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
-                  ?? AppContext.BaseDirectory;
+        // AppContext.BaseDirectory：单文件发布时 Assembly.Location 为空串，此属性两种模式均返回 exe 实际目录
+        var dir = AppContext.BaseDirectory;
         for (var i = 0; i < 10; i++)
         {
             if (Directory.Exists(Path.Combine(dir, "scripts")))
