@@ -1,11 +1,13 @@
 name: T4 财报季扫描 + T6 候选池
 
 on:
-  schedule:
-    # UTC 11:00 = 19:00 北京，仅 4/8/10 月的周一执行（T4 输入准备）
-    - cron: "0 11 * * 1"
-    # UTC 12:00 = 20:00 北京，每周五跑 T6 候选池
-    - cron: "0 12 * * 5"
+  # 定时已由 C# 版 cs-earnings-season.yml（T4）+ cs-weekly.yml（T6）接管。
+  # 保留 workflow_dispatch 作 Python 应急回退；确认 C# 版稳定后可整文件删除。
+  # schedule:
+  #   # UTC 11:00 = 19:00 北京，仅 4/8/10 月的周一执行（T4 输入准备）
+  #   - cron: "0 11 * * 1"
+  #   # UTC 12:00 = 20:00 北京，每周五跑 T6 候选池
+  #   - cron: "0 12 * * 5"
   workflow_dispatch:
     inputs:
       task:

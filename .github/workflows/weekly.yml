@@ -1,9 +1,11 @@
 name: T2 weekly dividend + T6 pool
 
 on:
-  schedule:
-    - cron: "30 0 * * 1"
-    - cron: "0 12 * * 5"
+  # 定时已由 C# 版 cs-weekly.yml 接管（同样的周一08:30/周五20:00，T6 产物格式一致）。
+  # 保留 workflow_dispatch 作 Python 应急回退；确认 C# 版稳定后可整文件删除。
+  # schedule:
+  #   - cron: "30 0 * * 1"
+  #   - cron: "0 12 * * 5"
   workflow_dispatch:
     inputs:
       task:

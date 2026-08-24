@@ -1,0 +1,56 @@
+name: C# T2 weekly dividend + T6 pool
+
+# C# 版接管原 Python weekly.yml 的调度。
+# 周一 08:30 跑 T2 红利 + T6 候选池；周五 20:00 跑 T6。
+# T6 产出 skill_input_T6_{A,B,C}.md + candidates_{A,B,C}.csv（与 Python 同格式，供 Qoder 定时任务做 LLM 排序）。
+on:
+  schedule:
+    - cron: "30 0 * * 1"   # 北京 周一 08:30
+    - cron: "0 12 * * 5"   # 北京 周五 20:00
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "t2 / t6 / both"
+        default: "both"
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.x"
+
+      - uses: actions/cache@v4
+        with:
+          path: data/cache
+          key: data-cache-${{ github.run_id }}
+          restore-keys: data-cache-
+
+      - name: Run tasks
+        run: |
+          TASKS="T2,T6"
+          case "${{ github.event.inputs.task }}" in
+            t2) TASKS="T2" ;;
+            t6) TASKS="T6" ;;
+          esac
+          # 周五定时只跑 T6
+          if [[ "${{ github.event.schedule }}" == "0 12 * * 5" ]]; then TASKS="T6"; fi
+          dotnet run --project src/ThreeBucket.Cli -c Release -- --task "$TASKS"
+
+      - name: commit results
+        run: |
+          git config user.name "trading-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add data/live_signal_log.csv data/report_*.md data/skill_input_T6_*.md data/candidates_*.csv || true
+          git diff --cached --quiet && echo "no changes" && exit 0
+          git commit -m "chore(cs-weekly): $(date +%F) T2/T6 run"
+          git push

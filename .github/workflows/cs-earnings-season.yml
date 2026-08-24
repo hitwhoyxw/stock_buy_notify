@@ -1,0 +1,56 @@
+name: C# T4 财报季扫描
+
+# C# 版接管原 Python earnings_season.yml 的 T4 部分（T6 已由 cs-weekly 统一跑，消除 Python 版周五 T6 冗余）。
+# 财报季（4/8/10月）周一 19:00 跑 T4：先 ingest 上轮 LLM 判定入账，再 prepare 下轮输入。
+# C# EarningsScanTask 单任务完成 ingest+prepare（Python 版拆两 job 因 t4_ingest.py 是独立脚本）。
+# 产出 skill_input_T4C.md（供 Qoder 定时任务做 LLM 景气判定）。
+on:
+  schedule:
+    - cron: "0 11 * * 1"   # 北京 周一 19:00
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.x"
+
+      - uses: actions/cache@v4
+        with:
+          path: data/cache
+          key: data-cache-${{ github.run_id }}
+          restore-keys: data-cache-
+
+      - name: 校验财报季
+        id: season
+        run: |
+          MONTH=$(date +%m)
+          if [[ "$MONTH" =~ ^(04|08|10)$ ]] || [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "is_season=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_season=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run T4
+        if: steps.season.outputs.is_season == 'true'
+        run: dotnet run --project src/ThreeBucket.Cli -c Release -- --task T4
+
+      - name: commit results
+        if: steps.season.outputs.is_season == 'true'
+        run: |
+          git config user.name "trading-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add data/skill_input_T4C.md data/live_signal_log.csv data/report_*.md || true
+          git diff --cached --quiet && echo "no changes" && exit 0
+          git commit -m "chore(cs-t4): $(date +%F) earnings scan"
+          git push

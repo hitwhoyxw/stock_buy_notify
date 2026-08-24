@@ -1,0 +1,42 @@
+name: C# T5 quarterly attribution prep
+
+# C# 版接管原 Python quarterly.yml 的 T5 部分（T7 已由 cs-monthly 每月统一跑）。
+# 季末28日 21:00 跑 T5 归因准备，产出 skill_input_T5.md（供 Qoder 定时任务做 LLM 归因）。
+on:
+  schedule:
+    - cron: "0 13 28 3,6,9,12 *"   # 北京 季末28日 21:00
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.x"
+
+      - uses: actions/cache@v4
+        with:
+          path: data/cache
+          key: data-cache-${{ github.run_id }}
+          restore-keys: data-cache-
+
+      - name: Run T5
+        run: dotnet run --project src/ThreeBucket.Cli -c Release -- --task T5
+
+      - name: commit results
+        run: |
+          git config user.name "trading-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add data/report_*.md data/skill_input_T5.md || true
+          git diff --cached --quiet && echo "no changes" && exit 0
+          git commit -m "chore(cs-quarterly): $(date +%F) T5 attribution prep"
+          git push

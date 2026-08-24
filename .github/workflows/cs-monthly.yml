@@ -1,0 +1,52 @@
+name: C# T3 monthly rebalance + T7 backtest
+
+# C# 版接管原 Python monthly.yml 的调度。
+# 每月1日 09:30 跑 T3 再平衡；每月28日 20:00 跑 T7 回测。
+# C# BacktestTask 一次出 A/B/C 全桶结果（data/backtest_*.csv），无需像 Python 拆 --bucket AB/C。
+# 28日 20:00 与 cs-quarterly 的 21:00 T5 错开，避免并发 push 竞争。
+on:
+  schedule:
+    - cron: "30 1 1 * *"    # 北京 每月1日 09:30
+    - cron: "0 12 28 * *"   # 北京 每月28日 20:00
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "t3 / t7"
+        default: "t3"
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.x"
+
+      - uses: actions/cache@v4
+        with:
+          path: data/cache
+          key: data-cache-${{ github.run_id }}
+          restore-keys: data-cache-
+
+      - name: Run tasks
+        run: |
+          TASKS="T3"
+          if [[ "${{ github.event.schedule }}" == "0 12 28 * *" ]] || [[ "${{ github.event.inputs.task }}" == "t7" ]]; then TASKS="T7"; fi
+          dotnet run --project src/ThreeBucket.Cli -c Release -- --task "$TASKS"
+
+      - name: commit results
+        run: |
+          git config user.name "trading-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add data/live_signal_log.csv data/report_*.md data/backtest_*.csv || true
+          git diff --cached --quiet && echo "no changes" && exit 0
+          git commit -m "chore(cs-monthly): $(date +%F) run"
+          git push
