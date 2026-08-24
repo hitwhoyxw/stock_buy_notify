@@ -95,8 +95,14 @@ public class TradingCalendar
     public async Task<bool> IsTradingDayAsync(DateTime date)
     {
         await EnsureLoadedAsync();
-        return _days?.Contains(date.ToString("yyyy-MM-dd"))
-            ?? date.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday);
+        var key = date.ToString("yyyy-MM-dd");
+        if (_days is null || _days.Count == 0)
+            return date.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday);
+        // 日期超出日历覆盖（日K收盘后才含当日 bar，盘中拉取的日历永远缺"今天"）：
+        // 按周末近似兜底 —— 宁可多跑一次无信号扫描，不可静默跳过
+        if (string.CompareOrdinal(_days[^1], key) < 0)
+            return date.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday);
+        return _days.Contains(key);
     }
 
     /// <summary>date 之后（不含当日）第 n 个交易日。日历不可用返回 null。</summary>

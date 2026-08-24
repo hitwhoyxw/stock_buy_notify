@@ -1,9 +1,11 @@
 name: T1 daily risk + T8 signal log
 
+# 定时调度已由 C# 版 cs-daily.yml 接管（同样的 16:30/17:00 时间点，输出文件完全兼容）。
+# 本 workflow 保留 workflow_dispatch 作为 Python 版应急回退入口；确认 C# 版稳定后可整文件删除。
 on:
-  schedule:
-    - cron: "30 8 * * 1-5"
-    - cron: "0 9 * * 1-5"
+  # schedule:
+  #   - cron: "30 8 * * 1-5"
+  #   - cron: "0 9 * * 1-5"
   workflow_dispatch:
     inputs:
       task:

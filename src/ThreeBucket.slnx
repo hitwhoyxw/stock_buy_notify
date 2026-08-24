@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="ThreeBucket.Core/ThreeBucket.Core.csproj" />
+  <Project Path="ThreeBucket.Cli/ThreeBucket.Cli.csproj" />
   <Project Path="ThreeBucket.Demo/ThreeBucket.Demo.csproj" />
   <Project Path="ThreeBucket.UI/ThreeBucket.UI.csproj" />
   <!-- ThreeBucket.Mobile 不入解决方案：需 android/ios workload 与对应 SDK，

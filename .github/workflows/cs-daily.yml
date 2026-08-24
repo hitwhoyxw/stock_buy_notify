@@ -1,0 +1,54 @@
+name: C# T1 daily risk + T8 signal log
+
+# C# 版每日任务（接管原 Python daily.yml 的调度，Python 版仅保留手动触发应急）。
+# 交易日判断内建在任务里（TradingCalendar，日历不可用按周末兜底），无需外部预判。
+on:
+  schedule:
+    - cron: "30 8 * * 1-5"   # 北京时间 工作日 16:30
+    - cron: "0 9 * * 1-5"    # 北京时间 工作日 17:00
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "t1 / t8 / both"
+        default: "both"
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.x"
+
+      # 行情/K线 parquet 缓存跨 run 复用（与 Python 版同一目录，减少数据源限流）
+      - uses: actions/cache@v4
+        with:
+          path: data/cache
+          key: data-cache-${{ github.run_id }}
+          restore-keys: data-cache-
+
+      - name: Run tasks
+        run: |
+          TASKS="T1,T8"
+          case "${{ github.event.inputs.task }}" in
+            t1) TASKS="T1" ;;
+            t8) TASKS="T8" ;;
+          esac
+          dotnet run --project src/ThreeBucket.Cli -c Release -- --task "$TASKS"
+
+      - name: commit results
+        run: |
+          git config user.name "trading-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add data/live_signal_log.csv data/portfolio_nav.csv data/monitor_alerts.json data/report_*.md || true
+          git diff --cached --quiet && echo "no changes" && exit 0
+          git commit -m "chore(cs-daily): $(date +%F) T1/T8 run"
+          git push
