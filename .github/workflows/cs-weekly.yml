@@ -35,7 +35,10 @@ jobs:
           key: data-cache-${{ github.run_id }}
           restore-keys: data-cache-
 
-      - name: Run tasks
+      - name: Run tasks (supabase pull → task → push)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           TASKS="T2,T6"
           case "${{ github.event.inputs.task }}" in
@@ -44,13 +47,14 @@ jobs:
           esac
           # 周五定时只跑 T6
           if [[ "${{ github.event.schedule }}" == "0 12 * * 5" ]]; then TASKS="T6"; fi
-          dotnet run --project src/ThreeBucket.Cli -c Release -- --task "$TASKS"
+          # 拉云端最新用户数据 → 跑任务 → 推产物到云端；未配 SUPABASE secrets 时自动跳过
+          dotnet run --project src/ThreeBucket.Cli -c Release -- --sync pull --task "$TASKS" --sync push
 
       - name: commit results
         run: |
           git config user.name "trading-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add data/live_signal_log.csv data/report_*.md data/skill_input_T6_*.md data/candidates_*.csv || true
+          git add data/live_signal_log.csv data/report_*.md data/skill_input_T6_*.md data/candidates_*.csv data/strategies.csv data/live_trade_log.csv data/watchlist.csv || true
           git diff --cached --quiet && echo "no changes" && exit 0
           git commit -m "chore(cs-weekly): $(date +%F) T2/T6 run"
           git push

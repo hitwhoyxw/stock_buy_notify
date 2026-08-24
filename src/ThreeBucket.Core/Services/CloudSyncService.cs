@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 
 namespace ThreeBucket.Core.Services;
@@ -12,10 +13,10 @@ namespace ThreeBucket.Core.Services;
 /// <summary>云端一行同步数据（对应 three_bucket_sync 表）。</summary>
 public class CloudSyncRow
 {
-    public string Kind { get; set; } = "";
-    public JsonElement Payload { get; set; }
-    public DateTime UpdatedAt { get; set; }
-    public string Device { get; set; } = "";
+    [JsonPropertyName("kind")] public string Kind { get; set; } = "";
+    [JsonPropertyName("payload")] public JsonElement Payload { get; set; }
+    [JsonPropertyName("updated_at")] public DateTime UpdatedAt { get; set; }
+    [JsonPropertyName("device")] public string Device { get; set; } = "";
 }
 
 /// <summary>
