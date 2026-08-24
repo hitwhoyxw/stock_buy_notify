@@ -1,9 +1,11 @@
 name: T3 monthly rebalance
 
 on:
-  schedule:
-    - cron: "30 1 1 * *"
-    - cron: "0 13 28 * *"
+  # 定时已由 C# 版 cs-monthly.yml 接管（T3 每月1日09:30、T7 每月28日20:00）。
+  # 保留 workflow_dispatch 作 Python 应急回退；确认 C# 版稳定后可整文件删除。
+  # schedule:
+  #   - cron: "30 1 1 * *"
+  #   - cron: "0 13 28 * *"
   workflow_dispatch:
     inputs:
       task:

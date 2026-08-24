@@ -1,9 +1,11 @@
 name: T5 quarterly attribution + T7-AB
 
 on:
-  schedule:
-    - cron: "0 13 28 3,6,9,12 *"
-    - cron: "0 12 28 3,6,9,12 *"
+  # 定时已由 C# 版 cs-quarterly.yml（T5）+ cs-monthly.yml（T7）接管。
+  # 保留 workflow_dispatch 作 Python 应急回退；确认 C# 版稳定后可整文件删除。
+  # schedule:
+  #   - cron: "0 13 28 3,6,9,12 *"
+  #   - cron: "0 12 28 3,6,9,12 *"
   workflow_dispatch:
     inputs:
       task:
