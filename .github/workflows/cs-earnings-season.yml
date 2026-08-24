@@ -41,16 +41,22 @@ jobs:
             echo "is_season=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Run T4
+      - name: Run T4 (supabase pull → task → push)
         if: steps.season.outputs.is_season == 'true'
-        run: dotnet run --project src/ThreeBucket.Cli -c Release -- --task T4
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          # 同花顺（扶摇）数据源主源 key（https://fuyao.aicubes.cn）；secret 未配置时自动走免费源
+          THS_API_KEY: ${{ secrets.THS_API_KEY }}
+        # 拉云端最新用户数据 → 跑任务 → 推产物到云端；未配 secrets 时自动跳过
+        run: dotnet run --project src/ThreeBucket.Cli -c Release -- --sync pull --task T4 --sync push
 
       - name: commit results
         if: steps.season.outputs.is_season == 'true'
         run: |
           git config user.name "trading-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add data/skill_input_T4C.md data/live_signal_log.csv data/report_*.md || true
+          git add data/skill_input_T4C.md data/live_signal_log.csv data/report_*.md data/strategies.csv data/live_trade_log.csv data/watchlist.csv || true
           git diff --cached --quiet && echo "no changes" && exit 0
           git commit -m "chore(cs-t4): $(date +%F) earnings scan"
           git push

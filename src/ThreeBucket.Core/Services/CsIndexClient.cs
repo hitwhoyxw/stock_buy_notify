@@ -15,12 +15,15 @@ public sealed record IndicatorRow(DateTime Date, double Pe1, double Pe2, double 
 /// 中证指数官网客户端：成分股（cons.xls）/ 估值股息率（indicator.xls）。
 /// 替代 akshare index_stock_cons_csindex / stock_zh_index_value_csindex（同一文件源）。
 /// 官网只保留最近约 20 条 indicator 记录——与 Python 版行为一致，分位按可得样本计算。
+/// 成分股支持同花顺（扶摇）主源：配置了 API Key 时优先走 API，失败降级官网 xls；
+/// 估值/股息率为中证官方口径（扶摇无对应接口），始终走官网。
 /// </summary>
 public class CsIndexClient
 {
     private static readonly HttpClient Client = new();
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
     private readonly string _cacheDir;
+    private readonly ThsClient? _ths;
 
     static CsIndexClient()
     {
@@ -30,9 +33,12 @@ public class CsIndexClient
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
     }
 
-    public CsIndexClient(string? cacheDir = null)
+    /// <param name="cacheDir">磁盘缓存目录（data/cache）。</param>
+    /// <param name="ths">同花顺（扶摇）客户端；配置了 API Key 时成分股优先走同花顺。</param>
+    public CsIndexClient(string? cacheDir = null, ThsClient? ths = null)
     {
         _cacheDir = cacheDir ?? Path.Combine("data", "cache");
+        _ths = ths;
         try { Directory.CreateDirectory(_cacheDir); } catch { }
     }
 
@@ -50,12 +56,27 @@ public class CsIndexClient
             catch { }
         }
 
+        // 主源：同花顺（扶摇）；未配置/失败/空结果降级中证官网 cons.xls
+        if (_ths is { IsConfigured: true })
+        {
+            try
+            {
+                var rows = await _ths.GetConstituentsAsync(indexCode, ct);
+                if (rows.Count > 0)
+                {
+                    try { File.WriteAllText(cacheFile, JsonSerializer.Serialize(rows)); } catch { }
+                    return rows;
+                }
+            }
+            catch { /* 降级官网 */ }
+        }
+
         var bytes = await DownloadAsync(
             $"https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/cons/{indexCode}cons.xls", ct);
-        var rows = ParseCons(bytes);
+        var rows2 = ParseCons(bytes);
 
-        try { File.WriteAllText(cacheFile, JsonSerializer.Serialize(rows)); } catch { }
-        return rows;
+        try { File.WriteAllText(cacheFile, JsonSerializer.Serialize(rows2)); } catch { }
+        return rows2;
     }
 
     /// <summary>指数估值指标（市盈率/股息率，近约 20 个交易日）。Dp1=总股本加权股息率%。</summary>

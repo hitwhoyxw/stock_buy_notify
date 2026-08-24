@@ -35,20 +35,27 @@ jobs:
           key: data-cache-${{ github.run_id }}
           restore-keys: data-cache-
 
-      - name: Run tasks
+      - name: Run tasks (supabase pull → task → push)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          # 同花顺（扶摇）数据源主源 key（https://fuyao.aicubes.cn）；secret 未配置时自动走免费源
+          THS_API_KEY: ${{ secrets.THS_API_KEY }}
         run: |
           TASKS="T1,T8"
           case "${{ github.event.inputs.task }}" in
             t1) TASKS="T1" ;;
             t8) TASKS="T8" ;;
           esac
-          dotnet run --project src/ThreeBucket.Cli -c Release -- --task "$TASKS"
+          # 拉云端最新用户数据（持仓/自选，客户端可能改过）→ 跑任务 → 推产物到云端；
+          # 未配置 SUPABASE secrets 时 --sync 自动跳过，不影响任务执行
+          dotnet run --project src/ThreeBucket.Cli -c Release -- --sync pull --task "$TASKS" --sync push
 
       - name: commit results
         run: |
           git config user.name "trading-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add data/live_signal_log.csv data/portfolio_nav.csv data/monitor_alerts.json data/report_*.md || true
+          git add data/live_signal_log.csv data/portfolio_nav.csv data/monitor_alerts.json data/report_*.md data/strategies.csv data/live_trade_log.csv data/watchlist.csv || true
           git diff --cached --quiet && echo "no changes" && exit 0
           git commit -m "chore(cs-daily): $(date +%F) T1/T8 run"
           git push

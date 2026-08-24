@@ -34,6 +34,7 @@ public sealed record DividendRow(DateTime ExDate, double Dps);
 /// 东方财富 datacenter HTTP 客户端（桌面/移动端通用，替代 akshare 的 5 个数据接口）。
 /// 全部接口已实测：yjbb / yjyg / 机构持仓 / 分红送配 / 中国国债收益率。
 /// 历史报告期数据不变 → 磁盘 JSON 缓存永久有效；最新期快照 24h 过期。
+/// 个股分红支持同花顺（扶摇）主源：配置了 API Key 时优先走 API，失败降级本源。
 /// </summary>
 public class EastMoneyClient
 {
@@ -41,6 +42,7 @@ public class EastMoneyClient
 
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
     private readonly string _cacheDir;
+    private readonly ThsClient? _ths;
     private readonly JsonSerializerOptions _jsonOpts = new()
     {
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
@@ -52,9 +54,12 @@ public class EastMoneyClient
         Client.DefaultRequestHeaders.Referrer = new Uri("https://data.eastmoney.com/");
     }
 
-    public EastMoneyClient(string? cacheDir = null)
+    /// <param name="cacheDir">磁盘缓存目录（data/cache）。</param>
+    /// <param name="ths">同花顺（扶摇）客户端；配置了 API Key 时个股分红优先走同花顺。</param>
+    public EastMoneyClient(string? cacheDir = null, ThsClient? ths = null)
     {
         _cacheDir = cacheDir ?? Path.Combine("data", "cache");
+        _ths = ths;
         try { Directory.CreateDirectory(_cacheDir); } catch { /* 移动端沙盒外路径由调用方保证 */ }
     }
 
@@ -183,30 +188,40 @@ public class EastMoneyClient
         catch { return new List<HolderRow>(); }
     }
 
-    /// <summary>个股历史现金分红（每10股税前股利 → 每股 DPS；按除权日升序）。</summary>
+    /// <summary>个股历史现金分红（每10股税前股利 → 每股 DPS；按除权日升序）。
+    /// 配置了同花顺 API Key 时优先走扶摇除复权事件流（dividend_per_share 每股税前，同口径）。</summary>
     public async Task<List<DividendRow>> GetDividendsAsync(string code,
         Action<string>? log = null, CancellationToken ct = default)
     {
         var cacheFile = Path.Combine(_cacheDir, $"div_{code}.json");
         if (TryReadCache(cacheFile, out List<DividendRow>? cached)) return cached!;
 
-        var filter = Uri.EscapeDataString($"(SECURITY_CODE=\"{code}\")");
-        var url = $"https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_SHAREBONUS_DET&columns=ALL&filter={filter}&pageNumber=1&pageSize=200&sortColumns=PLAN_NOTICE_DATE,EX_DIVIDEND_DATE&sortTypes=-1,-1&source=WEB&client=WEB";
         var rows = new List<DividendRow>();
-        try
+        // 主源：同花顺（扶摇）除复权事件流；未配置/失败降级东财 RPT_SHAREBONUS_DET
+        if (_ths is { IsConfigured: true })
         {
-            var items = await FetchOnePageAsync(url, ct);
-            foreach (var i in items)
-            {
-                var bonus = Num(i, "PRETAX_BONUS_RMB"); // 每 10 股税前股利（元）
-                var ex = Str(i, "EX_DIVIDEND_DATE");
-                if (bonus is null || bonus <= 0 || ex.Length < 10) continue;
-                if (!DateTime.TryParseExact(ex[..10], "yyyy-MM-dd", Inv,
-                        DateTimeStyles.None, out var d)) continue;
-                rows.Add(new DividendRow(d, bonus.Value / 10.0));
-            }
+            try { rows = await _ths.GetDividendsAsync(code, ct); }
+            catch (Exception e) { log?.Invoke($"[THS] 分红({code}) 拉取失败: {e.Message}，降级东财"); }
         }
-        catch (Exception e) { log?.Invoke($"[EM] 分红({code}) 拉取失败: {e.Message}"); }
+        if (rows.Count == 0)
+        {
+            var filter = Uri.EscapeDataString($"(SECURITY_CODE=\"{code}\")");
+            var url = $"https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_SHAREBONUS_DET&columns=ALL&filter={filter}&pageNumber=1&pageSize=200&sortColumns=PLAN_NOTICE_DATE,EX_DIVIDEND_DATE&sortTypes=-1,-1&source=WEB&client=WEB";
+            try
+            {
+                var items = await FetchOnePageAsync(url, ct);
+                foreach (var i in items)
+                {
+                    var bonus = Num(i, "PRETAX_BONUS_RMB"); // 每 10 股税前股利（元）
+                    var ex = Str(i, "EX_DIVIDEND_DATE");
+                    if (bonus is null || bonus <= 0 || ex.Length < 10) continue;
+                    if (!DateTime.TryParseExact(ex[..10], "yyyy-MM-dd", Inv,
+                            DateTimeStyles.None, out var d)) continue;
+                    rows.Add(new DividendRow(d, bonus.Value / 10.0));
+                }
+            }
+            catch (Exception e) { log?.Invoke($"[EM] 分红({code}) 拉取失败: {e.Message}"); }
+        }
 
         rows.Sort((a, b) => a.ExDate.CompareTo(b.ExDate));
         TryWriteCache(cacheFile, rows, TimeSpan.FromHours(24)); // 分红记录基本不变

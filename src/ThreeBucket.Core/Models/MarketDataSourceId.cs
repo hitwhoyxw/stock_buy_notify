@@ -10,4 +10,5 @@ public enum MarketDataSourceId
     Sina = 1,
     Tencent = 2,
     // 预留：EastMoney = 3, NetEase = 4, SinaFinance = 5, ...
+    Ths = 6, // 同花顺（扶摇，需 API Key）
 }

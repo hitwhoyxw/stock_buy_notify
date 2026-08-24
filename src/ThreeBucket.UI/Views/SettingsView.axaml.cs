@@ -19,6 +19,7 @@ public partial class SettingsView : UserControl, IRefreshable
     private readonly TextBox _apiUrl = new();
     private readonly TextBox _apiKey = new() { PasswordChar = '*' };
     private readonly TextBox _model = new();
+    private readonly TextBox _thsKey = new() { PasswordChar = '*' };
     private readonly CheckBox _autoRefresh = new();
     private readonly NumericUpDown _refreshInterval = new() { Minimum = 10, Maximum = 600, Increment = 5, FormatString = "F0" };
     private readonly CheckBox _schedEnabled = new();
@@ -67,6 +68,19 @@ public partial class SettingsView : UserControl, IRefreshable
             Row("API URL:", _apiUrl),
             Row("API Key:", _apiKey),
             Row("模型:", _model),
+        }));
+
+        _thsKey.Watermark = "在 fuyao.aicubes.cn 注册获取（留空=走腾讯/新浪/东财/中证免费源）";
+        var thsHint = new TextBlock
+        {
+            Text = "同花顺（扶摇）金融数据 API 作为行情快照/历史日K/指数成分股/个股分红的主数据源，"
+                 + "失败自动降级免费源。中证红利股息率始终走中证官网官方口径。保存后需重启客户端生效。",
+            TextWrapping = TextWrapping.Wrap, Foreground = Brushes.Gray, FontSize = 11, Margin = new Thickness(0, 6, 0, 0),
+        };
+        Form.Children.Add(Group("数据源（同花顺扶摇，可选）", new Control[]
+        {
+            Row("API Key:", _thsKey),
+            thsHint,
         }));
 
         _autoRefresh.Content = "切换到候选池/报告页时自动刷新数据";
@@ -188,6 +202,7 @@ public partial class SettingsView : UserControl, IRefreshable
         _apiUrl.Text = c.LlmApiUrl;
         _apiKey.Text = c.LlmApiKey;
         _model.Text = c.LlmModel;
+        _thsKey.Text = c.ThsApiKey;
         _autoRefresh.IsChecked = c.AutoRefresh;
         _refreshInterval.Value = c.RefreshInterval;
         _schedEnabled.IsChecked = c.SchedulerEnabled;
@@ -215,6 +230,7 @@ public partial class SettingsView : UserControl, IRefreshable
         c.LlmApiUrl = _apiUrl.Text?.Trim() ?? "";
         c.LlmApiKey = _apiKey.Text?.Trim() ?? "";
         c.LlmModel = _model.Text?.Trim() ?? "gpt-4o";
+        c.ThsApiKey = _thsKey.Text?.Trim() ?? "";
         c.AutoRefresh = _autoRefresh.IsChecked == true;
         c.RefreshInterval = (int)_refreshInterval.Value;
         c.SchedulerEnabled = _schedEnabled.IsChecked == true;
