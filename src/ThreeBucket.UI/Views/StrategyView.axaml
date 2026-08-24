@@ -1,0 +1,29 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:data="using:Avalonia.Controls"
+             x:Class="ThreeBucket.UI.Views.StrategyView"
+             x:CompileBindings="False">
+  <DockPanel>
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="6">
+      <TextBlock Text="🎯 策略管理" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+      <Button x:Name="AddBtn" Content="➕ 新增策略" Background="#27ae60" Foreground="White" />
+      <Button x:Name="EditBtn" Content="✏️ 编辑" />
+      <Button x:Name="ToggleBtn" Content="▶ 启/停" />
+      <Button x:Name="DelBtn" Content="🗑️ 删除" Background="#e74c3c" Foreground="White" />
+    </StackPanel>
+    <data:DataGrid x:Name="Grid" Margin="6" AutoGenerateColumns="False"
+                   IsReadOnly="True" GridLinesVisibility="All" SelectionMode="Single">
+      <data:DataGrid.Columns>
+        <data:DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="60" />
+        <data:DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="140" />
+        <data:DataGridTextColumn Header="类型" Binding="{Binding Type}" Width="70" />
+        <data:DataGridTextColumn Header="指标" Binding="{Binding Indicator}" Width="110" />
+        <data:DataGridTextColumn Header="条件" Binding="{Binding Operator}" Width="50" />
+        <data:DataGridTextColumn Header="阈值" Binding="{Binding Threshold}" Width="70" />
+        <data:DataGridTextColumn Header="优先级" Binding="{Binding Priority}" Width="60" />
+        <data:DataGridTextColumn Header="动作" Binding="{Binding Action}" Width="*" />
+        <data:DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled}" Width="50" />
+      </data:DataGrid.Columns>
+    </data:DataGrid>
+  </DockPanel>
+</UserControl>

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ThreeBucket.Core</RootNamespace>
+    <AssemblyName>ThreeBucket.Core</AssemblyName>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- GBK/GB2312 等中文编码在 .NET Core 需显式引入 CodePages 提供程序 -->
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+    <!-- CSV 读写（候选池/交易流水/监控/策略，含中文引号转义） -->
+    <PackageReference Include="CsvHelper" Version="33.0.1" />
+    <!-- 解析中证指数官网成分股/股息率 xls（旧 BIFF 格式，ExcelDataReader 原生支持） -->
+    <PackageReference Include="ExcelDataReader" Version="3.7.0" />
+    <PackageReference Include="ExcelDataReader.DataSet" Version="3.7.0" />
+  </ItemGroup>
+
+</Project>

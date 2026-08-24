@@ -1,0 +1,48 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="ThreeBucket.UI.Views.LlmBridgeView"
+             x:CompileBindings="False">
+  <DockPanel>
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="6">
+      <TextBlock Text="🤖 LLM 桥接" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+      <TextBlock Text="Skill:" VerticalAlignment="Center" />
+      <ComboBox x:Name="SkillCombo" Width="240" />
+      <Button x:Name="GenBtn" Content="⚡ 生成输入（运行脚本）" Background="#e67e22" Foreground="White" />
+    </StackPanel>
+
+    <Grid DockPanel.Dock="Bottom">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+
+      <!-- 左：skill_input -->
+      <DockPanel Grid.Column="0" Margin="6">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="0,0,0,4">
+          <TextBlock Text="📥 LLM 输入 (skill_input)" FontWeight="Bold" VerticalAlignment="Center" />
+          <TextBlock x:Name="InputInfo" Text="" Foreground="#999" FontSize="11" VerticalAlignment="Center" />
+          <Button x:Name="CopyBtn" Content="📋 复制" />
+          <Button x:Name="ReloadBtn" Content="🔄 重载" />
+        </StackPanel>
+        <TextBox x:Name="InputText" IsReadOnly="True" AcceptsReturn="True"
+                 FontFamily="Consolas, Menlo, monospace" FontSize="12" Background="#f7f7f7" />
+      </DockPanel>
+
+      <!-- 右：skill_output -->
+      <DockPanel Grid.Column="1" Margin="6">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="0,0,0,4">
+          <TextBlock Text="📤 LLM 输出 (skill_output)" FontWeight="Bold" VerticalAlignment="Center" />
+          <TextBlock x:Name="OutputInfo" Text="" Foreground="#999" FontSize="11" VerticalAlignment="Center" />
+          <Button x:Name="ImportBtn" Content="📂 导入" />
+          <Button x:Name="SaveBtn" Content="💾 保存" Background="#27ae60" Foreground="White" />
+        </StackPanel>
+        <TextBox x:Name="OutputText" AcceptsReturn="True" Watermark="将 LLM（Qoder）的分析结果粘贴到这里，然后点击「保存」。或点击「导入」加载外部 agent 写入的 skill_output 文件。"
+                 FontFamily="Consolas, Menlo, monospace" FontSize="12" />
+      </DockPanel>
+    </Grid>
+
+    <TextBlock DockPanel.Dock="Bottom" Margin="6"
+               Text="💡 使用方式：&#10;  1. 点击「生成输入」运行脚本生成 skill_input&#10;  2. 点击「复制」→ 粘贴到 Qoder 对话框 → 获取 LLM 分析&#10;  3. 将 LLM 回复粘贴到右侧「LLM 输出」→ 点击「保存」&#10;  4. 外部 agent 可直接写入 skill_output 文件，点击「重载」查看"
+               Background="#e8f4fd" Padding="8" TextWrapping="Wrap" FontSize="12" Foreground="#555" />
+  </DockPanel>
+</UserControl>

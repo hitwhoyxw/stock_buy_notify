@@ -31,3 +31,21 @@ dist/
 # IDE
 .vscode/
 .idea/
+
+# .NET (Avalonia 跨平台重构分支)
+bin/
+obj/
+*.user
+.vs/
+
+# 跨平台打包产物（desktop/<平台>/dist/ 已被上面 dist/ 规则覆盖）
+src/publish/
+*.zip
+
+# 调试临时产物：UI 回归截图/脚本/验证备份、修复前数据快照
+.tmp/
+data/.bak_codefix/
+
+
+# 应用本地配置（含 Supabase/LLM/SMTP 密钥，禁止入库）
+app_config.json

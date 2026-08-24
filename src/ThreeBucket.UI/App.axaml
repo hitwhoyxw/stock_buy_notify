@@ -1,0 +1,9 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="ThreeBucket.UI.App">
+  <Application.Styles>
+    <FluentTheme />
+    <!-- DataGrid 不在 FluentTheme 内，必须显式引入控件主题，否则整个表格（含列头）不渲染 -->
+    <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
+  </Application.Styles>
+</Application>

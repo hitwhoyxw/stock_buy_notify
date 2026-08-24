@@ -1,0 +1,15 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:Avalonia.Controls"
+             x:Class="ThreeBucket.UI.Views.MainView"
+             x:CompileBindings="False">
+  <DockPanel>
+    <Border DockPanel.Dock="Bottom" Background="#2c3e50" Padding="8,5">
+      <StackPanel Orientation="Horizontal" Spacing="16">
+        <TextBlock x:Name="StatusText" Foreground="White" FontSize="12"
+                   Text="就绪" VerticalAlignment="Center" />
+      </StackPanel>
+    </Border>
+    <TabControl x:Name="Tabs" Margin="4" />
+  </DockPanel>
+</UserControl>

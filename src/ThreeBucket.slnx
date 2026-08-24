@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="ThreeBucket.Core/ThreeBucket.Core.csproj" />
+  <Project Path="ThreeBucket.Cli/ThreeBucket.Cli.csproj" />
+  <Project Path="ThreeBucket.Demo/ThreeBucket.Demo.csproj" />
+  <Project Path="ThreeBucket.UI/ThreeBucket.UI.csproj" />
+  <!-- ThreeBucket.Mobile 不入解决方案：需 android/ios workload 与对应 SDK，
+       无 SDK 的机器 dotnet build slnx 会失败；移动端单独用 desktop/build.bat 菜单构建 -->
+</Solution>

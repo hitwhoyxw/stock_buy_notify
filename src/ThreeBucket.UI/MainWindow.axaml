@@ -1,0 +1,6 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="ThreeBucket.UI.MainWindow"
+        Title="三桶策略系统 — 桌面端 (Avalonia 跨平台)"
+        Width="1280" Height="860" MinWidth="960" MinHeight="640">
+</Window>

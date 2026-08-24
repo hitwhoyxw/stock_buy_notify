@@ -1,0 +1,48 @@
+name: Supabase keepalive
+
+# 保活：Supabase 免费项目约 7 天无 API 活动会被暂停（pause），桌面客户端长期不打开时，
+# 由这里每天发一次只读请求维持项目活跃。请求与 C# CloudSyncService.TestAsync 同款
+# （GET /rest/v1/three_bucket_sync，只读不写，零副作用）。
+on:
+  schedule:
+    - cron: "0 10 * * *"   # 北京时间每天 18:00（UTC 10:00）
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping Supabase REST API
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUPABASE_URL:-}" || -z "${SUPABASE_KEY:-}" ]]; then
+            echo "::error::缺少 secrets：请在仓库 Settings → Secrets and variables → Actions 配置 SUPABASE_URL（https://xxxx.supabase.co）与 SUPABASE_KEY（anon key，与桌面端设置页「云同步」里填的一致）"
+            exit 1
+          fi
+
+          echo "目标: ${SUPABASE_URL}/rest/v1/three_bucket_sync"
+          http_code=$(curl -sS -o /tmp/resp.json -w '%{http_code}' \
+            -H "apikey: ${SUPABASE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_KEY}" \
+            "${SUPABASE_URL}/rest/v1/three_bucket_sync?select=kind,updated_at,device&order=updated_at.desc")
+
+          echo "HTTP ${http_code}"
+          if [[ "$http_code" == "200" ]]; then
+            echo "--- 云端同步行（kind / 最后更新 / 上传设备）---"
+            jq -r '(["kind","updated_at","device"] | @tsv), (.[] | [.kind, .updated_at, .device] | @tsv)' /tmp/resp.json | column -t || cat /tmp/resp.json
+            count=$(jq 'length' /tmp/resp.json)
+            echo "保活成功 ✓（云端 ${count} 类数据）"
+          elif [[ "$http_code" == "401" || "$http_code" == "403" ]]; then
+            echo "::error::API Key 无效或权限不足（HTTP ${http_code}），检查 SUPABASE_KEY 是否为有效 anon key"
+            cat /tmp/resp.json; exit 1
+          else
+            echo "::error::请求失败（HTTP ${http_code}）。若项目已被 Supabase 暂停（paused），请到 Supabase 控制台 Restore 后重试"
+            cat /tmp/resp.json; exit 1
+          fi

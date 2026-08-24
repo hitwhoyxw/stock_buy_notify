@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 行情拉取（腾讯/新浪 HTTP 接口）与 Supabase 云同步需要网络权限 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:label="三桶策略系统" android:allowBackup="true"></application>
+</manifest>

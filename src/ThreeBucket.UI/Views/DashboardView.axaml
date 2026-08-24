@@ -1,0 +1,54 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="ThreeBucket.UI.Views.DashboardView"
+             x:CompileBindings="False">
+  <UserControl.Styles>
+    <!-- 终端风格日志框：Fluent 主题 hover/focus 会把模板内 PART_BorderElement
+         背景刷成浅色，本地 Background 属性压不住（改的是模板元素），浅灰字白底看不清。
+         需按伪类定点覆盖回深色。 -->
+    <Style Selector="TextBox#Log /template/ Border#PART_BorderElement">
+      <Setter Property="Background" Value="#1e1e1e" />
+      <Setter Property="BorderBrush" Value="#1e1e1e" />
+    </Style>
+    <Style Selector="TextBox#Log:pointerover /template/ Border#PART_BorderElement">
+      <Setter Property="Background" Value="#1e1e1e" />
+      <Setter Property="BorderBrush" Value="#1e1e1e" />
+    </Style>
+    <Style Selector="TextBox#Log:focus /template/ Border#PART_BorderElement">
+      <Setter Property="Background" Value="#1e1e1e" />
+      <Setter Property="BorderBrush" Value="#1e1e1e" />
+    </Style>
+    <Style Selector="TextBox#Log">
+      <Setter Property="CaretBrush" Value="#d4d4d4" />
+      <Setter Property="SelectionBrush" Value="#264f78" />
+    </Style>
+  </UserControl.Styles>
+  <DockPanel>
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="10" Margin="6">
+      <TextBlock Text="📊 任务面板" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+      <Button x:Name="DailyBtn" Content="▶ 风控+台账 (T1→T8)" Background="#27ae60" Foreground="White" />
+      <Button x:Name="T6Btn" Content="▶ 候选池 ABC" Background="#8e44ad" Foreground="White" />
+    </StackPanel>
+
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="*" />
+        <RowDefinition Height="220" />
+      </Grid.RowDefinitions>
+
+      <ScrollViewer Grid.Row="0" Margin="6">
+        <WrapPanel x:Name="Cards" Orientation="Horizontal" />
+      </ScrollViewer>
+
+      <DockPanel Grid.Row="1" Margin="6">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8">
+          <TextBlock Text="运行日志（实时输出）" FontWeight="Bold" VerticalAlignment="Center" />
+          <Button x:Name="ClearLogBtn" Content="清除" />
+        </StackPanel>
+        <TextBox x:Name="Log" IsReadOnly="True" AcceptsReturn="True"
+                 FontFamily="Consolas, Menlo, monospace" FontSize="12"
+                 Background="#1e1e1e" Foreground="#d4d4d4" />
+      </DockPanel>
+    </Grid>
+  </DockPanel>
+</UserControl>
