@@ -98,7 +98,7 @@ var tencent = new TencentSnapshot();
 
 IBuiltinTask[] tasks =
 {
-    new DailyRiskTask(store, quoteSvc, klines, calendar, signals),
+    new DailyRiskTask(store, quoteSvc, klines, calendar, signals, csi, em),
     new WeeklyDividendTask(dataDir, store, klines, csi, em, signals),
     new MonthlyRebalanceTask(dataDir, store, signals),
     new EarningsScanTask(dataDir, em, signals),

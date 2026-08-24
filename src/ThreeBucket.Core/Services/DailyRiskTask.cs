@@ -41,15 +41,19 @@ public class DailyRiskTask : IBuiltinTask
     private readonly KlineService _klines;
     private readonly TradingCalendar _calendar;
     private readonly SignalLogStore _signals;
+    private readonly CsIndexClient _csi;
+    private readonly EastMoneyClient _em;
 
     public DailyRiskTask(DataStore store, QuoteService quotes, KlineService klines,
-        TradingCalendar calendar, SignalLogStore signals)
+        TradingCalendar calendar, SignalLogStore signals, CsIndexClient csi, EastMoneyClient em)
     {
         _store = store;
         _quotes = quotes;
         _klines = klines;
         _calendar = calendar;
         _signals = signals;
+        _csi = csi;
+        _em = em;
     }
 
     public async Task<TaskRunResult> RunAsync(Action<string>? log = null, CancellationToken ct = default)
@@ -269,7 +273,7 @@ public class DailyRiskTask : IBuiltinTask
         return alerts;
     }
 
-    // ── 市场概况（日K可算部分；akshare 独有指标见桌面 Python 版） ──
+    // ── 市场概况（公开 HTTP 源：指数日K + 中证 indicator + 东财国债收益率，同 T2 口径） ──
 
     private async Task<string> MarketOverviewAsync()
     {
@@ -304,8 +308,67 @@ public class DailyRiskTask : IBuiltinTask
         else
             sb.AppendLine("| 红利60日相对超额 | N/A | 数据获取失败 |");
 
-        sb.AppendLine("| 成交额分位 / 10年国债 / 股息率分位 | - | 需 akshare 专有数据，见桌面 Python 版 T1 报告 |");
+        // 中证红利股息率 + 5 年分位（中证官网 indicator，同 T2 数据源）
+        double? divYield = null;
+        try
+        {
+            var dy = await _csi.GetDividendYieldPercentileAsync("000922");
+            if (dy is { } d)
+            {
+                divYield = d.Current;
+                sb.AppendLine($"| 中证红利股息率 | {d.Current:F2}% | 5年分位 {d.Percentile:F0}%（中证官网样本） |");
+            }
+        }
+        catch { /* 拉取失败走下方兜底行 */ }
+        if (divYield is null)
+            sb.AppendLine("| 中证红利股息率 / 5年分位 | N/A | 中证官网拉取失败 |");
+
+        // 10Y 国债（东财 RPTA_WEB_TREASURYYIELD）与 ERP（同 T2 口径）
+        double? y10 = null;
+        try { y10 = await _em.GetCn10yYieldAsync(); } catch { }
+        if (y10 is { } y)
+        {
+            var erp = divYield is { } dcur ? dcur - y : (double?)null;
+            sb.AppendLine(erp is { } e
+                ? $"| 10Y国债 / ERP(股息-10Y) | {y:F2}% / {e:+0.00;-0.00}% | {(e >= 3 ? "ERP≥3 红利性价比区间" : "ERP<3")} |"
+                : $"| 10Y国债 | {y:F2}% | 东财国债收益率（股息率缺失，ERP 未算） |");
+        }
+        else
+            sb.AppendLine("| 10Y国债 / ERP | N/A | 东财拉取失败 |");
+
+        // 全 A 20 日均量分位（000001+399001 成交量之和，同 T2 口径）
+        double? turnoverPct = null;
+        try { turnoverPct = await GetMarketTurnoverPercentileAsync(20, 250); } catch { }
+        sb.AppendLine(turnoverPct is { } tp
+            ? $"| 全A 20日均量分位 | {tp:F0}% | 沪深成交量之和口径（缩量<30 / 放量>70） |"
+            : "| 全A 20日均量分位 | N/A | 指数日K获取失败 |");
+
         return sb.ToString();
+    }
+
+    /// <summary>全 A 成交量分位：000001+399001 日成交量之和的 window 日均量在 lookback 窗口分位（%）。与 T2 同口径。</summary>
+    private async Task<double?> GetMarketTurnoverPercentileAsync(int windowDays, int lookbackDays)
+    {
+        var sh = await _klines.GetIndexDailyAsync("000001", lookbackDays + windowDays);
+        var sz = await _klines.GetIndexDailyAsync("399001", lookbackDays + windowDays);
+        if (sh is null || sz is null) return null;
+
+        var szByDate = sz.GroupBy(b => b.Date).ToDictionary(g => g.Key, g => g.Sum(b => b.Volume));
+        var daily = sh.Where(b => szByDate.ContainsKey(b.Date))
+            .Select(b => (b.Date, Vol: b.Volume + szByDate[b.Date]))
+            .OrderBy(x => x.Date).ToList();
+        if (daily.Count < windowDays + 30) return null;
+
+        var rolls = new List<double>();
+        for (var i = windowDays - 1; i < daily.Count; i++)
+        {
+            double s = 0;
+            for (var j = i - windowDays + 1; j <= i; j++) s += daily[j].Vol;
+            rolls.Add(s / windowDays);
+        }
+        var current = rolls[^1];
+        var hist = rolls.Skip(Math.Max(0, rolls.Count - lookbackDays)).ToList();
+        return 100.0 * hist.Count(h => h <= current) / hist.Count;
     }
 
     // ── 台账 & 报告 ────────────────────────────────────────────────

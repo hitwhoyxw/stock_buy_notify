@@ -82,7 +82,7 @@ var tencent = new TencentSnapshot();
 
 var tasks = new Dictionary<string, IBuiltinTask>(StringComparer.OrdinalIgnoreCase)
 {
-    ["T1"] = new DailyRiskTask(store, quoteSvc, klines, calendar, signals),
+    ["T1"] = new DailyRiskTask(store, quoteSvc, klines, calendar, signals, csi, em),
     ["T2"] = new WeeklyDividendTask(dataDir, store, klines, csi, em, signals),
     ["T3"] = new MonthlyRebalanceTask(dataDir, store, signals),
     ["T4"] = new EarningsScanTask(dataDir, em, signals),

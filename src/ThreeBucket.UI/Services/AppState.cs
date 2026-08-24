@@ -44,7 +44,7 @@ public class AppState
         Tencent = new TencentSnapshot();
         BuiltinTasks = new Dictionary<string, IBuiltinTask>(StringComparer.OrdinalIgnoreCase)
         {
-            ["T1"] = new DailyRiskTask(Store, Quotes, Klines, Calendar, Signals),
+            ["T1"] = new DailyRiskTask(Store, Quotes, Klines, Calendar, Signals, CsIndex, EastMoney),
             ["T2"] = new WeeklyDividendTask(DataDir, Store, Klines, CsIndex, EastMoney, Signals),
             ["T3"] = new MonthlyRebalanceTask(DataDir, Store, Signals),
             ["T4"] = new EarningsScanTask(DataDir, EastMoney, Signals),
