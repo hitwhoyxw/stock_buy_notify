@@ -70,14 +70,20 @@ Directory.CreateDirectory(dataDir);
 Console.WriteLine($"数据目录: {Path.GetFullPath(dataDir)}");
 
 // ── 组装服务与任务（与 UI AppState / Demo 相同的依赖图）──
+// 同花顺（扶摇）数据源：环境变量 THS_API_KEY（CI secrets）→ app_config.json 的 ThsApiKey（本地）；
+// 未配置时 IsConfigured=false，全部自动走免费源（腾讯/新浪/东财/中证官网），行为与接入前一致
 var store = new DataStore(dataDir);
-var quoteSvc = new QuoteService();
-var klines = new KlineService();
+var cacheDir = Path.Combine(dataDir, "cache");
+var ths = new ThsClient(cacheDir);
+Console.WriteLine(ths.IsConfigured
+    ? "同花顺数据源: 已启用（行情快照/日K/成分股/分红主源，失败自动降级免费源）"
+    : "同花顺数据源: 未启用（未配置 THS_API_KEY 或 app_config.json 的 ThsApiKey，走免费源）");
+var quoteSvc = new QuoteService(ths);
+var klines = new KlineService(ths);
 var calendar = new TradingCalendar(dataDir, klines);
 var signals = new SignalLogStore(dataDir);
-var cacheDir = Path.Combine(dataDir, "cache");
-var em = new EastMoneyClient(cacheDir);
-var csi = new CsIndexClient(cacheDir);
+var em = new EastMoneyClient(cacheDir, ths);
+var csi = new CsIndexClient(cacheDir, ths);
 var tencent = new TencentSnapshot();
 
 var tasks = new Dictionary<string, IBuiltinTask>(StringComparer.OrdinalIgnoreCase)

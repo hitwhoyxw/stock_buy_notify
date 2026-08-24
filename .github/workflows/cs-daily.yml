@@ -39,6 +39,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          # 同花顺（扶摇）数据源主源 key（https://fuyao.aicubes.cn）；secret 未配置时自动走免费源
+          THS_API_KEY: ${{ secrets.THS_API_KEY }}
         run: |
           TASKS="T1,T8"
           case "${{ github.event.inputs.task }}" in

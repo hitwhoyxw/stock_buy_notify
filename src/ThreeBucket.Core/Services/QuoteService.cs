@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using ThreeBucket.Core.DataSources;
 using ThreeBucket.Core.DataSources.Sina;
 using ThreeBucket.Core.DataSources.Tencent;
+using ThreeBucket.Core.DataSources.Ths;
 using ThreeBucket.Core.Models;
 
 namespace ThreeBucket.Core.Services;
@@ -22,14 +23,16 @@ public class QuoteService
 {
     private readonly IMarketDataSource _source;
 
-    public QuoteService()
+    /// <param name="ths">同花顺（扶摇）客户端；配置了 API Key 时作为主源，其后降级腾讯 → 新浪。</param>
+    public QuoteService(ThsClient? ths = null)
     {
-        // 主源腾讯，回退新浪（各自独立解析）
-        _source = new AggregatedMarketDataSource(new IMarketDataSource[]
-        {
-            new TencentMarketDataSource(),
-            new SinaMarketDataSource(),
-        });
+        ths ??= new ThsClient();
+        var chain = new List<IMarketDataSource>();
+        if (ths.IsConfigured)
+            chain.Add(new ThsMarketDataSource(ths)); // 同花顺无名称字段，UI 名称由本地 CSV 兜底
+        chain.Add(new TencentMarketDataSource());
+        chain.Add(new SinaMarketDataSource());
+        _source = new AggregatedMarketDataSource(chain);
     }
 
     /// <summary>把 6 位代码转成接口符号（sh/sz/bj 前缀）。</summary>

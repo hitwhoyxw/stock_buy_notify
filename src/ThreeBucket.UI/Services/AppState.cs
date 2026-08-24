@@ -30,17 +30,19 @@ public class AppState
         ProjectRoot = DetectProjectRoot();
         DataDir = Path.Combine(ProjectRoot, "data");
         Store = new DataStore(DataDir);
-        Quotes = new QuoteService();
         Config = Store.LoadConfig();
         if (string.IsNullOrEmpty(Config.DataDir)) Config.DataDir = DataDir;
         if (string.IsNullOrEmpty(Config.ProjectRoot)) Config.ProjectRoot = ProjectRoot;
 
-        Klines = new KlineService();
+        // 同花顺（扶摇）数据源：环境变量 THS_API_KEY → app_config.json 的 ThsApiKey（设置页保存后需重启生效）
+        var cacheDir = Path.Combine(DataDir, "cache");
+        var ths = new ThsClient(cacheDir);
+        Quotes = new QuoteService(ths);
+        Klines = new KlineService(ths);
         Calendar = new TradingCalendar(DataDir, Klines);
         Signals = new SignalLogStore(DataDir);
-        var cacheDir = Path.Combine(DataDir, "cache");
-        EastMoney = new EastMoneyClient(cacheDir);
-        CsIndex = new CsIndexClient(cacheDir);
+        EastMoney = new EastMoneyClient(cacheDir, ths);
+        CsIndex = new CsIndexClient(cacheDir, ths);
         Tencent = new TencentSnapshot();
         BuiltinTasks = new Dictionary<string, IBuiltinTask>(StringComparer.OrdinalIgnoreCase)
         {

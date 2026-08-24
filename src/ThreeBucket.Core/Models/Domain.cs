@@ -106,6 +106,7 @@ public class AppConfig
     public string LlmApiUrl { get; set; } = "";
     public string LlmApiKey { get; set; } = "";
     public string LlmModel { get; set; } = "gpt-4o";
+    public string ThsApiKey { get; set; } = "";    // 同花顺（扶摇）数据源：https://fuyao.aicubes.cn（CI 用环境变量 THS_API_KEY）
     public string SupabaseUrl { get; set; } = "";   // 云同步：https://xxxx.supabase.co
     public string SupabaseKey { get; set; } = "";   // 云同步：anon public key
     public bool AutoSync { get; set; } = true;       // 自动云同步：启动/定时自动拉取云端较新数据，本地变化后自动上传

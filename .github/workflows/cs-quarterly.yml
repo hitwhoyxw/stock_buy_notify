@@ -33,6 +33,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          # 同花顺（扶摇）数据源主源 key（https://fuyao.aicubes.cn）；secret 未配置时自动走免费源
+          THS_API_KEY: ${{ secrets.THS_API_KEY }}
         # 拉云端最新用户数据（T5 归因需要最新交易流水）→ 跑任务 → 推产物到云端；未配 secrets 时自动跳过
         run: dotnet run --project src/ThreeBucket.Cli -c Release -- --sync pull --task T5 --sync push
 
