@@ -3,21 +3,24 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using ThreeBucket.Core.Models;
+using ThreeBucket.Core.Services;
 
 namespace ThreeBucket.UI.Dialogs;
 
 /// <summary>
 /// 策略编辑对话框：简单模式（指标+操作符+阈值）+ 复合条件 JSON 文本框。
-/// 条件树可视化构建器后续迭代，当前先支持 JSON 粘贴（与 Python 端条件树 Schema 兼容）。
+/// 保存前经 StrategyEngine.ValidateStrategy 结构校验；条件树 Schema 与 Python 端一致。
 /// </summary>
 public class StrategyDialog : Window
 {
     private readonly TextBlock _error = new() { Foreground = Brushes.Red, FontSize = 11, TextWrapping = TextWrapping.Wrap };
+
+    /// <summary>简单模式指标清单 = StrategyEngine.LegacyMap 支持的旧扁平 key（复合能力走条件树 JSON）。</summary>
     private static readonly string[] Indicators =
     {
-        "price_vs_ma60", "drawdown_from_high_180d", "gain_from_low_180d",
-        "cost_basis_gain", "volume_ratio_20d", "ma5_vs_ma10",
-        "macd_dif", "rsi_14", "turnover_rate", "close_vs_ma20",
+        "price", "day_change_pct", "pe_ttm", "cost_basis_gain",
+        "price_vs_ma20", "price_vs_ma60", "drawdown_from_high_180d",
+        "gain_from_low_180d", "volume_ratio_20d",
     };
 
     private readonly TextBox _name = new() { Watermark = "如：跌破MA60减仓 / MACD金叉放量" };
@@ -108,32 +111,36 @@ public class StrategyDialog : Window
         { _error.Text = "请填写策略名称"; return false; }
         if (string.IsNullOrWhiteSpace(_action.Text))
         { _error.Text = "请填写触发后的建议动作"; return false; }
-        if (!string.IsNullOrWhiteSpace(_condition.Text))
-        {
-            try { System.Text.Json.JsonDocument.Parse(_condition.Text); }
-            catch (Exception ex) { _error.Text = $"复合条件不是合法 JSON：{ex.Message}"; return false; }
-        }
+
+        // 引擎结构校验：条件树查指标名/参数/操作符/value 类型；简单模式查旧指标 key
+        var err = StrategyEngine.ValidateStrategy(GetRecord(dryRun: true) ?? new Strategy());
+        if (err != null)
+        { _error.Text = $"条件配置错误：{err}"; return false; }
+
         _error.Text = "";
         return true;
     }
 
-    public Strategy? GetRecord()
+    /// <summary>收集表单为 Strategy（不触发二次校验；Validate 调用时传 dryRun 避免递归）。</summary>
+    private Strategy? GetRecord(bool dryRun)
     {
-        if (!Validate()) return null;
+        if (!dryRun && !Validate()) return null;
         var useComposite = !string.IsNullOrWhiteSpace(_condition.Text);
         return new Strategy
         {
-            Name = _name.Text!.Trim(),
+            Name = _name.Text?.Trim() ?? "",
             Type = (_type.SelectedItem as string) ?? "sell",
             Indicator = useComposite ? "" : (_indicator.SelectedItem as string ?? ""),
             Operator = useComposite ? "" : (_op.SelectedItem as string ?? ""),
             Threshold = useComposite ? "" : (_threshold.Value ?? 0).ToString("F2"),
-            Action = _action.Text!.Trim(),
+            Action = _action.Text?.Trim() ?? "",
             Priority = (_prio.SelectedItem as string) ?? "P1",
             Condition = _condition.Text?.Trim() ?? "",
             Enabled = true,
         };
     }
+
+    public Strategy? GetRecord() => GetRecord(dryRun: false);
 
     public Task<bool> ShowAsync(Window owner) => ShowDialog<bool>(owner);
 }

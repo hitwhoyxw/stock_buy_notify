@@ -10,6 +10,11 @@ using ThreeBucket.Core.DataSources.Tencent;
 using ThreeBucket.Core.DataSources.Ths;
 using ThreeBucket.Core.Models;
 using ThreeBucket.Core.Services;
+using ThreeBucket.Demo;
+
+// ── 第零部分：策略引擎离线回归（--engine 只跑本节后退出，无网络依赖）──
+var engineOk = StrategyEngineRegression.Run();
+if (args.Contains("--engine")) return engineOk ? 0 : 1;
 
 // ── 第一部分：真实网络连通性验证（腾讯 / 新浪 / 同花顺）──
 Console.WriteLine("=== 三桶 · 数据源真实联网验证 ===\n");
@@ -142,3 +147,4 @@ Console.WriteLine("\n=== T3 月度再平衡 · 端到端实跑 ===");
 var t3 = tasks.First(t => t.Key == "T3");
 var t3Result = await t3.RunAsync(msg => Console.WriteLine(msg));
 Console.WriteLine($"T3 结果: Ok={t3Result.Ok}, 报告={t3Result.ReportPath}, 摘要={t3Result.Summary}");
+return 0;

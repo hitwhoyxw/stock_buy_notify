@@ -7,6 +7,9 @@
     <Nullable>enable</Nullable>
     <RootNamespace>ThreeBucket.UI</RootNamespace>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <!-- 应用图标（三根红色K线 A/B/C 逐个上涨）：exe 资源 + Avalonia 默认窗口图标（任务栏/标题栏）。
+         重新生成：python .tmp/gen_app_icon.py -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

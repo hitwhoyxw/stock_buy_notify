@@ -69,6 +69,12 @@ public partial class LlmBridgeView : UserControl, IRefreshable
     private async Task GenInput()
     {
         if (_running) { _status("生成中，请等待…"); return; }
+        // 移动端（iOS/Android）无本地 Python 环境，Process.Start 也不受支持
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+        {
+            _status("移动端不支持运行本地脚本，请在桌面端生成后查看");
+            return;
+        }
         var s = Cur;
         var py = string.IsNullOrWhiteSpace(_app.Config.PythonExe) ? "python" : _app.Config.PythonExe;
         var script = Path.Combine(_app.ProjectRoot, s.Script);

@@ -361,14 +361,55 @@ public class DataStore
             Strat("S3","低点涨幅止盈","sell","gain_from_low_180d",">=","50","距半年低点涨幅超50%，建议分批止盈","P1"),
             Strat("S4","持仓浮盈减半","sell","cost_basis_gain",">=","40","持仓浮盈超40%，建议卖出半仓锁定利润","P1"),
             Strat("S5","放量异动关注","buy","volume_ratio_20d",">=","2","量比超2倍出现异动，关注买入机会","P2"),
+            // 短期上升趋势三件套（条件树 JSON，Schema 见 StrategyEngine）
+            Strat("S6","双均线金叉","buy","","","","MA5上穿MA10金叉且现价站上MA10，短期趋势转强，关注买入时机","P1",Cond(And(
+                Leaf("ma",Cross("up"),Ref("ma",("period",10)),("period",5)),
+                Leaf("price",">",Ref("ma",("period",10)))))),
+            Strat("S7","MACD金叉放量","buy","","","","MACD金叉（DIF上穿DEA）且量比≥1.5倍放量，资金进场信号，关注买入时机","P1",Cond(And(
+                Leaf("macd",Cross("up"),Ref("macd",("field","dea")),("field","dif")),
+                Leaf("volume_ratio",">=",1.5,("window",20))))),
+            Strat("S8","均线多头排列","buy","","","","MA5>MA10>MA20多头排列且量比≥1.5倍放量，短期上升趋势确立，持有或逢低介入","P1",Cond(And(
+                Leaf("ma",">",Ref("ma",("period",10)),("period",5)),
+                Leaf("ma",">",Ref("ma",("period",20)),("period",10)),
+                Leaf("price",">",Ref("ma",("period",5))),
+                Leaf("volume_ratio",">=",1.5,("window",20))))),
         };
         WriteCsv("strategies.csv", StrategyColumns.ToList(), defaults);
     }
 
-    private static Dictionary<string, string> Strat(string id, string name, string type, string ind, string op, string th, string act, string pri) => new()
+    // ── 种子策略的条件树 JSON 组装（与 data/strategies.csv 的 S6–S8 保持一致）──
+
+    private static string Cond(object node)
+        => System.Text.Json.JsonSerializer.Serialize(
+            node, new System.Text.Json.JsonSerializerOptions { WriteIndented = false });
+
+    private static Dictionary<string, object> And(params Dictionary<string, object>[] children)
+        => new() { ["logic"] = "and", ["children"] = children };
+
+    private static Dictionary<string, object> Ref(string indicator,
+        params (string Key, object Val)[] pars)
+    {
+        var node = new Dictionary<string, object> { ["indicator"] = indicator };
+        if (pars.Length > 0)
+            node["params"] = pars.ToDictionary(p => p.Key, p => p.Val);
+        return node;
+    }
+
+    private static Dictionary<string, object> Leaf(string indicator, string op, object value,
+        params (string Key, object Val)[] pars)
+    {
+        var node = Ref(indicator, pars);
+        node["operator"] = op;
+        node["value"] = value;
+        return node;
+    }
+
+    private static string Cross(string dir) => $"cross_{dir}";
+
+    private static Dictionary<string, string> Strat(string id, string name, string type, string ind, string op, string th, string act, string pri, string condition = "") => new()
     {
         ["id"]=id,["name"]=name,["type"]=type,["indicator"]=ind,["operator"]=op,
-        ["threshold"]=th,["condition"]="",["action"]=act,["priority"]=pri,["enabled"]="1",
+        ["threshold"]=th,["condition"]=condition,["action"]=act,["priority"]=pri,["enabled"]="1",
     };
 
     private static Strategy ToStrategy(Dictionary<string, string> r) => new()
