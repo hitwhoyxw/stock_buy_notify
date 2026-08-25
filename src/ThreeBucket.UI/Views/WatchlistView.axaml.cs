@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Threading;
 using ThreeBucket.Core.Data;
 using ThreeBucket.Core.Models;
+using ThreeBucket.Core.Services;
 using ThreeBucket.UI.Dialogs;
 using ThreeBucket.UI.Services;
 
@@ -16,6 +17,7 @@ public partial class WatchlistView : UserControl, IRefreshable
     private DateTime? _lastFetch;
     private readonly DispatcherTimer _autoTimer;
     private bool _fetching;
+    private readonly HashSet<string> _cfgErrors = new(); // 策略配置错误上报去重
 
     /// <summary>仅供 XAML 编译器/设计器使用；运行时请用带参构造。</summary>
     public WatchlistView() : this(new AppState(), _ => { }) { }
@@ -111,7 +113,7 @@ public partial class WatchlistView : UserControl, IRefreshable
             }
             // 直接重赋 ItemsSource 会因选中索引越界崩进程（详见 SetItemsSafe 注释）
             WatchGrid.SetItemsSafe(_rows);
-            EvaluateStrategies();
+            await EvaluateStrategiesAsync();
             LoadHistory();
             _status($"✅ 行情已更新（{map.Count} 只）");
         }
@@ -119,35 +121,72 @@ public partial class WatchlistView : UserControl, IRefreshable
     }
 
     /// <summary>
-    /// 策略评估（当前为简化版）：简单策略按「现价 vs 阈值」近似评估，
-    /// 完整指标体系（MA/回撤/量比等需 K 线）后续随监控引擎迁移接入。
+    /// 策略评估（StrategyEngine 条件树引擎）：
+    /// 条件树 JSON 与旧扁平三列均支持（MA/MACD/量比/金叉死叉等，需日K），
+    /// K 线按股票并发拉取（盘中强制刷新，捕捉当日金叉/放量）；
+    /// 持仓浮盈类指标取加权成本法聚合的平均成本；无持仓为 null（数据不足跳过）。
     /// </summary>
-    private void EvaluateStrategies()
+    private async Task EvaluateStrategiesAsync()
     {
-        var alerts = new List<AlertEntry>();
         var all = _app.Store.ListStrategies().Where(s => s.Enabled).ToList();
-        var now = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
-        foreach (var r in _rows)
+        if (all.Count == 0) return;
+
+        // 成本表：{code: 平均成本}（持仓浮盈类指标用）
+        var costs = _app.Store.LoadPositions()
+            .Where(p => p.AvgCost > 0)
+            .ToDictionary(p => DataStore.NormalizeCode(p.Code), p => p.AvgCost);
+
+        // 待评估行 → 并发拉日K（仅绑定了需要 K 线的策略才拉）
+        var pending = _rows
+            .Select(r => (Row: r, Ids: r.Strategies.Split(';', StringSplitOptions.RemoveEmptyEntries).ToList()))
+            .Where(x => x.Ids.Count > 0 && x.Ids.Any(id => all.Any(s => s.Id == id)))
+            .ToList();
+        if (pending.Count == 0) return;
+
+        var klineMap = new Dictionary<string, IReadOnlyList<DailyBar>?>();
+        var needKline = pending.Where(x => x.Ids.Any(id =>
         {
-            var ids = r.Strategies.Split(';', StringSplitOptions.RemoveEmptyEntries);
-            if (ids.Length == 0) continue;
+            var s = all.FirstOrDefault(v => v.Id == id);
+            return s is not null && (!string.IsNullOrWhiteSpace(s.Condition) || s.Indicator != "price");
+        })).Select(x => x.Row).ToList();
+        if (needKline.Count > 0)
+        {
+            var tasks = needKline.Select(async r =>
+            {
+                try { return (r.Code, await _app.Klines.GetStockDailyFreshAsync(r.Code)); }
+                catch { return (r.Code, (IReadOnlyList<DailyBar>?)null); }
+            });
+            foreach (var (code, bars) in await Task.WhenAll(tasks))
+                klineMap[code] = bars;
+        }
+
+        var alerts = new List<AlertEntry>();
+        var now = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
+        foreach (var (r, ids) in pending)
+        {
+            var code = DataStore.NormalizeCode(r.Code);
+            var ctx = new IndicatorContext(
+                r.Price > 0 ? r.Price : null, r.ChangePct,
+                klineMap.GetValueOrDefault(r.Code) ?? klineMap.GetValueOrDefault(code),
+                costs.GetValueOrDefault(code));
             foreach (var s in all.Where(s => ids.Contains(s.Id)))
             {
-                if (s.Indicator != "price" || !double.TryParse(s.Threshold, out var thr)) continue;
-                var hit = s.Operator switch
+                try
                 {
-                    "<" => r.Price > 0 && r.Price < thr,
-                    "<=" => r.Price > 0 && r.Price <= thr,
-                    ">" => r.Price > thr,
-                    ">=" => r.Price >= thr,
-                    _ => false,
-                };
-                if (hit)
-                    alerts.Add(new AlertEntry
-                    {
-                        Code = r.Code, Name = r.Name, StrategyId = s.Id,
-                        StrategyName = s.Name, Action = s.Action, Time = now,
-                    });
+                    if (StrategyEngine.EvaluateStrategy(s, ctx) is not true) continue;
+                }
+                catch (StrategyConfigError e)
+                {
+                    // 配置错误：状态栏上报一次（去重）并跳过，绝不静默当 false
+                    var msg = $"策略 {s.Id} 配置错误: {e.Message}";
+                    if (_cfgErrors.Add(msg)) _status($"⚠️ [监控] {msg}");
+                    continue;
+                }
+                alerts.Add(new AlertEntry
+                {
+                    Code = r.Code, Name = r.Name, StrategyId = s.Id,
+                    StrategyName = s.Name, Action = s.Action, Time = now,
+                });
             }
         }
         if (alerts.Count > 0)

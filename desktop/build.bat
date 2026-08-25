@@ -21,8 +21,8 @@ if defined MENUMODE (
     echo   [2] Linux      linux-x64 tar.gz（自包含）
     echo   [3] macOS      osx-arm64 + osx-x64 tar.gz
     echo   [4] 全部桌面平台（1+2+3）
-    echo   [5] Android    apk（需已装 android 工作负载）
-    echo   [6] iOS        编译验证（出 ipa 需 Mac，见 desktop\ios\build.sh）
+    echo   [5] Android    apk（需 Android SDK，脚本自动探测；缺 SDK 时可用 CI）
+    echo   [6] iOS        编译验证（ipa 走 CI "Build Mobile Release" 或 Mac 上 desktop\ios\build.sh）
     echo   [0] 退出
     echo ==============================================
     set /p CHOICE=请选择:
@@ -69,7 +69,9 @@ goto :eof
 :iosbuild
 echo.
 echo === iOS 编译验证 ===
-echo （Windows 只能编译验证；完整 ipa 打包/签名须在 macOS 上运行 desktop\ios\build.sh）
+echo （Windows 只能编译验证；完整 ipa 打包两种方式：）
+echo   1. CI：GitHub Actions → Build Mobile Release → Run workflow（推荐，无需 Mac）
+echo   2. Mac 上运行 desktop\ios\build.sh
 dotnet build "%~dp0..\..\src\ThreeBucket.Mobile\ThreeBucket.Mobile.csproj" -c Release -f net10.0-ios
 if errorlevel 1 ( echo iOS 编译失败 & exit /b 1 )
 echo iOS 编译通过 ✓

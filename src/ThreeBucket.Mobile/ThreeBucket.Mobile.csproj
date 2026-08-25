@@ -10,8 +10,17 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <ApplicationId>workbuddy.threebucket</ApplicationId>
     <ApplicationTitle>三桶策略系统</ApplicationTitle>
+    <!-- 应用版本（Android versionName / iOS CFBundleShortVersionString）；
+         CI 与打包脚本用 -p:ApplicationDisplayVersion / -p:ApplicationVersion 覆盖 -->
+    <ApplicationDisplayVersion>1.1</ApplicationDisplayVersion>
+    <ApplicationVersion>1</ApplicationVersion>
     <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
     <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">14.2</SupportedOSPlatformVersion>
+  </PropertyGroup>
+
+  <!-- Android：只打真机主流 ABI，APK 体积约减半；需跑模拟器时追加 x86_64 -->
+  <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    <AndroidRuntimeIdentifiers>arm64-v8a;armeabi-v7a</AndroidRuntimeIdentifiers>
   </PropertyGroup>
 
   <ItemGroup>
@@ -27,12 +36,33 @@
   </ItemGroup>
 
   <!-- 共享桌面 UI 全部源码与 axaml（链接而非复制，桌面项目保持零改动）。
-       排除桌面专用入口 Program.cs 与 bin/obj 生成代码；移动端入口在 Platforms/ 下。 -->
+       排除桌面专用入口 Program.cs 与 bin/obj 生成代码；移动端入口在 Platforms/ 下。
+       注意：axaml 必须用 AvaloniaXaml 而非 AvaloniaResource 引入——
+       Avalonia 源生成器（生成 InitializeComponent 与 x:Name 字段）只消费 AvaloniaXaml。 -->
   <ItemGroup>
     <Compile Include="..\ThreeBucket.UI\**\*.cs"
              Exclude="..\ThreeBucket.UI\Program.cs;..\ThreeBucket.UI\bin\**;..\ThreeBucket.UI\obj\**" />
-    <AvaloniaResource Include="..\ThreeBucket.UI\**\*.axaml"
+    <AvaloniaXaml Include="..\ThreeBucket.UI\**\*.axaml"
              Exclude="..\ThreeBucket.UI\bin\**;..\ThreeBucket.UI\obj\**" />
+  </ItemGroup>
+
+  <!-- Platforms 目录按目标平台筛选：非当前平台的入口源码不参与编译
+       （否则 iOS 编译会带入 MainActivity 的 Android API 引用，反之亦然） -->
+  <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    <Compile Remove="Platforms\iOS\**" />
+    <!-- Platforms/Android/Resources 不在默认 glob（仅项目根 Resources/**），需显式声明 -->
+    <AndroidResource Include="Platforms\Android\Resources\**\*" />
+    <!-- Android 目标自动注入 global using Android.App / Android.Widget，
+         与共享桌面源码的 Avalonia 控件类型二义；用 alias 消歧（alias 优先于 using namespace） -->
+    <Using Include="Avalonia.Application" Alias="Application" />
+    <Using Include="Avalonia.Controls.Button" Alias="Button" />
+    <Using Include="Avalonia.Controls.CheckBox" Alias="CheckBox" />
+    <Using Include="Avalonia.Controls.DatePicker" Alias="DatePicker" />
+    <Using Include="Avalonia.Controls.TimePicker" Alias="TimePicker" />
+    <Using Include="Avalonia.Layout.Orientation" Alias="Orientation" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">
+    <Compile Remove="Platforms\Android\**" />
   </ItemGroup>
 
 </Project>

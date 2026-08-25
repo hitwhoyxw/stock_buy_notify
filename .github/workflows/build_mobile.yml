@@ -1,0 +1,229 @@
+name: Build Mobile Release
+
+# 移动端打包（Android APK + iOS ipa）
+# 触发方式：
+#   1. 手动触发（Actions → Build Mobile Release → Run workflow），可指定版本号
+#   2. push tag v* 时自动触发（如 git tag v1.2.0 && git push origin v1.2.0）
+# 说明：
+#   - iOS ipa 依赖 Apple 工具链，只能在 macOS runner 上打包（本地 Windows 做不到）
+#   - macOS runner 按 10 倍计费，故不做每日定时，只在需要发版时手动/打 tag 触发
+#   - 产物附加到 Release；若当天桌面端已发同名 Release，则直接追加到该 Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（留空自动 vYYYY.MM.DD）"
+        required: false
+        default: ""
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      # 正式签名 keystore（base64）；未配置时走 debug 签名
+      KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Install android workload
+        run: dotnet workload install android
+
+      - name: Compute version
+        id: ver
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="v$(date +%Y.%m.%d)"
+            # 同名 tag 已存在（如当天桌面端已发版）则追加短 SHA
+            if git ls-remote --exit-code --tags origin "$VERSION" >/dev/null 2>&1; then
+              VERSION="$VERSION-${GITHUB_SHA:0:7}"
+            fi
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "display=${VERSION#v}" >> $GITHUB_OUTPUT
+          echo "::notice::版本: $VERSION"
+
+      # 默认 debug 签名（可直接 adb install / 手机直接安装）
+      - name: Build APK (debug 签名)
+        if: env.KS == ''
+        run: |
+          dotnet build src/ThreeBucket.Mobile/ThreeBucket.Mobile.csproj \
+            -c Release -f net10.0-android -t:SignAndroidPackage \
+            -p:ApplicationDisplayVersion="${{ steps.ver.outputs.display }}" \
+            -p:ApplicationVersion="${{ github.run_number }}"
+
+      # 正式签名（可选）：配置以下 secrets 后自动启用，产物可直接分发/上架
+      #   ANDROID_KEYSTORE_BASE64    keystore 文件的 base64（base64 -w0 release.keystore）
+      #   ANDROID_KEYSTORE_PASSWORD  keystore 密码
+      #   ANDROID_KEY_ALIAS          密钥别名
+      #   ANDROID_KEY_PASSWORD       密钥密码
+      - name: Build APK (正式签名)
+        if: env.KS != ''
+        run: |
+          echo "$KS" | base64 -d > /tmp/release.keystore
+          dotnet build src/ThreeBucket.Mobile/ThreeBucket.Mobile.csproj \
+            -c Release -f net10.0-android -t:SignAndroidPackage \
+            -p:ApplicationDisplayVersion="${{ steps.ver.outputs.display }}" \
+            -p:ApplicationVersion="${{ github.run_number }}" \
+            -p:AndroidKeyStore=true \
+            -p:AndroidSigningKeyStore=/tmp/release.keystore \
+            -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
+            -p:AndroidSigningKeyAlias="${{ secrets.ANDROID_KEY_ALIAS }}" \
+            -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEY_PASSWORD }}"
+
+      - name: Collect APK
+        run: |
+          mkdir -p dist
+          # 产物名基于 ApplicationId（workbuddy.threebucket-Signed.apk），用通配匹配
+          APK=$(ls src/ThreeBucket.Mobile/bin/Release/net10.0-android/*-Signed.apk 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then echo "未找到 APK"; exit 1; fi
+          cp "$APK" "dist/ThreeBucket-android-${{ steps.ver.outputs.version }}.apk"
+          ls -lh dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: dist/*.apk
+          if-no-files-found: error
+
+  ios:
+    name: iOS ipa
+    runs-on: macos-latest
+    timeout-minutes: 40
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Install ios workload
+        run: dotnet workload install ios
+
+      - name: Compute version
+        id: ver
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="v$(date +%Y.%m.%d)"
+            if git ls-remote --exit-code --tags origin "$VERSION" >/dev/null 2>&1; then
+              VERSION="$VERSION-${GITHUB_SHA:0:7}"
+            fi
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "display=${VERSION#v}" >> $GITHUB_OUTPUT
+          echo "::notice::版本: $VERSION"
+
+      # ad-hoc 签名（CodesignKey=-）：无需 Apple 开发者账号即可产出 ipa；
+      # 安装需用 Sideloadly / AltStore / 爱思助手 等工具配合 Apple ID 重签侧载。
+      # 如有开发者账号，可改为 -p:CodesignKey="Apple Distribution" 等正式签名。
+      - name: Build ipa (ad-hoc 签名)
+        run: |
+          dotnet publish src/ThreeBucket.Mobile/ThreeBucket.Mobile.csproj \
+            -c Release -f net10.0-ios \
+            -p:ArchiveOnBuild=true -p:CodesignKey=- \
+            -p:ApplicationDisplayVersion="${{ steps.ver.outputs.display }}" \
+            -p:ApplicationVersion="${{ github.run_number }}"
+
+      - name: Collect ipa
+        run: |
+          mkdir -p dist
+          BIN=src/ThreeBucket.Mobile/bin/Release/net10.0-ios
+          IPA=$(ls "$BIN"/*.ipa 2>/dev/null | head -1)
+          if [ -n "$IPA" ]; then
+            cp "$IPA" "dist/ThreeBucket-ios-${{ steps.ver.outputs.version }}.ipa"
+          elif [ -d "$BIN"/*.app ]; then
+            # 兜底：ipa 未生成时收集 .app 目录（同样可用 Sideloadly 侧载）
+            APP=$(ls -d "$BIN"/*.app | head -1)
+            ditto -c -k --keepParent "$APP" "dist/ThreeBucket-ios-${{ steps.ver.outputs.version }}.app.zip"
+          else
+            echo "未找到 iOS 构建产物"; exit 1
+          fi
+          ls -lh dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Upload to Release
+    needs: [android, ios]
+    # 任一平台构建成功即发布（另一平台失败不影响已成功产物）
+    if: always() && (needs.android.result == 'success' || needs.ios.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create or update Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.android.outputs.version || needs.ios.outputs.version }}"
+          DATE_STR=$(date '+%Y-%m-%d %H:%M')
+          SHA_SHORT=${GITHUB_SHA:0:7}
+
+          cat > /tmp/release_notes.md <<'EOF'
+          ## 移动端自动构建
+
+          - **Android APK**：debug 签名（若已配置签名 secrets 则为正式签名），可直接安装
+          - **iOS ipa**：ad-hoc 签名，需通过 Sideloadly / AltStore / 爱思助手配合 Apple ID 重签后安装
+
+          ### Android 安装
+          下载 `.apk` 后允许"安装未知来源应用"直接安装，或 `adb install xxx.apk`
+
+          ### iOS 安装
+          下载 `.ipa` 后用 [Sideloadly](https://sideloadly.io/)（需 Apple ID）或爱思助手重签安装到设备
+          EOF
+
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION 已存在，追加移动端产物"
+            gh release upload "$VERSION" dist/* --clobber
+          else
+            gh release create "$VERSION" dist/* \
+              --title "三桶策略系统 $VERSION" \
+              --notes-file /tmp/release_notes.md
+          fi
+
+          echo "::notice::已发布: $VERSION"
+          ls -lh dist/

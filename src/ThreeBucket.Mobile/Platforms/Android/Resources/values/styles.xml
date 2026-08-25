@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Avalonia 自绘窗口：无 ActionBar 全屏主题 -->
-    <style name="MyTheme" parent="Theme.Material.Light.NoActionBar">
+    <!-- Avalonia 自绘窗口：无 ActionBar 全屏主题。
+         必须用 Theme.AppCompat 后代：AvaloniaMainActivity 继承 AppCompatActivity，
+         用框架原生主题（android:Theme.Material.*）会在启动时抛
+         "You need to use a Theme.AppCompat theme" 立即闪退（已实测复现）。
+         AppCompat 主题由 Xamarin.AndroidX.AppCompat 绑定包提供，无需 android: 前缀。 -->
+    <style name="MyTheme" parent="Theme.AppCompat.Light.NoActionBar">
     </style>
 </resources>

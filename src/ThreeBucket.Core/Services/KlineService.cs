@@ -30,6 +30,14 @@ public class KlineService
     public Task<IReadOnlyList<DailyBar>?> GetStockDailyAsync(string code, int count = 320)
         => GetAsync(StockSymbol(code), count, qfq: true, isIndex: false);
 
+    /// <summary>个股日K（前复权，强制刷新缓存）。监控引擎盘中评估用：
+    /// 腾讯日K最后一根盘中实时滚动，forceRefresh 才能捕捉当日金叉/放量。</summary>
+    public Task<IReadOnlyList<DailyBar>?> GetStockDailyFreshAsync(string code, int count = 320)
+    {
+        _cache.TryRemove("qfq:" + StockSymbol(code), out _);
+        return GetAsync(StockSymbol(code), count, qfq: true, isIndex: false);
+    }
+
     /// <summary>个股日K（不复权，历史真实价；T7 回测 5 年窗口用，口径同 Python 新浪直连）。</summary>
     public Task<IReadOnlyList<DailyBar>?> GetStockDailyRawAsync(string code, int count = 320)
         => GetAsync(StockSymbol(code), count, qfq: false, isIndex: false);
