@@ -32,15 +32,17 @@ public class CandidatePoolTask : IBuiltinTask
     private readonly CsIndexClient _csi;
     private readonly EastMoneyClient _em;
     private readonly TencentSnapshot _tencent;
+    private readonly EastMoneySnapshot? _emSnap; // 腾讯覆盖率不足时的二级降级源（可空：未注入则不降级）
     private readonly KlineService _klines;
 
     public CandidatePoolTask(string dataDir, CsIndexClient csi, EastMoneyClient em,
-        TencentSnapshot tencent, KlineService klines)
+        TencentSnapshot tencent, KlineService klines, EastMoneySnapshot? emSnap = null)
     {
         _dataDir = dataDir;
         _csi = csi;
         _em = em;
         _tencent = tencent;
+        _emSnap = emSnap;
         _klines = klines;
     }
 
@@ -411,11 +413,36 @@ public class CandidatePoolTask : IBuiltinTask
         L($"[B] 批量拉取 {codes.Count} 只基本面（PE/市值/现价，腾讯行情）…");
         var fund = await _tencent.GetBatchAsync(codes, L, ct);
 
+        // 腾讯覆盖率过低时降级东财全市场快照补全缺失票（PE/总市值腾讯唯一源，
+        // 抽风会让大批票计入"基本面缺失"静默剔除 → B 桶塌成 1 只）。
+        // 东财 clist 一次拉全市场（含 PE/总市值/市净率），把腾讯没覆盖的票补进 fund。
+        if (_emSnap is not null && fund.Count < codes.Count * 0.6)
+        {
+            var missing = codes.Count - fund.Count;
+            L($"[B] 腾讯覆盖率 {fund.Count}/{codes.Count} 偏低，降级东财全市场快照补全…");
+            var em = await _emSnap.GetMarketSnapshotAsync(L, ct);
+            var added = 0;
+            foreach (var code in codes)
+            {
+                if (fund.ContainsKey(code)) continue; // 腾讯已有优先
+                if (!em.TryGetValue(code, out var e)) continue;
+                fund[code] = new TencentFundamental(code, "", e.Price, e.PeTtm, e.Pb, e.TotalMvYi, null);
+                added++;
+            }
+            L($"[B] 东财补全 {added}/{missing} 只，现覆盖率 {fund.Count}/{codes.Count}");
+        }
+
+        // 剔除计数拆「阈值不足」与「数据缺失」两本账：null 归缺失、值在但不达标归阈值。
+        // 否则数据源抽风时大批 null 被算成"没达门槛"，B 桶塌成 1 只却看不出是数据故障。
         var dropped = new Dictionary<string, int>(StringComparer.Ordinal)
         {
-            ["基本面缺失"] = 0, ["市值不足"] = 0, ["净利CAGR"] = 0, ["营收CAGR"] = 0,
-            ["最新期增速"] = 0, ["ROE"] = 0, ["亏损季度"] = 0, ["现金流"] = 0,
-            ["PE"] = 0, ["PEG"] = 0,
+            ["市值不足"] = 0, ["净利CAGR"] = 0, ["营收CAGR"] = 0, ["最新期增速"] = 0,
+            ["ROE"] = 0, ["亏损季度"] = 0, ["现金流"] = 0, ["PE"] = 0, ["PEG"] = 0,
+        };
+        var droppedMissing = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["基本面"] = 0, ["市值"] = 0, ["净利CAGR"] = 0, ["营收CAGR"] = 0,
+            ["最新期增速"] = 0, ["ROE"] = 0, ["亏损季度"] = 0, ["现金流"] = 0, ["PE"] = 0,
         };
         var results = new List<Row>();
 
@@ -423,7 +450,7 @@ public class CandidatePoolTask : IBuiltinTask
         {
             if (!fund.TryGetValue(code, out var f))
             {
-                dropped["基本面缺失"]++;
+                droppedMissing["基本面"]++;
                 continue;
             }
             var pe = f.PeTtm;
@@ -436,11 +463,8 @@ public class CandidatePoolTask : IBuiltinTask
                 roe = r * EastMoneyClient.RoeAnnualizeFactor(snap.Period);
 
             // 市值门槛（缺市值视为不满足：中盘定位是硬约束）
-            if (totalMv is null || totalMv < MinMv)
-            {
-                dropped["市值不足"]++;
-                continue;
-            }
+            if (totalMv is null) { droppedMissing["市值"]++; continue; }
+            if (totalMv < MinMv) { dropped["市值不足"]++; continue; }
 
             // 成长门槛：CAGR 缺失（基期为负/缺披露）直接剔除，不放行
             snap.Growth.TryGetValue(code, out var g);
@@ -448,55 +472,34 @@ public class CandidatePoolTask : IBuiltinTask
             var revCagr = g?.RevCagr;
             var ocfRatio = g?.OcfNpRatio;
             var ocfPsA = g?.OcfPsAnnual;
-            if (npCagr is null || npCagr < MinNpCagr)
-            {
-                dropped["净利CAGR"]++;
-                continue;
-            }
-            if (revCagr is null || revCagr < MinRevCagr)
-            {
-                dropped["营收CAGR"]++;
-                continue;
-            }
+            if (npCagr is null) { droppedMissing["净利CAGR"]++; continue; }
+            if (npCagr < MinNpCagr) { dropped["净利CAGR"]++; continue; }
+            if (revCagr is null) { droppedMissing["营收CAGR"]++; continue; }
+            if (revCagr < MinRevCagr) { dropped["营收CAGR"]++; continue; }
 
             // 最新报告期净利同比（成长未熄火）；快照缺该票则剔除
             var npYoy = y?.NpYoy;
             var industry = y?.Industry ?? "";
-            if (npYoy is null || npYoy < MinNpYoy)
-            {
-                dropped["最新期增速"]++;
-                continue;
-            }
+            if (npYoy is null) { droppedMissing["最新期增速"]++; continue; }
+            if (npYoy < MinNpYoy) { dropped["最新期增速"]++; continue; }
 
             // ROE 年化门槛
-            if (roe is null || roe < MinRoeB)
-            {
-                dropped["ROE"]++;
-                continue;
-            }
+            if (roe is null) { droppedMissing["ROE"]++; continue; }
+            if (roe < MinRoeB) { dropped["ROE"]++; continue; }
 
             // 盈利质量：近 3 年单季亏损（缺失同样剔除——核心数据缺失即剔除）
             snap.Quality.TryGetValue(code, out var q);
             var lossQ = (int?)q?.LossQ;
-            if (lossQ is null || lossQ > 0)
-            {
-                dropped["亏损季度"]++;
-                continue;
-            }
+            if (lossQ is null) { droppedMissing["亏损季度"]++; continue; }
+            if (lossQ > 0) { dropped["亏损季度"]++; continue; }
 
             // 现金流：年报 OCF/NP 与每股 OCF
-            if (ocfRatio is null || ocfRatio < MinOcfRatio || ocfPsA is null || ocfPsA <= 0)
-            {
-                dropped["现金流"]++;
-                continue;
-            }
+            if (ocfRatio is null || ocfPsA is null) { droppedMissing["现金流"]++; continue; }
+            if (ocfRatio < MinOcfRatio || ocfPsA <= 0) { dropped["现金流"]++; continue; }
 
             // 估值：PE 区间 + PEG
-            if (pe is null || pe <= 0 || pe > MaxPe)
-            {
-                dropped["PE"]++;
-                continue;
-            }
+            if (pe is null) { droppedMissing["PE"]++; continue; }
+            if (pe <= 0 || pe > MaxPe) { dropped["PE"]++; continue; }
             var cagrCapped = Math.Min(npCagr.Value, 100.0);
             var peg = pe.Value / cagrCapped;
             if (peg > MaxPeg)
@@ -561,11 +564,26 @@ public class CandidatePoolTask : IBuiltinTask
             }
         }
 
+        // 剔除分布分两行打印：阈值不足是真实没达门槛，数据缺失是源没覆盖到。
+        // 数据缺失这本账是 B 桶塌成 1 只的铁证——一眼可判是数据故障而非策略结果。
         var dropNote = string.Join("、", dropped.Where(kv => kv.Value > 0)
             .Select(kv => $"{kv.Key}{kv.Value}"));
-        if (dropNote.Length > 0) L($"[B] 剔除分布: {dropNote}");
+        var missingNote = string.Join("、", droppedMissing.Where(kv => kv.Value > 0)
+            .Select(kv => $"{kv.Key}{kv.Value}"));
+        if (dropNote.Length > 0) L($"[B] 剔除分布(阈值不足): {dropNote}");
+        if (missingNote.Length > 0) L($"[B] 剔除分布(数据缺失): {missingNote} ⚠️ 数据源未覆盖，非策略剔除");
 
-        return (results.OrderByDescending(r => r.Sort).ToList(), consMap.Count, dropNote);
+        // 覆盖率兜底告警：补充后仍极低 → 结果不可信，明示而非当成 1 只"通过"
+        var coverage = fund.Count == 0 ? 0 : (double)fund.Count / consMap.Count * 100;
+        if (coverage < 10)
+            L($"[B] ⚠️⚠️ 基本面覆盖率 {coverage:0.0}% 极低，B 桶结果不可信（数据源异常）");
+        else if (coverage < 60)
+            L($"[B] ⚠️ 基本面覆盖率 {coverage:0.0}% 偏低，部分票可能因数据缺失被误删");
+
+        // 写入文件的剔除分布：两本账都带上，让 skill_input 也能看出数据缺失
+        var fullDropNote = dropNote + (dropNote.Length > 0 && missingNote.Length > 0 ? "；" : "")
+            + (missingNote.Length > 0 ? $"数据缺失: {missingNote}" : "");
+        return (results.OrderByDescending(r => r.Sort).ToList(), consMap.Count, fullDropNote);
     }
 
     // ── C 桶 · 热点周期 ────────────────────────────────────────────

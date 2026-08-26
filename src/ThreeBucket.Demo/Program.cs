@@ -12,9 +12,11 @@ using ThreeBucket.Core.Models;
 using ThreeBucket.Core.Services;
 using ThreeBucket.Demo;
 
-// ── 第零部分：策略引擎离线回归（--engine 只跑本节后退出，无网络依赖）──
+// ── 第零部分：策略引擎离线回归（--engine 只跑离线回归后退出，无网络依赖）──
+if (args.Contains("--toast")) { ToastDiagnostic.Run(); return 0; }
 var engineOk = StrategyEngineRegression.Run();
-if (args.Contains("--engine")) return engineOk ? 0 : 1;
+var notifyOk = NotifyRegression.Run();
+if (args.Contains("--engine")) return engineOk && notifyOk ? 0 : 1;
 
 // ── 第一部分：真实网络连通性验证（腾讯 / 新浪 / 同花顺）──
 Console.WriteLine("=== 三桶 · 数据源真实联网验证 ===\n");
@@ -124,6 +126,7 @@ var signals = new SignalLogStore(dataDir);
 var em = new EastMoneyClient(cacheDir, ths);
 var csi = new CsIndexClient(cacheDir, ths);
 var tencent = new TencentSnapshot();
+var emSnap = new EastMoneySnapshot();
 
 IBuiltinTask[] tasks =
 {
@@ -132,7 +135,7 @@ IBuiltinTask[] tasks =
     new MonthlyRebalanceTask(dataDir, store, signals),
     new EarningsScanTask(dataDir, em, signals),
     new AttributionPrepTask(dataDir, store, signals, klines),
-    new CandidatePoolTask(dataDir, csi, em, tencent, klines),
+    new CandidatePoolTask(dataDir, csi, em, tencent, klines, emSnap),
     new BacktestTask(dataDir, em, klines),
     new SignalLogTask(dataDir, signals, klines, calendar),
 };

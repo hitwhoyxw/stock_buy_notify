@@ -31,6 +31,9 @@ public class TencentSnapshot
     }
 
     /// <summary>批量拉取（60 只/批，批间 300ms）。失败返回空字典。</summary>
+    /// <para>每批 HTTP 失败重试 2 次（间隔 0.8s）：瞬时网络抖动会让整批 60 只
+    /// 全部缺失 → 下游 B 桶把这些票计入"基本面缺失"静默剔除。重试能救回这部分。
+    /// 解析错误不重试（结构变化需暴露，而非反复撞同一份坏数据）。</para>
     public async Task<Dictionary<string, TencentFundamental>> GetBatchAsync(
         IEnumerable<string> codes, Action<string>? log = null, CancellationToken ct = default)
     {
@@ -42,16 +45,26 @@ public class TencentSnapshot
         {
             var chunk = list.Skip(i).Take(60).ToList();
             var url = "https://qt.gtimg.cn/q=" + string.Join(",", chunk.Select(Symbol));
-            try
+            var ok = false;
+            // 重试 2 次（共 3 次尝试）：第 1 次正常抓，失败则间隔 0.8s 重抓
+            for (var attempt = 0; attempt < 3 && !ok; attempt++)
             {
-                using var resp = await Client.GetAsync(url, ct);
-                resp.EnsureSuccessStatusCode();
-                var bytes = await resp.Content.ReadAsByteArrayAsync(ct);
-                Parse(Encoding.GetEncoding("GBK").GetString(bytes), result);
-            }
-            catch (Exception e)
-            {
-                log?.Invoke($"[Tencent] 行情批次失败: {e.Message}");
+                try
+                {
+                    using var resp = await Client.GetAsync(url, ct);
+                    resp.EnsureSuccessStatusCode();
+                    var bytes = await resp.Content.ReadAsByteArrayAsync(ct);
+                    Parse(Encoding.GetEncoding("GBK").GetString(bytes), result);
+                    ok = true;
+                }
+                catch (Exception e)
+                {
+                    if (attempt < 2)
+                        log?.Invoke($"[Tencent] 行情批次失败(第{attempt + 1}次): {e.Message}，重试…");
+                    else
+                        log?.Invoke($"[Tencent] 行情批次失败: {e.Message}（已重试 2 次仍失败，跳过该批）");
+                    if (attempt < 2) await Task.Delay(800, ct);
+                }
             }
             if (i + 60 < list.Count) await Task.Delay(300, ct);
         }

@@ -85,6 +85,7 @@ var signals = new SignalLogStore(dataDir);
 var em = new EastMoneyClient(cacheDir, ths);
 var csi = new CsIndexClient(cacheDir, ths);
 var tencent = new TencentSnapshot();
+var emSnap = new EastMoneySnapshot();
 
 var tasks = new Dictionary<string, IBuiltinTask>(StringComparer.OrdinalIgnoreCase)
 {
@@ -93,7 +94,7 @@ var tasks = new Dictionary<string, IBuiltinTask>(StringComparer.OrdinalIgnoreCas
     ["T3"] = new MonthlyRebalanceTask(dataDir, store, signals),
     ["T4"] = new EarningsScanTask(dataDir, em, signals),
     ["T5"] = new AttributionPrepTask(dataDir, store, signals, klines),
-    ["T6"] = new CandidatePoolTask(dataDir, csi, em, tencent, klines),
+    ["T6"] = new CandidatePoolTask(dataDir, csi, em, tencent, klines, emSnap),
     ["T7"] = new BacktestTask(dataDir, em, klines),
     ["T8"] = new SignalLogTask(dataDir, signals, klines, calendar),
 };

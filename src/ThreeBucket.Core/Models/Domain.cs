@@ -82,6 +82,7 @@ public class AlertEntry
     public string StrategyId { get; set; } = "";
     public string StrategyName { get; set; } = "";
     public string Action { get; set; } = "";
+    public string Priority { get; set; } = "";   // P0/P1/P2（旧记录缺省为空，不参与排序优先级）
     public string Time { get; set; } = "";
 }
 
@@ -110,4 +111,8 @@ public class AppConfig
     public string SupabaseUrl { get; set; } = "";   // 云同步：https://xxxx.supabase.co
     public string SupabaseKey { get; set; } = "";   // 云同步：anon public key
     public bool AutoSync { get; set; } = true;       // 自动云同步：启动/定时自动拉取云端较新数据，本地变化后自动上传
+    public bool NotifyLarkEnabled { get; set; } = true;   // 飞书 webhook 推送（触发当日新增提醒时发送）
+    public string LarkWebhook { get; set; } = "";    // 飞书自定义机器人 webhook（非空且开关开即推送）
+    public string LarkSecret { get; set; } = "";     // 飞书机器人签名密钥（安全设置选"签名校验"时必填，其他方式留空）
+    public bool NotifySystemEnabled { get; set; } = true; // 系统通知（Windows 10/11 通知中心 toast）
 }

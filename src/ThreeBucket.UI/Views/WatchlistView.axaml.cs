@@ -17,6 +17,7 @@ public partial class WatchlistView : UserControl, IRefreshable
     private DateTime? _lastFetch;
     private readonly DispatcherTimer _autoTimer;
     private bool _fetching;
+    private bool _loading; // 程序化设置 IsChecked 时屏蔽 IsCheckedChanged，避免覆盖配置/刷状态
     private readonly HashSet<string> _cfgErrors = new(); // 策略配置错误上报去重
 
     /// <summary>仅供 XAML 编译器/设计器使用；运行时请用带参构造。</summary>
@@ -35,6 +36,11 @@ public partial class WatchlistView : UserControl, IRefreshable
         ClearBtn.Click += (_, _) => { _app.Store.ClearHistory(); LoadHistory(); };
         WatchGrid.DoubleTapped += (_, _) => _ = BindStrategiesAsync();
 
+        // 通知开关（纯开关，webhook/密钥在设置页配置）：切换即写 _app.Config 并持久化
+        LarkToggle.IsCheckedChanged += (_, _) => OnNotifyToggleChanged(isLark: true);
+        SysToggle.IsCheckedChanged += (_, _) => OnNotifyToggleChanged(isLark: false);
+        SyncNotifyToggles(); // 构造期从配置初始化开关（IsCheckedChanged 被 _loading 屏蔽）
+
         // 60s 自动拉行情：盘中持续刷新；盘外数据不变，仅在最近定盘后拉一次（交易时段节流）
         _autoTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
         _autoTimer.Tick += (_, _) => _ = AutoRefreshAsync();
@@ -43,6 +49,7 @@ public partial class WatchlistView : UserControl, IRefreshable
 
     public void OnShown()
     {
+        SyncNotifyToggles(); // 设置页可能已改开关，切回本页同步开关视觉
         Load();
         _ = AutoRefreshAsync(); // 进入页面拉一次（盘外已拉过则跳过）
     }
@@ -185,14 +192,83 @@ public partial class WatchlistView : UserControl, IRefreshable
                 alerts.Add(new AlertEntry
                 {
                     Code = r.Code, Name = r.Name, StrategyId = s.Id,
-                    StrategyName = s.Name, Action = s.Action, Time = now,
+                    StrategyName = s.Name, Action = s.Action, Priority = s.Priority, Time = now,
                 });
             }
         }
         if (alerts.Count > 0)
         {
-            _app.Store.RecordAlerts(alerts);
-            _status($"🔔 触发 {alerts.Count} 条策略提醒");
+            // 只对当日首次触发的提醒外发通知（同策略同股票每天最多提醒一次，防骚扰）
+            var fresh = _app.Store.RecordAlerts(alerts);
+            _status(fresh.Count > 0
+                ? $"🔔 触发 {alerts.Count} 条策略提醒（新增 {fresh.Count} 条，已推送通知）"
+                : $"🔔 触发 {alerts.Count} 条策略提醒（今日已提醒过，不重复推送）");
+            if (fresh.Count > 0) _ = NotifyExternalAsync(fresh);
+        }
+    }
+
+    /// <summary>
+    /// 从 _app.Config 同步两个通知开关的 IsChecked（构造期与每次 OnShown 调用）。
+    /// 程序化赋值会触发 IsCheckedChanged，用 _loading 屏蔽以免回调覆盖配置/刷状态。
+    /// </summary>
+    private void SyncNotifyToggles()
+    {
+        _loading = true;
+        try
+        {
+            LarkToggle.IsChecked = _app.Config.NotifyLarkEnabled;
+            SysToggle.IsChecked = _app.Config.NotifySystemEnabled;
+        }
+        finally { _loading = false; }
+    }
+
+    /// <summary>
+    /// 工具栏通知开关切换：立即写 _app.Config 并持久化，与设置页同一 AppConfig 对象同步。
+    /// 飞书开启但 webhook 未配置时仅告警不阻止（NotifyExternalAsync 已有 IsValidWebhook 兜底）。
+    /// </summary>
+    private void OnNotifyToggleChanged(bool isLark)
+    {
+        if (_loading) return; // 程序化赋值触发的，忽略
+        if (isLark) _app.Config.NotifyLarkEnabled = LarkToggle.IsChecked == true;
+        else       _app.Config.NotifySystemEnabled = SysToggle.IsChecked == true;
+
+        try { _app.Store.SaveConfig(_app.Config); }
+        catch (Exception ex) { _status($"⚠️ 通知开关保存失败: {ex.Message}"); return; }
+
+        if (isLark)
+        {
+            var on = _app.Config.NotifyLarkEnabled;
+            _status(on ? "🔔 飞书推送已开启" : "🔕 飞书推送已关闭");
+            if (on && !LarkNotifier.IsValidWebhook(_app.Config.LarkWebhook))
+                _status("⚠️ 飞书 webhook 未配置，去设置页填写");
+        }
+        else _status(_app.Config.NotifySystemEnabled ? "💻 系统通知已开启" : "🔕 系统通知已关闭");
+    }
+
+    /// <summary>
+    /// 外发提醒（app 内历史表格之外的通道）：飞书 webhook + 系统通知。
+    /// fire-and-forget：失败仅状态栏上报，绝不影响监控主流程。
+    /// </summary>
+    private async Task NotifyExternalAsync(List<AlertEntry> fresh)
+    {
+        var cfg = _app.Config;
+        var message = LarkNotifier.BuildAlertMessage(fresh);
+
+        if (cfg.NotifyLarkEnabled && LarkNotifier.IsValidWebhook(cfg.LarkWebhook))
+        {
+            var (ok, msg) = await LarkNotifier.SendAsync(cfg.LarkWebhook, message, cfg.LarkSecret);
+            if (!ok) _status($"⚠️ 飞书推送失败: {msg}");
+        }
+
+        if (cfg.NotifySystemEnabled)
+        {
+            // toast 摘要：P0/P1 在前，最多展开 3 条（完整列表看 app 内"提醒历史"表格）
+            var digest = string.Join("\n", fresh
+                .OrderBy(a => a.Priority switch { "P0" => 0, "P1" => 1, "P2" => 2, _ => 3 })
+                .Take(3)
+                .Select(a => $"{a.Code} {a.Name} · {a.StrategyName}"));
+            if (fresh.Count > 3) digest += $"\n… 另有 {fresh.Count - 3} 条";
+            WindowsToastNotifier.Show($"🎯 三桶监控 · 触发 {fresh.Count} 条策略提醒", digest);
         }
     }
 

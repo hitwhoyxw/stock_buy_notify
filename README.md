@@ -1,75 +1,95 @@
 # 三桶资产交易策略系统
 
-Agent 只出提醒、买卖仍由人决策的 A 股三桶（红利逆向 / 成长 / 热点周期）策略实现。
+Agent 只出提醒、买卖仍由人决策的 A 股三桶（红利逆向 / 成长 / 热点周期）策略系统。
+
+> **实现已全面迁移至 C#（.NET 10）**：T1~T8 任务、策略引擎、数据源、云同步均为 C# 原生实现，
+> 桌面端（Avalonia）/ 移动端（MAUI）/ CLI（CI·服务器）共用同一核心库 `ThreeBucket.Core`。
+> 原 Python 脚本（`scripts/`）与 PyQt 桌面端（`desktop/legacy-pyqt/`）保留为应急回退，详见文末。
+
+## 架构总览
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                     src/ThreeBucket.Core                     │
+│  T1~T8 内置任务 · 策略引擎 · 数据源客户端 · 云同步 · 推送通知  │
+└──────────┬───────────────┬───────────────┬──────────────────┘
+           │               │               │
+   ThreeBucket.Cli    ThreeBucket.UI   ThreeBucket.Mobile
+   （CI/服务器/批处理）  （Avalonia 桌面端）（MAUI Android/iOS）
+           │               │               │
+           └───────────────┴───────────────┘
+                           │
+            data/ 台账·报告·缓存  ⇄  Supabase 云同步
+```
+
+| 项目 | 说明 |
+|------|------|
+| **ThreeBucket.Core** | 核心库（无 UI 依赖）：`Services/` T1~T8 任务 + 策略引擎 + 交易日历 + 调度引擎 + 云同步；`DataSources/` 多数据源抽象（主源故障自动降级）；`Data/` 台账存储 |
+| **ThreeBucket.Cli** | 无 UI 命令行：运行内置任务 + Supabase 拉取/推送（GitHub Actions 调度入口） |
+| **ThreeBucket.UI** | Avalonia 桌面端（Windows / macOS / Linux）：仪表盘、持仓、候选池、分析、报告、策略、自选、LLM 桥接、设置 |
+| **ThreeBucket.Mobile** | .NET MAUI 移动端（Android / iOS），与桌面端共用 Core（不入 slnx，需单独 workload 构建） |
+| **ThreeBucket.Demo** | 回归与验证：策略引擎离线回归、数据源联网验证、T1~T8 实例化验证、T3 端到端实跑 |
+
+**数据源**：同花顺（扶摇，`THS_API_KEY`）为行情快照/日K/成分股/分红主源，失败自动降级免费源（腾讯 / 新浪 / 东财 / 中证指数官网）；未配置时行为与免费源版一致。
 
 ## T1~T8 任务总览
 
-| 任务 | 脚本 | 频率 | 做什么 | 产出文件 |
+| 任务 | C# 实现（`Core/Services/`） | 频率 | 做什么 | 产出文件 |
 |------|------|------|--------|----------|
-| **T1 每日风控** | `t1_daily_risk.py` | 工作日盘后 | 检查持仓回撤/止损/集中度/MA60破位，触发告警写信号台账 | `data/report_日期_T1.md` |
-| **T2 周度红利择时** | `t2_weekly_dividend.py` | 每周一 | 拉估值/宏观/情绪指标，判定红利桶档位 S0~S3，输出调仓建议 | `data/report_日期_T2.md` |
-| **T3 月度再平衡** | `t3_monthly_rebalance.py` | 每月首日 | 检查四桶实际权重 vs 目标偏离，校验弪药桶≥15%，统计分红入D | `data/report_日期_T3.md` |
-| **T4 财报季扫描** | `t4_ingest.py` | 4/8/10月+每周五 | 从业绩预告+互动易问答搜关键词→LLM判定景气→写入信号台账 | `skill_input_T4C.md` → `skill_output_T4C.md` → `live_signal_log.csv` |
-| **T5 季度归因** | `t5_prepare.py` | 季末 | 组装季度交易日志+信号台账+基准走势→LLM做归因复盘 | `skill_input_T5.md` → `skill_output_T5.md` |
-| **T6 候选池筛选** | `t6_candidate_pool.py` | 每周五/季末 | 三桶各自硬门槛过滤→排序→输出候选池CSV→LLM三档全量分析 | `candidates_A/B/C.csv` + `skill_input_T6_A/B/C.md` → `skill_output_T6_A/B/C.md` |
-| **T7 参数回测** | `t7_backtest.py` | 月末/季末 | 包装06号回测脚本，验证策略参数历史胜率 | `data/report_日期_T7.md` |
-| **T8 信号台账维护** | `t8_signal_log.py` | 工作日17:00 | 回补历史信号60/120/250日收益，对比实盘vs回测胜率，触发失效预警 | `data/report_日期_T8.md` |
+| **T1 每日风控** | `DailyRiskTask` | 工作日盘后 | 检查持仓回撤/止损/集中度/MA60破位，触发告警写信号台账 | `data/report_日期_T1.md` |
+| **T2 周度红利择时** | `WeeklyDividendTask` | 每周一 | 拉估值/宏观/情绪指标，判定红利桶档位 S0~S3，输出调仓建议 | `data/report_日期_T2.md` |
+| **T3 月度再平衡** | `MonthlyRebalanceTask` | 每月首日 | 检查四桶实际权重 vs 目标偏离，校验弹药桶≥15%，统计分红入D | `data/report_日期_T3.md` |
+| **T4 财报季扫描** | `EarningsScanTask` | 4/8/10月每周一 | 先 ingest 上轮 LLM 判定入账，再从业绩预告+互动易组装下轮 LLM 输入 | `skill_input_T4C.md` → `skill_output_T4C.md` → `live_signal_log.csv` |
+| **T5 季度归因** | `AttributionPrepTask` | 季末 | 组装季度交易日志+信号台账+基准走势→LLM做归因复盘 | `skill_input_T5.md` → `skill_output_T5.md` |
+| **T6 候选池筛选** | `CandidatePoolTask` | 每周五/周一 | 三桶各自硬门槛过滤→排序→输出候选池CSV→LLM三档全量分析 | `candidates_A/B/C.csv` + `skill_input_T6_A/B/C.md` → `skill_output_T6_A/B/C.md` |
+| **T7 参数回测** | `BacktestTask` | 每月28日 | 全桶（A/B/C）策略参数历史胜率验证，无需再按桶拆分 | `data/report_日期_T7.md` + `data/backtest_*.csv` |
+| **T8 信号台账维护** | `SignalLogTask` | 工作日17:00 | 回补历史信号60/120/250日收益，对比实盘vs回测胜率，触发失效预警 | `data/report_日期_T8.md` |
+
+所有任务实现统一接口 `IBuiltinTask`（`Key / Name / RunAsync`），交易日判断内建在任务里（`TradingCalendar`，日历不可用按周末兜底），非交易日自动跳过并记成功。
 
 ## 目录结构
 
 ```
 .
-├── trading-system/       # 策略文档 & 配置（01~08 号文件）
-│   ├── 01_策略系统总纲.md      # 策略设计起点，从这里读起
-│   ├── 02_strategy_config.yaml  # 核心配置（三桶参数/阈值/关键词）
-│   ├── 03_Agent定期任务.md      # T1~T8 任务定义文档
-│   ├── 04_交易日志模板.csv      # 手动记录买卖的台账
-│   ├── 05_个股筛选与回测.md      # 选股+回测方法论
-│   ├── 06_backtest_*.py         # 各桶回测脚本
-│   ├── 07_信号台账模板.csv      # Agent 自动写入的信号记录
-│   └── 08_部署与客户端.md       # 部署方案
-├── scripts/              # 静态量化脚本（T1~T8）
-│   ├── lib/              # 通用库
-│   │   ├── config.py         # 读取 02_strategy_config.yaml
-│   │   ├── data_fetch.py     # akshare/tushare 数据拉取（行情/财报/互动易）
-│   │   ├── notifier.py       # 推送通知（企业微信/飞书/邮件）
-│   │   ├── paths.py          # 路径常量
-│   │   ├── report.py         # 报告生成
-│   │   ├── signal_log.py     # 信号台账读写（07号CSV）
-│   │   ├── trade_log.py      # 交易日志读写（04号CSV）
-│   │   └── trading_day.py    # 交易日判定（北京时间）
-│   ├── t1_daily_risk.py       # T1 每日风控/止损/集中度
-│   ├── t2_weekly_dividend.py  # T2 周度红利择时评级
-│   ├── t3_monthly_rebalance.py # T3 月度再平衡偏离检测
-│   ├── t4_ingest.py           # T4 财报季文本判定 ingest
-│   ├── t5_prepare.py          # T5 季度归因 LLM 输入准备
-│   ├── t6_candidate_pool.py   # T6 候选池硬门槛筛选
-│   ├── t7_backtest.py         # T7 参数回测
-│   ├── t8_signal_log.py       # T8 台账维护 + Alpha衰减
-│   └── test_channels.py       # 推送通道连通性测试
-├── skills/               # LLM 动态判定 prompt 模板
-│   ├── t4_c_text_scan.md      # C桶文本景气判定（给LLM的指令）
-│   ├── t5_attribution.md      # 季度归因复盘（给LLM的指令）
-│   └── t6_semantic_ranking.md # 候选池语义排序（给LLM的指令）
-├── .github/workflows/    # GitHub Actions 定时任务（5 个）
-└── data/                 # 运行时输出（台账、报告、缓存、候选池）
-    ├── live_trade_log.csv        # 实盘交易日志（04号的运行副本）
-    ├── live_signal_log.csv       # 实盘信号台账（07号的运行副本）
-    ├── candidates_A.csv           # A桶候选池（红利逆向）
-    ├── candidates_B.csv           # B桶候选池（成长）
-    ├── candidates_C.csv           # C桶候选池（热点周期）
-    ├── skill_input_T4C.md         # T4 输入：财报+互动易文本（喂给LLM）
-    ├── skill_output_T4C.md        # T4 输出：LLM判定的PASS/REJECT结果
-    ├── skill_input_T5.md          # T5 输入：季度交易+信号+基准（喂给LLM）
-    ├── skill_input_T6_A/B/C.md    # T6 输入：按桶分文件的候选池（喂给LLM）
-    ├── skill_output_T6_A/B/C.md   # T6 输出：LLM三档全量分析（推荐/中立/不推荐）
-    ├── report_日期_T*.md          # 各任务的盘后报告
-    └── cache/                     # 数据缓存（交易日历等）
+├── src/                       # C# 解决方案（ThreeBucket.slnx，Mobile 除外）
+│   ├── ThreeBucket.Core/      # 核心库
+│   │   ├── Data/              # DataStore（台账/配置/云同步快照）、SignalLogStore（信号台账）
+│   │   ├── DataSources/       # IMarketDataSource 抽象 + 腾讯/新浪/同花顺源 + 聚合降级
+│   │   ├── Models/            # DailyBar / RealTimeQuote / StockCode 等领域模型
+│   │   ├── Services/          # T1~T8 任务、ThsClient/EastMoneyClient/CsIndexClient、
+│   │   │                      # StrategyEngine、TradingCalendar、TaskSchedulerEngine、
+│   │   │                      # CloudSyncService/AutoSyncService、LlmClient、推送
+│   │   └── build.ps1/sh       # 跨平台发布脚本（win/linux/osx，-SelfContained 内嵌运行时）
+│   ├── ThreeBucket.Cli/       # CLI：--task / --sync pull|push / --list / --data
+│   ├── ThreeBucket.UI/        # Avalonia 桌面端（Views: Dashboard/Portfolio/Candidates/
+│   │                          #   Analysis/Reports/Strategy/Watchlist/LlmBridge/Settings）
+│   ├── ThreeBucket.Mobile/    # MAUI 移动端（net10.0-android / net10.0-ios）
+│   └── ThreeBucket.Demo/      # 回归验证（--engine 离线回归 / --toast 通知诊断）
+├── desktop/                   # 各平台打包入口（build.bat 菜单：Windows/Linux/macOS/Android/iOS）
+│   ├── windows|linux|macos/   # 对应平台 dist/ 发布产物
+│   └── legacy-pyqt/           # 旧 PyQt 桌面端（已归档，仅参考）
+├── trading-system/            # 策略文档 & 配置（01~08 号文件，02_strategy_config.yaml 为核心配置）
+├── scripts/                   # Python 版 T1~T8 脚本（应急回退，定时调度已停用）
+├── skills/                    # LLM 动态判定 prompt 模板（T4/T5/T6 用）
+├── .github/workflows/         # cs-*.yml（C# 调度）+ 旧 Python workflow（手动应急）+ 打包
+├── app_config.json            # C# 客户端运行配置（LLM/数据源/云同步/推送/调度）
+└── data/                      # 运行时输出（台账、报告、缓存、候选池）
+    ├── live_trade_log.csv     # 实盘交易日志（04号模板运行副本）
+    ├── live_signal_log.csv    # 实盘信号台账（07号模板运行副本）
+    ├── strategies.csv         # 策略配置运行副本
+    ├── watchlist.csv          # 自选股
+    ├── monitor_alerts.json    # 盘中监控告警
+    ├── portfolio_nav.csv      # 组合净值曲线
+    ├── candidates_A/B/C.csv   # 三桶候选池
+    ├── skill_input/output_*.md # LLM 半自动流程输入/输出
+    ├── report_日期_T*.md      # 各任务盘后报告
+    ├── backtest_*.csv         # T7 回测结果
+    └── cache/                 # 行情/财报缓存（parquet，跨运行复用）
 ```
 
 ## 各任务详细说明
 
-### T1 · 每日盘后风控扫描（`t1_daily_risk.py`）
+### T1 · 每日盘后风控扫描（`DailyRiskTask`）
 
 **频率**：工作日盘后 16:30
 **做什么**：对当前持仓做5项静态检查：
@@ -81,7 +101,7 @@ Agent 只出提醒、买卖仍由人决策的 A 股三桶（红利逆向 / 成�
 
 **产出**：`data/report_日期_T1.md`（风控报告）+ 触发的P0/P1信号写入台账 + 推送通知
 
-### T2 · 周度红利择时评级（`t2_weekly_dividend.py`）
+### T2 · 周度红利择时评级（`WeeklyDividendTask`）
 
 **频率**：每周一 08:30
 **做什么**：拉取5类指标判定红利桶（A桶）的市场状态档位 S0~S3：
@@ -108,24 +128,24 @@ Agent 只出提醒、买卖仍由人决策的 A 股三桶（红利逆向 / 成�
 
 **产出**：`data/report_日期_T2.md`（档位判定+调仓建议）+ 信号写入台账
 
-### T3 · 月度再平衡检查（`t3_monthly_rebalance.py`）
+### T3 · 月度再平衡检查（`MonthlyRebalanceTask`）
 
 **频率**：每月首个交易日 09:30
 **做什么**：
 1. 计算A/B/C/D四桶实际权重（从交易日志算）
 2. 与目标权重（由T2档位决定）对比，偏离>5%输出调仓建议
-3. 校验弪药桶（D桶）≥15%（弪药桶=现金/低风险资产储备，用于跌时抄底）
-4. 检查D→C直转是否违规（弪药桶资金不能直接转入C桶热点，必须先回A/B桶）
+3. 校验弹药桶（D桶）≥15%（弹药桶=现金/低风险资产储备，用于跌时抄底）
+4. 检查D→C直转是否违规（弹药桶资金不能直接转入C桶热点，必须先回A/B桶）
 5. 统计本月分红到账、C桶已兑现利润入D桶金额
 
 **产出**：`data/report_日期_T3.md`（再平衡建议）
 
-### T4 · 财报季文本景气扫描（`t4_ingest.py`）
+### T4 · 财报季文本景气扫描（`EarningsScanTask`）
 
-**频率**：财报季（4/8/10月每周一 + 每周五）
-**做什么**：分两步走：
-1. **--prepare**：从全市场自动发现扫描池（关键词命中+高增长），拉取业绩预告+互动易问答文本，组装成输入文件
-2. **ingest**：读取LLM判定输出，过滤PASS的票写入信号台账
+**频率**：财报季（4/8/10月每周一 19:00）
+**做什么**：单任务两步走（先入账上轮，再准备下轮）：
+1. **ingest**：读取上轮 LLM 判定输出（`skill_output_T4C.md`），过滤PASS的票写入信号台账
+2. **prepare**：从全市场自动发现扫描池（关键词命中+高增长），拉取业绩预告+互动易问答文本，组装成下轮输入文件
 
 **关键词三类**（C桶文本信号）：
 
@@ -137,17 +157,11 @@ Agent 只出提醒、买卖仍由人决策的 A 股三桶（红利逆向 / 成�
 
 **反向词**（顶部信号）：行业竞争加剧、新增产能投放、积极扩产、控制库存、价格承压
 
-**数据来源**：
-- `stock_yjyg_em`（东财业绩预告）：全市场业绩预告，含变动原因文本
-- `stock_yjbb_em`（东财业绩报表）：全市场财报，含营收/净利/毛利率
-- `stock_irm_cninfo`（巨潮互动易）：投资者关系问答平台，公司回答中常含经营细节
+**数据来源**：东方财富业绩预告/业绩报表、巨潮互动易问答
 
-**产出**：
-- `data/skill_input_T4C.md`：输入文件（每只票的财报+互动易文本，喂给LLM）
-- `data/skill_output_T4C.md`：LLM判定结果（JSON数组，每只票PASS/REJECT+理由）
-- 写入 `data/live_signal_log.csv`（信号台账）
+**产出**：`data/skill_input_T4C.md`（喂给LLM）→ `data/skill_output_T4C.md`（LLM判定JSON）→ 写入 `data/live_signal_log.csv`
 
-### T5 · 季度归因复盘（`t5_prepare.py`）
+### T5 · 季度归因复盘（`AttributionPrepTask`）
 
 **频率**：季末
 **做什么**：组装季度回顾数据喂给LLM做归因分析：
@@ -157,9 +171,9 @@ Agent 只出提醒、买卖仍由人决策的 A 股三桶（红利逆向 / 成�
 
 **产出**：`data/skill_input_T5.md` → 喂LLM → `data/skill_output_T5.md`
 
-### T6 · 候选池筛选与排序（`t6_candidate_pool.py`）
+### T6 · 候选池筛选与排序（`CandidatePoolTask`）
 
-**频率**：每周五 20:00 / 财报季
+**频率**：每周五 20:00 / 周一 08:30
 **做什么**：三桶各自硬门槛过滤 + 排序
 
 **A桶（红利逆向）候选池** `candidates_A.csv` 列说明：
@@ -216,13 +230,13 @@ Agent 只出提醒、买卖仍由人决策的 A 股三桶（红利逆向 / 成�
 
 **产出**：`candidates_A/B/C.csv` + `skill_input_T6_A/B/C.md` → 喂LLM → `skill_output_T6_A/B/C.md`（三档全量+REJECT+景气分析）
 
-### T7 · 参数回测（`t7_backtest.py`）
+### T7 · 参数回测（`BacktestTask`）
 
-**频率**：月末（C桶）/ 季末（A+B桶）
-**做什么**：包装 `trading-system/06_backtest_*.py`，验证策略参数历史胜率
-**产出**：`data/report_日期_T7.md`（回测摘要）
+**频率**：每月28日 20:00
+**做什么**：验证策略参数历史胜率，一次运行输出 A/B/C 全桶结果
+**产出**：`data/report_日期_T7.md`（回测摘要）+ `data/backtest_*.csv`
 
-### T8 · 信号台账维护（`t8_signal_log.py`）
+### T8 · 信号台账维护（`SignalLogTask`）
 
 **频率**：工作日 17:00
 **做什么**：
@@ -255,82 +269,117 @@ Agent 只出提醒、买卖仍由人决策的 A 股三桶（红利逆向 / 成�
 | 信号最终评价 | 盈利/亏损/持平 |
 | 备注 | 补充说明 |
 
-## 快速开始（本地）
+## 快速开始（C#）
 
-```bash
-pip install -r scripts/requirements.txt
+环境要求：.NET 10 SDK（`dotnet --version` 检查）。移动端另需 `dotnet workload install android` / `ios`。
 
-# 每日风控扫描
-python scripts/t1_daily_risk.py
+```powershell
+# 构建（Mobile 不在解决方案内，普通机器可直接 build）
+dotnet build src/ThreeBucket.slnx
 
-# 周度红利状态判定
-python scripts/t2_weekly_dividend.py
+# 运行桌面端（Avalonia）
+dotnet run --project src/ThreeBucket.UI
 
-# 月度再平衡
-python scripts/t3_monthly_rebalance.py
+# CLI：列出全部内置任务
+dotnet run --project src/ThreeBucket.Cli -- --list
 
-# 台账维护（追加新信号、回补历史收益、生成失效预警）
-python scripts/t8_signal_log.py
+# CLI：运行指定任务（逗号分隔），--data 指定数据目录（默认自动定位仓库根的 data/）
+dotnet run --project src/ThreeBucket.Cli -c Release -- --task T1,T8
+dotnet run --project src/ThreeBucket.Cli -c Release -- --task T3 --data D:\path\to\data
 
-# 参数回测（--bucket A|B|C|AB）
-python scripts/t7_backtest.py --bucket A
+# CLI：组合 Supabase 云同步（先拉云端最新用户数据 → 跑任务 → 推产物回云端）
+dotnet run --project src/ThreeBucket.Cli -c Release -- --sync pull --task T1,T8 --sync push
 
-# T4 财报季流程（分两步）
-python scripts/t4_ingest.py --prepare          # Step 1: 自动发现扫描池+拉取文本
-# ... 把 data/skill_input_T4C.md 喂给 LLM，产出写到 data/skill_output_T4C.md ...
-python scripts/t4_ingest.py                   # Step 2: 读取LLM判定→写入台账
-
-# T5 季度归因（准备 LLM 输入）
-python scripts/t5_prepare.py --season 2026Q2
-
-# T6 候选池筛选
-python scripts/t6_candidate_pool.py
-python scripts/t6_candidate_pool.py --bucket A --dry-run
-
-# 推送通道测试
-python scripts/test_channels.py
-python scripts/test_channels.py --channel wecom
-
-# 推送本地报告
-python -m lib.notifier --latest
+# 回归验证（离线策略引擎+通知回归，无网络依赖；--toast 单独诊断系统通知）
+dotnet run --project src/ThreeBucket.Demo -- --engine
 ```
+
+CLI 退出码：`0`=全部成功，`1`=任一任务失败，`2`=参数错误；`--sync` 失败不阻断（辅助操作）。
+
+### 桌面端/移动端打包
+
+```powershell
+# 构建中心菜单（1=Windows 2=Linux 3=macOS 4=全部桌面 5=Android 6=iOS编译验证）
+desktop\build.bat
+
+# 或直接用跨平台脚本（-SelfContained 内嵌运行时，-All 全平台，-Run 构建后运行）
+src\build.ps1 -Target win-x64 -SelfContained
+```
+
+移动端完整打包（Android APK + iOS ipa）走 GitHub Actions：手动触发 `Build Mobile Release` 或推送 `v*` tag，产物自动挂到 Release（iOS 需 macOS runner，macOS 上也可本地跑 `desktop/ios/build.sh`）。
+
+### 桌面端内置调度
+
+桌面端自带任务调度器（设置页可配，存 `app_config.json`：`SchedulerEnabled` / `SchedulerTime` / `SchedulerTasksStr`，默认 16:30 跑 T1 T8），无需依赖 CI 即可在本机定时执行；另有 `AutoSync` 自动云同步与盘后自动刷新。
 
 ## LLM 半自动流程
 
-T4/T5/T6 中涉及 LLM 的部分采用"脚本准备输入 → 人工/CI 调用 LLM → 脚本消费输出"的半自动闭环：
+T4/T5/T6 中涉及 LLM 的部分采用"任务准备输入 → 调用 LLM → 任务消费输出"的闭环。桌面端「LLM 桥接」页可一键完成：选 Skill → 生成输入（运行任务）→ 调用 LLM（走 `app_config.json` 配置的 LLM 网关）→ 保存输出，T6 还支持三桶连续调用；也可以手动把输入粘贴给 Qoder 等外部 Agent。
 
-| 步骤 | 脚本命令 | LLM prompt | 产出文件 |
+| 步骤 | 命令/操作 | LLM prompt | 产出文件 |
 |------|----------|-----------|----------|
-| T4 准备 | `t4_ingest.py --prepare` | — | `data/skill_input_T4C.md` |
-| T4 判定 | _手动喂 LLM_ | `skills/t4_c_text_scan.md` | `data/skill_output_T4C.md` |
-| T4 入库 | `t4_ingest.py` | — | 写入 `data/live_signal_log.csv` |
-| T5 准备 | `t5_prepare.py` | — | `data/skill_input_T5.md` |
-| T5 归因 | _手动喂 LLM_ | `skills/t5_attribution.md` | `data/skill_output_T5.md` |
-| T6 筛选 | `t6_candidate_pool.py` | — | `data/skill_input_T6_A/B/C.md` + CSVs |
-| T6 排序 | _手动喂 LLM_ | `skills/t6_semantic_ranking.md` | `data/skill_output_T6_A/B/C.md` |
+| T4 准备+入账 | CLI `--task T4` 或 UI 生成输入 | — | `data/skill_input_T4C.md` |
+| T4 判定 | UI 调用 LLM / 手动喂 LLM | `skills/t4_c_text_scan.md` | `data/skill_output_T4C.md` |
+| T5 准备 | CLI `--task T5` | — | `data/skill_input_T5.md` |
+| T5 归因 | UI 调用 LLM / 手动喂 LLM | `skills/t5_attribution.md` | `data/skill_output_T5.md` |
+| T6 筛选 | CLI `--task T6` | — | `data/skill_input_T6_A/B/C.md` + CSVs |
+| T6 排序 | UI 全桶调用 / 手动喂 LLM | `skills/t6_semantic_ranking.md` | `data/skill_output_T6_A/B/C.md` |
 
 ## GitHub Actions 调度
 
+定时调度已全部由 C# CLI 接管（输出文件与 Python 版完全兼容）：
+
 | Workflow | 触发时间 | 任务 |
 |----------|----------|------|
-| `daily.yml` | 工作日 16:30/17:00 | T1 风控 + T8 台账维护 |
-| `weekly.yml` | 周一 08:30 / 周五 20:00 | T2 红利判定 + T6 候选池 |
-| `monthly.yml` | 每月 1号 09:30 / 28号 21:00 | T3 再平衡 + T7-C 回测 |
-| `quarterly.yml` | 季末 28号 20:00/21:00 | T5 归因准备 + T7-AB 回测 |
-| `earnings_season.yml` | 4/8/10月周一 + 每周五 | T4 财报季 + T6 候选池 |
+| `cs-daily.yml` | 工作日 16:30 / 17:00 | T1 风控 + T8 台账维护 |
+| `cs-weekly.yml` | 周一 08:30 / 周五 20:00 | T2 红利判定（周一）+ T6 候选池 |
+| `cs-monthly.yml` | 每月1日 09:30 / 28日 20:00 | T3 再平衡 + T7 回测 |
+| `cs-quarterly.yml` | 季末28日 21:00 | T5 归因准备 |
+| `cs-earnings-season.yml` | 4/8/10月周一 19:00 | T4 财报季扫描 |
+| `keepalive.yml` | 每日 18:00 | Supabase 免费项目保活（只读请求） |
+| `build_mobile.yml` | 手动 / push tag `v*` | Android APK + iOS ipa 打包发布 |
 
-## 环境变量
+所有 `cs-*` workflow 统一执行 `dotnet run --project src/ThreeBucket.Cli -c Release -- --sync pull --task ... --sync push`（拉云端最新用户数据 → 跑任务 → 推产物），并把台账/报告提交回仓库。
 
-见 `.env.example`。生产运行由 GitHub Actions Secrets 注入。
+## 配置
+
+### app_config.json（C# 客户端本地配置）
+
+由桌面端设置页读写，CLI 也会读取（环境变量优先）：
+
+| 配置项 | 用途 |
+|---|---|
+| `ThsApiKey` | 同花顺（扶摇）数据源 key（申请：https://fuyao.aicubes.cn） |
+| `SupabaseUrl` / `SupabaseKey` | Supabase 云同步（strategies / trades / watchlist / alerts 四类数据） |
+| `LlmApiUrl` / `LlmApiKey` / `LlmModel` | LLM 桥接调用的网关地址、key 与模型 |
+| `LarkWebhook` / `NotifyLarkEnabled` | 飞书机器人推送 |
+| `NotifySystemEnabled` | 系统通知（Windows Toast 等） |
+| `SmtpHost/Port/User/Pass/To` / `MonitorEmailEnabled` | 邮箱推送 |
+| `SchedulerEnabled` / `SchedulerTime` / `SchedulerTasksStr` | 桌面端内置调度器 |
+| `AutoSync` / `AutoRefresh` / `RefreshInterval` / `MonitorInterval` | 自动云同步与行情自动刷新 |
+
+### 环境变量 / CI Secrets
+
+见 `.env.example`。CI（`cs-*` workflows）由 GitHub Actions Secrets 注入，环境变量优先于 `app_config.json`：
 
 | 变量 | 用途 | 必需 |
 |---|---|---|
-| `TUSHARE_TOKEN` | tushare 备用数据源 | 否（akshare 兜底） |
-| `WECOM_BOT_KEY` | 企业微信群机器人 webhook key | P0/P1 推送需要 |
-| `LARK_WEBHOOK` | 飞书机器人 webhook 完整 URL | 备用推送通道 |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_TO` | 邮箱推送 | 日报归档需要 |
+| `SUPABASE_URL` / `SUPABASE_KEY` | 云同步（anon key，与设置页一致） | 云同步需要，未配置自动跳过 |
+| `THS_API_KEY` | 同花顺数据源主源 | 否（未配置走免费源） |
+| `TUSHARE_TOKEN` | tushare 备用数据源（Python 版用） | 否 |
+| `WECOM_BOT_KEY` / `LARK_WEBHOOK` | 企业微信 / 飞书推送（Python 版脚本用；C# 版推送改配 `app_config.json` 的 `LarkWebhook`/`Smtp*`，CI 不注入） | 否 |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_TO` | 邮箱推送 | 否（C# 版在设置页/app_config.json 配置） |
+| `CLIENT_API_TOKEN` | 客户端后端拉取台账用（只读，可随时 rotate） | 否 |
 
 配置步骤：仓库 → Settings → Secrets and variables → Actions → New repository secret
+
+## 遗留 Python 版（应急回退）
+
+C# 版接管调度后，以下 Python 内容保留作应急回退，日常不再使用：
+
+- `scripts/`：Python 版 T1~T8 脚本（`pip install -r scripts/requirements.txt` 后 `python scripts/t1_daily_risk.py` 等）
+- `desktop/legacy-pyqt/`：旧 PyQt 桌面端（PyInstaller 打包）
+- `.github/workflows/` 中不带 `cs-` 前缀的旧 workflow（`daily.yml` / `weekly.yml` / `monthly.yml` / `quarterly.yml` / `earnings_season.yml`）：定时已注释，仅保留 `workflow_dispatch` 手动触发；`build_release.yml` 为旧 PyQt 版自动构建（已过时，桌面端发布改用 `desktop/build.bat` / `src/build.ps1`，移动端用 `build_mobile.yml`）
 
 ## 免责声明
 

@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using ThreeBucket.Core.Models;
 using ThreeBucket.Core.Services;
 using ThreeBucket.UI.Dialogs;
 using ThreeBucket.UI.Services;
@@ -36,6 +37,12 @@ public partial class SettingsView : UserControl, IRefreshable
     private readonly TextBox _sbKey = new() { PasswordChar = '*' };
     private readonly CheckBox _autoSync = new();
 
+    // 提醒通知（飞书 webhook + 系统通知）
+    private readonly CheckBox _larkEnabled = new();
+    private readonly TextBox _larkHook = new();
+    private readonly TextBox _larkSecret = new() { PasswordChar = '*' };
+    private readonly CheckBox _sysNotifyEnabled = new();
+
     /// <summary>仅供 XAML 编译器/设计器使用；运行时请用带参构造。</summary>
     public SettingsView() : this(new AppState(), _ => { }) { }
 
@@ -61,9 +68,9 @@ public partial class SettingsView : UserControl, IRefreshable
             Row("数据目录:", WithBrowse(_data, BrowseData)),
         }));
 
-        _apiUrl.Watermark = "https://api.openai.com/v1/chat/completions（留空=用 Qoder）";
-        _apiKey.Watermark = "sk-...（留空=手动模式）";
-        Form.Children.Add(Group("LLM API（预留，当前用 Qoder 对话）", new Control[]
+        _apiUrl.Watermark = "完整 endpoint，含 /chat/completions，如 https://api.deepseek.com/chat/completions";
+        _apiKey.Watermark = "sk-...（留空=手动模式，填了才能在桥接页点「调用 LLM」）";
+        Form.Children.Add(Group("LLM API（OpenAI 兼容 · 桥接页直连调用）", new Control[]
         {
             Row("API URL:", _apiUrl),
             Row("API Key:", _apiKey),
@@ -114,6 +121,31 @@ public partial class SettingsView : UserControl, IRefreshable
             Row("账号:", _smtpUser),
             Row("授权码:", _smtpPass),
             Row("收件人:", _smtpTo),
+        }));
+
+        _larkEnabled.Content = "启用飞书推送（策略触发当日首次提醒时发送到群）";
+        _larkHook.Watermark = "https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx";
+        _larkSecret.Watermark = "机器人安全设置选\"签名校验\"时必填，其他方式留空";
+        _sysNotifyEnabled.Content = "启用系统通知（Windows 10/11 通知中心 toast 弹窗，不必盯着 app）";
+        var btnNotifyTest = new Button { Content = "🔔 发送测试提醒" };
+        btnNotifyTest.Click += (_, _) => _ = TestNotifyAsync();
+        var notifyBtns = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
+        notifyBtns.Children.Add(btnNotifyTest);
+        var notifyHint = new TextBlock
+        {
+            Text = "获取 webhook：飞书群 → 设置 → 群机器人 → 添加“自定义机器人” → 复制 Webhook 地址填到下面。"
+                 + "安全设置三选一：①自定义关键词（填“三桶”，消息标题自带【三桶监控】）；②签名校验（把密钥填到下方签名密钥）；③IP 白名单（无需填）。"
+                 + "同一策略同一股票每天最多提醒一次；系统通知仅在 Windows 桌面端生效。",
+            TextWrapping = TextWrapping.Wrap, Foreground = Brushes.Gray, FontSize = 11, Margin = new Thickness(0, 6, 0, 0),
+        };
+        Form.Children.Add(Group("提醒通知（飞书 & 系统通知）", new Control[]
+        {
+            _larkEnabled,
+            Row("飞书 Webhook:", _larkHook),
+            Row("签名密钥:", _larkSecret),
+            _sysNotifyEnabled,
+            notifyBtns,
+            notifyHint,
         }));
 
         _sbUrl.Watermark = "https://xxxxx.supabase.co";
@@ -219,6 +251,10 @@ public partial class SettingsView : UserControl, IRefreshable
         _sbUrl.Text = c.SupabaseUrl;
         _sbKey.Text = c.SupabaseKey;
         _autoSync.IsChecked = c.AutoSync;
+        _larkEnabled.IsChecked = c.NotifyLarkEnabled;
+        _larkHook.Text = c.LarkWebhook;
+        _larkSecret.Text = c.LarkSecret;
+        _sysNotifyEnabled.IsChecked = c.NotifySystemEnabled;
     }
 
     private async Task SaveAsync()
@@ -246,6 +282,10 @@ public partial class SettingsView : UserControl, IRefreshable
         c.SupabaseUrl = _sbUrl.Text?.Trim() ?? "";
         c.SupabaseKey = _sbKey.Text?.Trim() ?? "";
         c.AutoSync = _autoSync.IsChecked == true;
+        c.NotifyLarkEnabled = _larkEnabled.IsChecked == true;
+        c.LarkWebhook = _larkHook.Text?.Trim() ?? "";
+        c.LarkSecret = _larkSecret.Text?.Trim() ?? "";
+        c.NotifySystemEnabled = _sysNotifyEnabled.IsChecked == true;
 
         _app.Store.SaveConfig(c);
         if (VisualRoot is Window owner)
@@ -273,6 +313,69 @@ public partial class SettingsView : UserControl, IRefreshable
         {
             _status($"⚠️ Supabase 配置保存失败: {ex.Message}");
         }
+    }
+
+    // ── 提醒通知（飞书 & 系统通知）──
+
+    /// <summary>把输入框中的通知配置立即持久化（同 Supabase 模式：填完点测试即已保存）。</summary>
+    private void SaveNotifyConfig()
+    {
+        _app.Config.NotifyLarkEnabled = _larkEnabled.IsChecked == true;
+        _app.Config.LarkWebhook = _larkHook.Text?.Trim() ?? "";
+        _app.Config.LarkSecret = _larkSecret.Text?.Trim() ?? "";
+        _app.Config.NotifySystemEnabled = _sysNotifyEnabled.IsChecked == true;
+        try
+        {
+            _app.Store.SaveConfig(_app.Config);
+            _status("通知配置已自动保存");
+        }
+        catch (Exception ex)
+        {
+            _status($"⚠️ 通知配置保存失败: {ex.Message}");
+        }
+    }
+
+    /// <summary>发送测试提醒：飞书 webhook + 系统通知双通道，结果弹窗汇总。</summary>
+    private async Task TestNotifyAsync()
+    {
+        if (VisualRoot is not Window owner) return;
+        SaveNotifyConfig();
+        var c = _app.Config;
+
+        var lines = new List<string>();
+
+        if (!c.NotifyLarkEnabled)
+            lines.Add("· 飞书推送：未启用（勾选后重试）");
+        else if (!LarkNotifier.IsValidWebhook(c.LarkWebhook))
+            lines.Add("· 飞书推送：Webhook 未填或格式无效");
+        else
+        {
+            _status("⏳ 发送测试消息到飞书…");
+            var sample = LarkNotifier.BuildAlertMessage(new List<AlertEntry>
+            {
+                new()
+                {
+                    Code = "600519", Name = "贵州茅台", StrategyId = "TEST",
+                    StrategyName = "测试提醒（非真实信号）", Action = "这是设置页发送的测试消息，收到即表示飞书通道配置成功。",
+                    Priority = "P1", Time = DateTime.Now.ToString("yyyy-MM-dd HH:mm"),
+                },
+            });
+            var (ok, msg) = await LarkNotifier.SendAsync(c.LarkWebhook, sample, c.LarkSecret);
+            lines.Add($"· 飞书推送：{(ok ? "✅ " : "❌ ")}{msg}");
+        }
+
+        if (!c.NotifySystemEnabled)
+            lines.Add("· 系统通知：未启用（勾选后重试）");
+        else if (!OperatingSystem.IsWindowsVersionAtLeast(10))
+            lines.Add("· 系统通知：当前平台不支持（仅 Windows 10/11）");
+        else
+        {
+            WindowsToastNotifier.Show("🎯 三桶监控 · 测试通知", "这是设置页发送的测试消息，收到即表示系统通知通道配置成功。");
+            lines.Add("✅ 系统通知：已弹出（若未见弹窗，请检查系统“通知设置”中是否允许本应用）");
+        }
+
+        _status("测试提醒已发送");
+        await MessageBox.Show(owner, "提醒通知 · 测试", string.Join("\n", lines));
     }
 
     // ── 浏览 ──

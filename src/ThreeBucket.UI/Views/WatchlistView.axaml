@@ -10,11 +10,14 @@
       <Button x:Name="DelBtn" Content="🗑 移除" Background="#e74c3c" Foreground="White" />
       <Button x:Name="BindBtn" Content="📋 绑定策略" Background="#8e44ad" Foreground="White" />
       <Button x:Name="NoteBtn" Content="📝 备注" />
+      <ToggleButton x:Name="LarkToggle" Content="🔔 飞书" VerticalAlignment="Center" />
+      <ToggleButton x:Name="SysToggle" Content="💻 系统通知" VerticalAlignment="Center" />
       <Button x:Name="RefreshBtn" Content="🔄 拉行情+评估" Background="#3498db" Foreground="White" />
+      <TextBlock Text="去设置页配置 webhook" Foreground="#999" FontSize="11" VerticalAlignment="Center" Margin="4,0,0,0" />
       <TextBlock x:Name="Info" Foreground="#666" FontSize="12" VerticalAlignment="Center" />
     </StackPanel>
 
-    <Grid ColumnDefinitions="2*,1*">
+    <Grid ColumnDefinitions="3*,2*">
       <data:DataGrid x:Name="WatchGrid" Grid.Column="0" Margin="6" AutoGenerateColumns="False"
                      IsReadOnly="True" GridLinesVisibility="All" SelectionMode="Single">
         <data:DataGrid.Columns>
@@ -24,9 +27,9 @@
           <!-- 格式串必须含数字占位符；XAML 里需 \\% 双反斜杠：编译器会吃掉一层转义，
                只剩 \% 才是 .NET 的字面百分号（单层 \% 会被解析成 % 占位符使值×100，实测 +2.9% 显示成 +289.9） -->
           <data:DataGridTextColumn Header="涨跌%" Binding="{Binding ChangePct, StringFormat='+0.0\\%;-0.0\\%'}" Width="70" />
-          <data:DataGridTextColumn Header="策略" Binding="{Binding Strategies}" Width="110" />
+          <data:DataGridTextColumn Header="策略" Binding="{Binding Strategies}" Width="*" />
           <data:DataGridTextColumn Header="备注" Binding="{Binding Note}" Width="120" />
-          <data:DataGridTextColumn Header="加入时间" Binding="{Binding AddedAt}" Width="*" />
+          <data:DataGridTextColumn Header="加入时间" Binding="{Binding AddedAt}" Width="140" />
         </data:DataGrid.Columns>
       </data:DataGrid>
 
@@ -36,10 +39,10 @@
         <data:DataGrid x:Name="HistoryGrid" Margin="0,6,0,6" AutoGenerateColumns="False"
                        IsReadOnly="True" GridLinesVisibility="All">
           <data:DataGrid.Columns>
-            <data:DataGridTextColumn Header="时间" Binding="{Binding Time}" Width="120" />
-            <data:DataGridTextColumn Header="代码" Binding="{Binding Code}" Width="80" />
+            <data:DataGridTextColumn Header="时间" Binding="{Binding Time}" Width="110" />
+            <data:DataGridTextColumn Header="代码" Binding="{Binding Code}" Width="70" />
             <data:DataGridTextColumn Header="策略" Binding="{Binding StrategyName}" Width="*" />
-            <data:DataGridTextColumn Header="动作" Binding="{Binding Action}" Width="*" />
+            <data:DataGridTextColumn Header="动作" Binding="{Binding Action}" Width="70" />
           </data:DataGrid.Columns>
         </data:DataGrid>
       </DockPanel>

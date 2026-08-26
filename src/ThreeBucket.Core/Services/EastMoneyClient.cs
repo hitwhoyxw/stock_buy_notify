@@ -263,12 +263,14 @@ public class EastMoneyClient
             : $"{y - 1}1231";
     }
 
-    /// <summary>最近 n 个已完整披露年报期（旧→新，年报 4-30 前披露完）。</summary>
+    /// <summary>最近 n 个已完整披露年报期（旧→新，年报 4-30 前披露完）。
+    /// 例：今天 2026-08，last=2025，n=4 → [20221231, 20231231, 20241231, 20251231]。</summary>
     public static List<string> LatestAnnualPeriods(int nYears)
     {
         var today = TradingCalendar.NowCn();
         var last = today.Month >= 5 ? today.Year - 1 : today.Year - 2;
-        return Enumerable.Range(nYears - 1, nYears).Select(i => $"{last - i}1231").ToList();
+        // i 从 nYears-1 递减到 0：last-(n-1) … last，得到旧→新序列
+        return Enumerable.Range(0, nYears).Select(i => $"{last - (nYears - 1) + i}1231").ToList();
     }
 
     /// <summary>最新已完整披露报告期起往前 numQuarters 个季度（旧→新，每季一期的报告期）。</summary>

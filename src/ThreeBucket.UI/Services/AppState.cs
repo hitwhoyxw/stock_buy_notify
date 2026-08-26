@@ -21,6 +21,7 @@ public class AppState
     public EastMoneyClient EastMoney { get; }
     public CsIndexClient CsIndex { get; }
     public TencentSnapshot Tencent { get; }
+    public EastMoneySnapshot EmSnapshot { get; }
     public IReadOnlyDictionary<string, IBuiltinTask> BuiltinTasks { get; }
     public TaskSchedulerEngine SchedulerEngine { get; }
     public AutoSyncService AutoSync { get; }
@@ -44,6 +45,7 @@ public class AppState
         EastMoney = new EastMoneyClient(cacheDir, ths);
         CsIndex = new CsIndexClient(cacheDir, ths);
         Tencent = new TencentSnapshot();
+        EmSnapshot = new EastMoneySnapshot();
         BuiltinTasks = new Dictionary<string, IBuiltinTask>(StringComparer.OrdinalIgnoreCase)
         {
             ["T1"] = new DailyRiskTask(Store, Quotes, Klines, Calendar, Signals, CsIndex, EastMoney),
@@ -51,7 +53,7 @@ public class AppState
             ["T3"] = new MonthlyRebalanceTask(DataDir, Store, Signals),
             ["T4"] = new EarningsScanTask(DataDir, EastMoney, Signals),
             ["T5"] = new AttributionPrepTask(DataDir, Store, Signals, Klines),
-            ["T6"] = new CandidatePoolTask(DataDir, CsIndex, EastMoney, Tencent, Klines),
+            ["T6"] = new CandidatePoolTask(DataDir, CsIndex, EastMoney, Tencent, Klines, EmSnapshot),
             ["T7"] = new BacktestTask(DataDir, EastMoney, Klines),
             ["T8"] = new SignalLogTask(DataDir, Signals, Klines, Calendar),
         };

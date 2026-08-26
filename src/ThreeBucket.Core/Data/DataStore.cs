@@ -526,7 +526,11 @@ public class DataStore
 
     public List<AlertEntry> LoadHistory() => LoadAlerts().History;
 
-    public void RecordAlerts(List<AlertEntry> entries)
+    /// <summary>
+    /// 记录提醒并按天去重（同策略同股票每天只提醒一次）。
+    /// 返回本次新增的提醒（fresh）——外部通知通道（飞书/系统通知）只推 fresh，避免重复打扰。
+    /// </summary>
+    public List<AlertEntry> RecordAlerts(List<AlertEntry> entries)
     {
         var (seen, history) = LoadAlerts();
         var today = DateTime.Today.ToString("yyyy-MM-dd");
@@ -538,10 +542,11 @@ public class DataStore
             seen[key] = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss");
             fresh.Add(e);
         }
-        if (fresh.Count == 0) return;
+        if (fresh.Count == 0) return fresh;
         history.InsertRange(0, fresh);
         if (history.Count > 200) history.RemoveRange(200, history.Count - 200);
         File.WriteAllText(AlertsPath, JsonSerializer.Serialize(new AlertStore { Seen = seen, History = history }, JsonOpts));
+        return fresh;
     }
 
     public void ClearHistory()
