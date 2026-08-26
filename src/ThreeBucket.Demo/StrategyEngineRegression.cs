@@ -12,7 +12,7 @@ public static class StrategyEngineRegression
 {
     public static bool Run()
     {
-        Console.WriteLine("=== 策略引擎离线回归（条件树 / 金叉 / 三值逻辑 / 旧格式兼容） ===\n");
+        Console.WriteLine("=== 策略引擎离线回归（条件树 / 金叉死叉 / 背离 / 超买超卖 / 旧格式兼容） ===\n");
         var ok = true;
         ok &= Case1MaAlignmentWithVolume();
         ok &= Case2MacdCrossUp();
@@ -20,6 +20,8 @@ public static class StrategyEngineRegression
         ok &= Case4CsvStrategies();
         ok &= Case5LegacyS1();
         ok &= Case6DescribeAndValidate();
+        ok &= Case7Divergence();
+        ok &= Case8KdjRsiLegacyTrend();
         Console.WriteLine(ok ? "\n策略引擎回归：全部通过 ✅" : "\n策略引擎回归：存在失败 ❌");
         return ok;
     }
@@ -294,7 +296,6 @@ public static class StrategyEngineRegression
     }
 
     // ── 用例6：describe 人类可读文本 + 校验错误信息 ─────────────
-
     private static bool Case6DescribeAndValidate()
     {
         var tree = Json(And(
@@ -324,6 +325,276 @@ public static class StrategyEngineRegression
             catch (StrategyConfigError) { /* 预期 */ }
         }
         Console.WriteLine($"PASS 用例6: describe = {text}");
+        return true;
+    }
+
+    // ── 用例7：MACD 顶背离 / 底背离 / 零上死叉（S10–S12）──────
+
+    /// <summary>从序列末尾向前生成 days 天每日 factor 复利的价格段。</summary>
+    private static List<double> Grow(IReadOnlyList<double> seed, double factor, int days)
+    {
+        var list = new List<double>(days);
+        var px = seed[^1];
+        for (var i = 0; i < days; i++) { px *= factor; list.Add(px); }
+        return list;
+    }
+
+    private static List<double> ConcatAll(params IReadOnlyList<double>[] parts)
+    {
+        var all = new List<double>();
+        foreach (var p in parts) all.AddRange(p);
+        return all;
+    }
+
+    private static Core.Data.DataStore RepoStore()
+    {
+        var dir = AppContext.BaseDirectory;
+        for (var i = 0; i < 10; i++)
+        {
+            if (Directory.Exists(Path.Combine(dir, "scripts"))) break;
+            var parent = Path.GetDirectoryName(dir);
+            if (parent is null || parent == dir) break;
+            dir = parent;
+        }
+        return new Core.Data.DataStore(Path.Combine(dir, "data"));
+    }
+
+    private static bool Case7Divergence()
+    {
+        var store = RepoStore();
+        var strategies = store.ListStrategies();
+        var s10 = strategies.FirstOrDefault(s => s.Id == "S10");
+        var s11 = strategies.FirstOrDefault(s => s.Id == "S11");
+        var s12 = strategies.FirstOrDefault(s => s.Id == "S12");
+        if (s10 is null || s11 is null || s12 is null)
+        { Console.WriteLine("FAIL 用例7: strategies.csv 缺少 S10/S11/S12"); return false; }
+        foreach (var s in new[] { s10, s11, s12 })
+        {
+            var err = StrategyEngine.ValidateStrategy(s);
+            if (err != null)
+            { Console.WriteLine($"FAIL 用例7: {s.Id} 校验失败：{err}"); return false; }
+        }
+
+        // 顶背离构造：陡涨(24d +2.6%) → 回调(18d -1.3%) → 缓涨创新高(40d +1.0%)
+        var top = ConcatAll(
+            new List<double> { 10.0 },
+            Grow(new List<double> { 10.0 }, 1.026, 24),
+            Grow(new List<double> { 10.0 * Math.Pow(1.026, 24) }, 0.987, 18),
+            Grow(new List<double> { 10.0 * Math.Pow(1.026, 24) * Math.Pow(0.987, 18) }, 1.010, 40));
+        var (tDif, _) = RefMacd(top.ToArray());
+        var tn = top.Count;
+        var hhv = tDif.Skip(tn - 60).Max();
+        var topGap = (tDif[^1] - hhv) / Math.Abs(hhv) * 100;
+        var tPeak = top.Skip(tn - 60).Max() * 1.01; // MakeKline: high = close*1.01
+        var tDd = (top[^1] / tPeak - 1) * 100;
+        var expectTop = tDd >= -3 && topGap <= -25 && tDif[^1] > 0;
+        var tctx = new IndicatorContext(top[^1], 1.0, MakeKline(top));
+        var actualTop = StrategyEngine.EvaluateStrategy(s11, tctx) == true;
+        if (actualTop != expectTop)
+        { Console.WriteLine($"FAIL 用例7: S11 与理论不一致（理论={P(expectTop)} 实际={P(actualTop)} gap={topGap:F1}% dd={tDd:F1}%）"); return false; }
+        if (!expectTop)
+        { Console.WriteLine($"FAIL 用例7: 顶背离数据未构造成功（gap={topGap:F1}% dd={tDd:F1}%）"); return false; }
+
+        // 底背离构造：陡跌(24d -2.6%) → 反弹(18d +1.3%) → 缓跌创新低(40d -1.0%)
+        var bot = ConcatAll(
+            new List<double> { 10.0 },
+            Grow(new List<double> { 10.0 }, 0.974, 24),
+            Grow(new List<double> { 10.0 * Math.Pow(0.974, 24) }, 1.013, 18),
+            Grow(new List<double> { 10.0 * Math.Pow(0.974, 24) * Math.Pow(1.013, 18) }, 0.990, 40));
+        var (bDif, _) = RefMacd(bot.ToArray());
+        var bn = bot.Count;
+        var llv = bDif.Skip(bn - 60).Min();
+        var botGap = (bDif[^1] - llv) / Math.Abs(llv) * 100;
+        var bTrough = bot.Skip(bn - 60).Min() * 0.99;
+        var bGain = (bot[^1] / bTrough - 1) * 100;
+        var expectBot = bGain <= 3 && botGap >= 25 && bDif[^1] < 0;
+        var bctx = new IndicatorContext(bot[^1], -1.0, MakeKline(bot));
+        var actualBot = StrategyEngine.EvaluateStrategy(s12, bctx) == true;
+        if (actualBot != expectBot)
+        { Console.WriteLine($"FAIL 用例7: S12 与理论不一致（理论={P(expectBot)} 实际={P(actualBot)} gap={botGap:F1}% gain={bGain:F1}%）"); return false; }
+        if (!expectBot)
+        { Console.WriteLine($"FAIL 用例7: 底背离数据未构造成功（gap={botGap:F1}% gain={bGain:F1}%）"); return false; }
+
+        // 反例：匀速上涨价格创新高但 DIF 同步创新高 → 无背离，不触发
+        var steady = Enumerable.Range(0, 80).Select(i => 10.0 * Math.Pow(1.01, i)).ToList();
+        var ectx = new IndicatorContext(steady[^1], 1.0, MakeKline(steady));
+        if (StrategyEngine.EvaluateStrategy(s11, ectx) is not false)
+        { Console.WriteLine("FAIL 用例7: 匀速上涨（无背离）不应触发 S11"); return false; }
+
+        // S10 零上死叉：涨40天(+1.0%)后回调 n 天(-1.5%)，扫描「恰好当日死叉且 DIF>0」
+        var up = new List<double> { 10.0 };
+        up.AddRange(Grow(up, 1.010, 40));
+        for (var dn = 2; dn <= 15; dn++)
+        {
+            var seq = new List<double>(up);
+            seq.AddRange(Grow(seq, 0.985, dn));
+            var (sDif, sDea) = RefMacd(seq.ToArray());
+            var last = seq.Count - 1;
+            if (!(sDif[last - 1] > sDea[last - 1] && sDif[last] <= sDea[last] && sDif[last] > 0))
+                continue; // 不是「恰好当日零上死叉」
+            var sctx = new IndicatorContext(seq[^1], -1.5, MakeKline(seq));
+            if (StrategyEngine.EvaluateStrategy(s10, sctx) is not true)
+            { Console.WriteLine($"FAIL 用例7: S10 零上死叉当日应触发（回调天数={dn}）"); return false; }
+            var pre = seq.Take(seq.Count - 1).ToList();
+            var pctx = new IndicatorContext(pre[^1], -1.5, MakeKline(pre));
+            if (StrategyEngine.EvaluateStrategy(s10, pctx) is not false)
+            { Console.WriteLine("FAIL 用例7: S10 死叉前一日不应触发"); return false; }
+            Console.WriteLine($"PASS 用例7: 顶背离(gap={topGap:F0}%) 底背离(gap={botGap:F0}%) 零上死叉(回调{dn}日) 均触发且与理论一致");
+            return true;
+        }
+        Console.WriteLine("FAIL 用例7: 扫描 2..15 天均未构造出零上死叉（数据设计有误）");
+        return false;
+    }
+
+    // ── 用例8：KDJ 超买超卖 / RSI / 双均线死叉 / 空头排列 / 乖离（S9,S13–S16）──
+
+    /// <summary>独立参考 KDJ.J（国内标准 9,3,3），与引擎实现互为对照。</summary>
+    private static double[] RefKdjJ(double[] c, double[] hi, double[] lo, int n = 9)
+    {
+        var j = new double[c.Length];
+        double k = 50, d = 50;
+        for (var i = 0; i < c.Length; i++)
+        {
+            if (i < n - 1) { j[i] = double.NaN; continue; }
+            double hh = double.MinValue, ll = double.MaxValue;
+            for (var t = i - n + 1; t <= i; t++)
+            {
+                if (hi[t] > hh) hh = hi[t];
+                if (lo[t] < ll) ll = lo[t];
+            }
+            var rsv = hh > ll ? (c[i] - ll) / (hh - ll) * 100 : 50;
+            k = k * 2.0 / 3 + rsv / 3;
+            d = d * 2.0 / 3 + k / 3;
+            j[i] = 3 * k - 2 * d;
+        }
+        return j;
+    }
+
+    /// <summary>独立参考 RSI（Wilder 递推），与引擎实现互为对照。</summary>
+    private static double[] RefRsi(double[] c, int period = 14)
+    {
+        var rsi = new double[c.Length];
+        if (c.Length < period + 1) return rsi;
+        for (var i = 0; i < period; i++) rsi[i] = double.NaN;
+        double ag = 0, al = 0;
+        for (var i = 1; i <= period; i++)
+        {
+            ag += Math.Max(c[i] - c[i - 1], 0);
+            al += Math.Max(c[i - 1] - c[i], 0);
+        }
+        ag /= period;
+        al /= period;
+        rsi[period] = al <= 1e-12 ? 100 : 100 - 100 / (1 + ag / al);
+        for (var i = period + 1; i < c.Length; i++)
+        {
+            ag = (ag * (period - 1) + Math.Max(c[i] - c[i - 1], 0)) / period;
+            al = (al * (period - 1) + Math.Max(c[i - 1] - c[i], 0)) / period;
+            rsi[i] = al <= 1e-12 ? 100 : 100 - 100 / (1 + ag / al);
+        }
+        return rsi;
+    }
+
+    private static bool Same(double? a, double? b)
+        => a is null && b is null
+           || a is not null && b is not null && Math.Abs(a.Value - b.Value) < 1e-9;
+
+    private static bool Case8KdjRsiLegacyTrend()
+    {
+        var store = RepoStore();
+        var strategies = store.ListStrategies();
+        var s9 = strategies.FirstOrDefault(s => s.Id == "S9");
+        var s13 = strategies.FirstOrDefault(s => s.Id == "S13");
+        var s14 = strategies.FirstOrDefault(s => s.Id == "S14");
+        var s15 = strategies.FirstOrDefault(s => s.Id == "S15");
+        var s16 = strategies.FirstOrDefault(s => s.Id == "S16");
+        if (s9 is null || s13 is null || s14 is null || s15 is null || s16 is null)
+        { Console.WriteLine("FAIL 用例8: strategies.csv 缺少 S9/S13/S14/S15/S16"); return false; }
+        foreach (var s in new[] { s9, s13, s14, s15, s16 })
+        {
+            var err = StrategyEngine.ValidateStrategy(s);
+            if (err != null)
+            { Console.WriteLine($"FAIL 用例8: {s.Id} 校验失败：{err}"); return false; }
+        }
+
+        // 1) KDJ/RSI 引擎 vs 独立参考实现：横盘→连涨→连跌→交替混合序列逐点对照
+        var mix = new List<double> { 10.0 };
+        mix.AddRange(Enumerable.Repeat(10.0, 20));
+        mix.AddRange(Grow(mix, 1.02, 8));
+        mix.AddRange(Grow(mix, 0.985, 8));
+        for (var i = 0; i < 24; i++)
+            mix.Add(mix[^1] * (i % 2 == 0 ? 1.025 : 0.988));
+        var bars = MakeKline(mix);
+        var cArr = mix.ToArray();
+        var refJ = RefKdjJ(cArr, bars.Select(b => b.High).ToArray(), bars.Select(b => b.Low).ToArray());
+        var refR = RefRsi(cArr);
+        var mctx = new IndicatorContext(cArr[^1], 0, bars);
+        for (var off = 0; off < cArr.Length; off++)
+        {
+            var i = cArr.Length - 1 - off;
+            if (!Same(double.IsNaN(refJ[i]) ? null : refJ[i], mctx.GetKdjJ(9, off)))
+            { Console.WriteLine($"FAIL 用例8: KDJ 与参考实现不一致（i={i} ref={refJ[i]} engine={mctx.GetKdjJ(9, off)}）"); return false; }
+            if (!Same(double.IsNaN(refR[i]) ? null : refR[i], mctx.GetRsi(14, off)))
+            { Console.WriteLine($"FAIL 用例8: RSI 与参考实现不一致（i={i} ref={refR[i]} engine={mctx.GetRsi(14, off)}）"); return false; }
+        }
+
+        // 2) S15 KDJ超买：横盘 20 天 + 连涨 8 天(+4%) → J>=100 触发；纯横盘 → 不触发
+        var surge = new List<double> { 10.0 };
+        surge.AddRange(Enumerable.Repeat(10.0, 20));
+        surge.AddRange(Grow(surge, 1.04, 8));
+        var gctx = new IndicatorContext(surge[^1], 4.0, MakeKline(surge));
+        if (StrategyEngine.EvaluateStrategy(s15, gctx) is not true)
+        { Console.WriteLine($"FAIL 用例8: S15 连涨超买应触发（J={gctx.GetKdjJ(9)}）"); return false; }
+        var flat = Enumerable.Repeat(10.0, 30).ToList();
+        var fctx = new IndicatorContext(10.0, 0, MakeKline(flat));
+        if (StrategyEngine.EvaluateStrategy(s15, fctx) is not false)
+        { Console.WriteLine("FAIL 用例8: S15 横盘不应触发"); return false; }
+
+        // 3) S16 KDJ超卖：横盘 20 天 + 连跌 8 天(-4%) → J<=0 触发
+        var slump = new List<double> { 10.0 };
+        slump.AddRange(Enumerable.Repeat(10.0, 20));
+        slump.AddRange(Grow(slump, 0.96, 8));
+        var dctx = new IndicatorContext(slump[^1], -4.0, MakeKline(slump));
+        if (StrategyEngine.EvaluateStrategy(s16, dctx) is not true)
+        { Console.WriteLine($"FAIL 用例8: S16 连跌超卖应触发（J={dctx.GetKdjJ(9)}）"); return false; }
+
+        // 4) S9 双均线死叉：涨25天(+1.8%)后跌 n 天(-3.5%)，扫描「恰好当日死叉」
+        var up = new List<double> { 10.0 };
+        up.AddRange(Grow(up, 1.018, 25));
+        for (var dn = 2; dn <= 15; dn++)
+        {
+            var seq = new List<double>(up);
+            seq.AddRange(Grow(seq, 0.965, dn));
+            var ctx = new IndicatorContext(seq[^1], -3.5, MakeKline(seq));
+            if (ctx.GetMa(5, 1) <= ctx.GetMa(10, 1) || ctx.GetMa(5, 0) >= ctx.GetMa(10, 0))
+                continue; // 不是「恰好当日死叉」
+            if (StrategyEngine.EvaluateStrategy(s9, ctx) is not true)
+            { Console.WriteLine($"FAIL 用例8: S9 死叉当日应触发（n={dn}）"); return false; }
+            var pre = seq.Take(seq.Count - 1).ToList();
+            var pctx = new IndicatorContext(pre[^1], -3.5, MakeKline(pre));
+            if (StrategyEngine.EvaluateStrategy(s9, pctx) is not false)
+            { Console.WriteLine("FAIL 用例8: S9 死叉前一日不应触发"); return false; }
+            break; // 找到即完成本段验证
+        }
+
+        // 5) S13 均线空头排列：80 天匀速下跌触发；上涨序列不触发
+        var down = Enumerable.Range(0, 80).Select(i => 10.0 * Math.Pow(0.997, i)).ToList();
+        var dwctx = new IndicatorContext(down[^1], -0.3, MakeKline(down));
+        if (StrategyEngine.EvaluateStrategy(s13, dwctx) is not true)
+        { Console.WriteLine("FAIL 用例8: S13 空头排列应触发"); return false; }
+        if (StrategyEngine.EvaluateStrategy(s13, gctx) is not false)
+        { Console.WriteLine("FAIL 用例8: S13 上涨序列不应触发"); return false; }
+
+        // 6) S14 五日乖离：横盘 30 天 + 末日+10% → bias≈7.8% 触发；末日+2% → 不触发
+        var spike = Enumerable.Repeat(10.0, 30).Append(11.0).ToList();
+        var spctx = new IndicatorContext(11.0, 10.0, MakeKline(spike));
+        if (StrategyEngine.EvaluateStrategy(s14, spctx) is not true)
+        { Console.WriteLine($"FAIL 用例8: S14 乖离5%应触发（bias={spctx.GetBias(5)}）"); return false; }
+        var mild = Enumerable.Repeat(10.0, 30).Append(10.2).ToList();
+        var mdctx = new IndicatorContext(10.2, 2.0, MakeKline(mild));
+        if (StrategyEngine.EvaluateStrategy(s14, mdctx) is not false)
+        { Console.WriteLine("FAIL 用例8: S14 温和上涨不应触发"); return false; }
+
+        Console.WriteLine("PASS 用例8: KDJ/RSI 对照一致；S9/S13/S14/S15/S16 触发与理论一致");
         return true;
     }
 }

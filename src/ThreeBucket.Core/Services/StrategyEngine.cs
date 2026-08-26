@@ -73,6 +73,14 @@ public static class StrategyEngine
             (c, p, o) => c.GetDrawdownFromHigh(p.Int("window", 180), o)),
         ["gain_from_low"] = new("距N日低点涨幅(%)", ["window"], [],
             (c, p, o) => c.GetGainFromLow(p.Int("window", 180), o)),
+        ["rsi"] = new("RSI", ["period"], [],
+            (c, p, o) => c.GetRsi(p.Int("period", 14), o)),
+        ["kdj_j"] = new("KDJ的J值", ["n"], [],
+            (c, p, o) => c.GetKdjJ(p.Int("n", 9), o)),
+        ["dif_hhv_gap"] = new("DIF距N日高点差(%)", ["window"], [],
+            (c, p, o) => c.GetDifHhvGap(p.Int("window", 60), o)),
+        ["dif_llv_gap"] = new("DIF距N日低点差(%)", ["window"], [],
+            (c, p, o) => c.GetDifLlvGap(p.Int("window", 60), o)),
     };
 
     // 旧 strategies.csv 扁平三列 indicator key → 新指标 key + 参数
@@ -353,6 +361,10 @@ public static class StrategyEngine
             case "volume_ratio": return $"量比({p.Int("window", 20)}日均量)";
             case "drawdown_from_high": return $"{p.Int("window", 180)}日高点回撤(%)";
             case "gain_from_low": return $"{p.Int("window", 180)}日低点涨幅(%)";
+            case "rsi": return $"RSI{p.Int("period", 14)}";
+            case "kdj_j": return $"KDJ.J({p.Int("n", 9)})";
+            case "dif_hhv_gap": return $"DIF距{p.Int("window", 60)}日高点差(%)";
+            case "dif_llv_gap": return $"DIF距{p.Int("window", 60)}日低点差(%)";
             default: return Defs.TryGetValue(key, out var def) ? def.Label : key;
         }
     }

@@ -21,6 +21,8 @@ public sealed class IndicatorContext
 
     private double[]? _close, _volume, _high, _low;
     private readonly Dictionary<int, double[]> _maCache = new();
+    private readonly Dictionary<int, double[]> _rsiCache = new();
+    private readonly Dictionary<int, double[]> _kdjCache = new();
     private (double[] Dif, double[] Dea, double[] Hist)? _macd;
 
     public IndicatorContext(double? quotePrice, double? quoteChangePct,
@@ -123,6 +125,79 @@ public sealed class IndicatorContext
         return ema;
     }
 
+    /// <summary>Wilder RSI：首值取前 period 个涨跌幅简单均值，其后递推平滑。
+    /// 序列前 period 位为 NaN（数据不足）。</summary>
+    private double[] RsiSeries(int period)
+    {
+        if (_rsiCache.TryGetValue(period, out var cached)) return cached;
+        var c = Close();
+        double[] rsi;
+        if (c is null || c.Length < period + 1)
+        {
+            rsi = [];
+        }
+        else
+        {
+            rsi = new double[c.Length];
+            for (var i = 0; i < period; i++) rsi[i] = double.NaN;
+            double avgGain = 0, avgLoss = 0;
+            for (var i = 1; i <= period; i++)
+            {
+                var d = c[i] - c[i - 1];
+                avgGain += Math.Max(d, 0);
+                avgLoss += Math.Max(-d, 0);
+            }
+            avgGain /= period;
+            avgLoss /= period;
+            rsi[period] = avgLoss <= 1e-12 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+            for (var i = period + 1; i < c.Length; i++)
+            {
+                var d = c[i] - c[i - 1];
+                avgGain = (avgGain * (period - 1) + Math.Max(d, 0)) / period;
+                avgLoss = (avgLoss * (period - 1) + Math.Max(-d, 0)) / period;
+                rsi[i] = avgLoss <= 1e-12 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+            }
+        }
+        _rsiCache[period] = rsi;
+        return rsi;
+    }
+
+    /// <summary>国内标准 KDJ(n,3,3) 的 J 值序列：J=3K-2D，K/D 初值 50。
+    /// 前 n-1 位为 NaN。</summary>
+    private double[] KdjJSeries(int n)
+    {
+        if (_kdjCache.TryGetValue(n, out var cached)) return cached;
+        var c = Close();
+        var hi = High();
+        var lo = Low();
+        double[] j;
+        if (c is null || hi is null || lo is null || c.Length < n)
+        {
+            j = [];
+        }
+        else
+        {
+            j = new double[c.Length];
+            for (var i = 0; i < n - 1; i++) j[i] = double.NaN;
+            double k = 50, d = 50;
+            for (var i = n - 1; i < c.Length; i++)
+            {
+                double hh = double.MinValue, ll = double.MaxValue;
+                for (var t = i - n + 1; t <= i; t++)
+                {
+                    if (hi[t] > hh) hh = hi[t];
+                    if (lo[t] < ll) ll = lo[t];
+                }
+                var rsv = hh > ll ? (c[i] - ll) / (hh - ll) * 100 : 50;
+                k = k * 2.0 / 3 + rsv / 3;
+                d = d * 2.0 / 3 + k / 3;
+                j[i] = 3 * k - 2 * d;
+            }
+        }
+        _kdjCache[n] = j;
+        return j;
+    }
+
     // ── 单值访问（offset: 0=今天, 1=昨天, …）──
 
     private static double? At(double[]? series, int offset)
@@ -172,6 +247,36 @@ public sealed class IndicatorContext
             "hist" => At(m.Value.Hist, offset),
             _ => null,
         };
+    }
+
+    /// <summary>RSI（Wilder）。超买 >= 70 / 超卖 <= 30。</summary>
+    public double? GetRsi(int period = 14, int offset = 0) => At(RsiSeries(period), offset);
+
+    /// <summary>KDJ 的 J 值。超买 >= 100 / 超卖 <= 0。</summary>
+    public double? GetKdjJ(int n = 9, int offset = 0) => At(KdjJSeries(n), offset);
+
+    /// <summary>DIF 距 window 日高点差 (%)：负值= DIF 未随价格创新高（顶背离证据）。
+    /// 分母取 |窗口高点|，过小（DIF 贴零）时返回 null。</summary>
+    public double? GetDifHhvGap(int window = 60, int offset = 0)
+        => DifWindowGap(window, offset, upper: true);
+
+    /// <summary>DIF 距 window 日低点差 (%)：正值= DIF 未随价格创新低（底背离证据）。</summary>
+    public double? GetDifLlvGap(int window = 60, int offset = 0)
+        => DifWindowGap(window, offset, upper: false);
+
+    private double? DifWindowGap(int window, int offset, bool upper)
+    {
+        var m = Macd();
+        if (m is null) return null;
+        var dif = m.Value.Dif;
+        var end = dif.Length - offset; // 当日位于 end-1
+        if (end < window) return null;
+        var start = end - window;
+        double extreme = upper ? double.MinValue : double.MaxValue;
+        for (var i = start; i < end; i++)
+            extreme = upper ? Math.Max(extreme, dif[i]) : Math.Min(extreme, dif[i]);
+        if (Math.Abs(extreme) < 1e-6) return null;
+        return (dif[end - 1] - extreme) / Math.Abs(extreme) * 100;
     }
 
     /// <summary>量比 = 当日量 / 前 window 日均量（分母不含当日）。</summary>

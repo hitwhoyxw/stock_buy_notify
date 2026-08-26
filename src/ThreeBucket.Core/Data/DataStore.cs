@@ -373,11 +373,36 @@ public class DataStore
                 Leaf("ma",">",Ref("ma",("period",20)),("period",10)),
                 Leaf("price",">",Ref("ma",("period",5))),
                 Leaf("volume_ratio",">=",1.5,("window",20))))),
+            // 趋势反转与超买超卖八件套（条件树 JSON，Schema 见 StrategyEngine）
+            Strat("S9","双均线死叉","sell","","","","MA5下穿MA10死叉且现价跌破MA10，短期趋势转弱，减仓或离场观望","P1",Cond(And(
+                Leaf("ma",Cross("down"),Ref("ma",("period",10)),("period",5)),
+                Leaf("price","<",Ref("ma",("period",10)))))),
+            Strat("S10","MACD零上死叉","sell","","","","MACD零轴上方死叉（DIF下穿DEA且DIF>0），强势股回调警示，逢高减仓","P1",Cond(And(
+                Leaf("macd",Cross("down"),Ref("macd",("field","dea")),("field","dif")),
+                Leaf("macd",">",0,("field","dif"))))),
+            Strat("S11","MACD顶背离","sell","","","","股价处60日高位但DIF明显低于其高点（顶背离），上涨动能衰竭，警惕M头，逢高减仓","P1",Cond(And(
+                Leaf("drawdown_from_high",">=",-3.0,("window",60)),
+                Leaf("dif_hhv_gap","<=",-25.0,("window",60)),
+                Leaf("macd",">",0,("field","dif"))))),
+            Strat("S12","MACD底背离","buy","","","","股价处60日低位但DIF明显高于其低点（底背离），下跌动能衰竭，关注反弹机会","P1",Cond(And(
+                Leaf("gain_from_low","<=",3.0,("window",60)),
+                Leaf("dif_llv_gap",">=",25.0,("window",60)),
+                Leaf("macd","<",0,("field","dif"))))),
+            Strat("S13","均线空头排列","sell","","","","MA5<MA10<MA20空头排列且现价位于MA5下方，下跌趋势未扭转，持币观望或止损离场","P1",Cond(And(
+                Leaf("ma","<",Ref("ma",("period",10)),("period",5)),
+                Leaf("ma","<",Ref("ma",("period",20)),("period",10)),
+                Leaf("price","<",Ref("ma",("period",5)))))),
+            Strat("S14","五日乖离过高","sell","","","","五日线乖离率超5%，短线涨幅过大，警惕冲高回落，可考虑兑现部分利润","P2",Cond(And(
+                Leaf("bias",">=",5.0,("period",5))))),
+            Strat("S15","KDJ超买","sell","","","","KDJ的J值超100进入超买区，短线过热，警惕回调，可逢高减仓","P2",Cond(And(
+                Leaf("kdj_j",">=",100.0,("n",9))))),
+            Strat("S16","KDJ超卖","buy","","","","KDJ的J值跌破0进入超卖区，短线超跌，关注企稳反弹机会","P2",Cond(And(
+                Leaf("kdj_j","<=",0.0,("n",9))))),
         };
         WriteCsv("strategies.csv", StrategyColumns.ToList(), defaults);
     }
 
-    // ── 种子策略的条件树 JSON 组装（与 data/strategies.csv 的 S6–S8 保持一致）──
+    // ── 种子策略的条件树 JSON 组装（与 data/strategies.csv 的 S6–S16 保持一致）──
 
     private static string Cond(object node)
         => System.Text.Json.JsonSerializer.Serialize(
