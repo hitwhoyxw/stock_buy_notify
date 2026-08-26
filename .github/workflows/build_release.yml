@@ -6,6 +6,9 @@ on:
     - cron: "30 11 * * *"
   workflow_dispatch:
 
+# C#（Avalonia / .NET 10）桌面端每日构建，替代原 PyInstaller/PyQt 版。
+# 目前只打 Windows x64（linux/macOS 未验证，需要时用 desktop/build.bat 或 src/build.ps1 本地出包）。
+# 移动端（Android/iOS）走 build_mobile.yml。
 permissions:
   contents: write
 
@@ -36,15 +39,11 @@ jobs:
         if: steps.check.outputs.should_build != 'true'
         run: echo "No new commits since last release. Skipping."
 
-      - name: Setup Python
+      - name: Setup .NET
         if: steps.check.outputs.should_build == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-dotnet@v4
         with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        if: steps.check.outputs.should_build == 'true'
-        run: pip install pyinstaller PyQt5 pyqtgraph matplotlib pandas openpyxl -q
+          dotnet-version: "10.x"
 
       # 版本号 = vYYYY.MM.DD；同一天多次触发则追加短 SHA
       - name: Compute version
@@ -59,18 +58,23 @@ jobs:
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Build with PyInstaller
+      # 与 desktop/windows/build.bat 相同的发布参数：
+      # self-contained 单文件（内嵌 .NET 10 运行时，目标机无需安装）
+      - name: Publish win-x64 (self-contained)
         if: steps.check.outputs.should_build == 'true'
-        working-directory: desktop
-        run: pyinstaller --noconfirm --onedir --windowed --name "三桶策略系统" --add-data "..\scripts;scripts" --add-data "..\skills;skills" --add-data "..\trading-system;trading-system" --add-data "..\data;data" --hidden-import PyQt5 --hidden-import pandas --hidden-import pyqtgraph --hidden-import matplotlib --hidden-import matplotlib.backends.backend_qt5agg main.py
+        run: >
+          dotnet publish src/ThreeBucket.UI/ThreeBucket.UI.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 
       - name: Zip artifact
         if: steps.check.outputs.should_build == 'true'
         shell: pwsh
         run: |
           $v = "${{ steps.version.outputs.version }}"
-          $zipPath = "desktop\三桶策略系统-$v.zip"
-          Compress-Archive -Path "desktop\dist\三桶策略系统\*" -DestinationPath $zipPath -Force
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $zipPath = "dist/ThreeBucket-win-x64-$v.zip"
+          Compress-Archive -Path "src/ThreeBucket.UI/bin/Release/net10.0/win-x64/publish/*" -DestinationPath $zipPath -Force
           $sizeMB = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
           Write-Host "Created: $zipPath ($sizeMB MB)"
 
@@ -84,14 +88,9 @@ jobs:
           DATE_STR=$(date '+%Y-%m-%d %H:%M')
           SHA_SHORT=${GITHUB_SHA:0:7}
 
-          printf '## 自动构建\n\n构建时间: %s\n提交: %s\n\n### 下载\n- 解压后双击 三桶策略系统.exe 运行\n- 需 Windows 10/11，无需安装 Python 环境\n' "$DATE_STR" "$SHA_SHORT" > /tmp/release_notes.md
+          printf '## 自动构建（C# / Avalonia）\n\n构建时间: %s\n提交: %s\n\n### 下载\n- 下载 `ThreeBucket-win-x64-%s.zip` 解压后运行 `ThreeBucket.UI.exe`\n- self-contained 自包含构建，无需安装 .NET 运行时\n- 需 Windows 10/11 x64\n' "$DATE_STR" "$SHA_SHORT" "$VERSION" > /tmp/release_notes.md
 
           gh release create "$VERSION" \
-            "desktop/三桶策略系统-$VERSION.zip" \
+            "dist/ThreeBucket-win-x64-$VERSION.zip" \
             --title "三桶策略系统 $VERSION" \
             --notes-file /tmp/release_notes.md
-
-      - name: Cleanup build artifacts
-        if: always()
-        shell: bash
-        run: rm -rf desktop/build desktop/dist desktop/*.spec || true

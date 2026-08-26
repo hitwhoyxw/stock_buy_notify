@@ -337,6 +337,7 @@ T4/T5/T6 中涉及 LLM 的部分采用"任务准备输入 → 调用 LLM → 任
 | `cs-quarterly.yml` | 季末28日 21:00 | T5 归因准备 |
 | `cs-earnings-season.yml` | 4/8/10月周一 19:00 | T4 财报季扫描 |
 | `keepalive.yml` | 每日 18:00 | Supabase 免费项目保活（只读请求） |
+| `build_release.yml` | 每日 19:30（有新提交时） | 桌面端 win-x64 自动构建发布（C#/Avalonia，self-contained，暂只验证 Windows，其他平台用本地脚本出包） |
 | `build_mobile.yml` | 手动 / push tag `v*` | Android APK + iOS ipa 打包发布 |
 
 所有 `cs-*` workflow 统一执行 `dotnet run --project src/ThreeBucket.Cli -c Release -- --sync pull --task ... --sync push`（拉云端最新用户数据 → 跑任务 → 推产物），并把台账/报告提交回仓库。
@@ -379,7 +380,7 @@ C# 版接管调度后，以下 Python 内容保留作应急回退，日常不再
 
 - `scripts/`：Python 版 T1~T8 脚本（`pip install -r scripts/requirements.txt` 后 `python scripts/t1_daily_risk.py` 等）
 - `desktop/legacy-pyqt/`：旧 PyQt 桌面端（PyInstaller 打包）
-- `.github/workflows/` 中不带 `cs-` 前缀的旧 workflow（`daily.yml` / `weekly.yml` / `monthly.yml` / `quarterly.yml` / `earnings_season.yml`）：定时已注释，仅保留 `workflow_dispatch` 手动触发；`build_release.yml` 为旧 PyQt 版自动构建（已过时，桌面端发布改用 `desktop/build.bat` / `src/build.ps1`，移动端用 `build_mobile.yml`）
+- `.github/workflows/` 中不带 `cs-` 前缀的旧 workflow（`daily.yml` / `weekly.yml` / `monthly.yml` / `quarterly.yml` / `earnings_season.yml`）：定时已注释，仅保留 `workflow_dispatch` 手动触发。每日构建 `build_release.yml` 已改为 C# 版（原 PyInstaller/PyQt 流程已下线）
 
 ## 免责声明
 
