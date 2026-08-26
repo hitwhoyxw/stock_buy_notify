@@ -135,7 +135,9 @@ bucket_B:
   ladder: [0.25, 0.25, 0.25, 0.25]
 
   # 批量静态筛选层（scripts/t6_candidate_pool.py screen_bucket_b 读取）
-  # 只用全市场批量接口可得的指标；商誉/应收/研发/渗透率/PE分位留 LLM 层验证
+  # 只用全市场批量接口可得的指标；商誉/研发/渗透率/PE分位留 LLM 层验证
+  # 订单积压参考列（gross_margin_yoy/ocf_yoy/drr/drgs/ibr/arr/order_backlog_score/filter_pass）
+  # 由 C# 端硬门槛后逐票拉资产负债表计算，供 LLM 复核，不进硬门槛/排序（见 05 文档 3.5 changelog）
   batch_screen:
     universe_index: ["000852.SH", "000905.SH", "000510.SH", "000906.SH"]
     # 中证1000+500+A500+800 全市场大中盘（2026-08 扩池：

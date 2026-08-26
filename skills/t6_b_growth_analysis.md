@@ -89,11 +89,15 @@
 
 ```
 === BUCKET: B ===
-code,name,industry,price,total_mv_yi,profit_cagr_3y,revenue_cagr_3y,np_yoy_latest,roe_ann,ocf_to_np,loss_q_3y,pe_ttm,peg,sort_value,pick_reason
+code,name,industry,price,total_mv_yi,profit_cagr_3y,revenue_cagr_3y,np_yoy_latest,roe_ann,ocf_to_np,loss_q_3y,pe_ttm,peg,gross_margin,gross_margin_yoy,rev_yoy_latest,ocf_yoy,drr,drgs,ibr,arr,order_backlog_score,filter_pass,sort_value,pick_reason
 （每只票一行 CSV，按 sort_value 降序）
 ```
 
-> 注：脚本层因数据源限制，部分指标未覆盖（商誉/净资产、应收vs营收增速、研发占比、PE分位、行业渗透率）。LLM 应基于已有数据做分析，并标注哪些维度需要人工补充验证。
+> 注：脚本层因数据源限制，部分指标未覆盖（商誉/净资产、研发占比、行业渗透率、PE分位）。LLM 应基于已有数据做分析，并标注哪些维度需要人工补充验证。
+> **订单积压参考列**（脚本已计算，含义与方向见 skill_input 头部规则说明）：
+> - `drr` 期末合同负债/TTM营收（越大越好）、`drgs` 合同负债同比−营收同比（越大越好）、`ibr` 存货同比−营收同比（适度为好，过大=滞销）、`arr` 应收账款同比−营收同比（越小越好）
+> - `order_backlog_score` = 0.4×DRR+0.4×DRGS+0.2×IBR（归一化0~100，越大越好）
+> - `filter_pass` 三道过滤全过为好（毛利率未大幅下滑/营收预告正/现金流改善）
 
 ## 输出格式（Markdown + 表格）
 
@@ -136,10 +140,20 @@ code,name,industry,price,total_mv_yi,profit_cagr_3y,revenue_cagr_3y,np_yoy_lates
 
 ## 需人工补充验证的维度
 
-- 商誉/净资产：脚本未覆盖，需查年报
-- 应收增速 vs 营收增速：脚本未覆盖，需查年报
-- 行业渗透率/市占率：需行业研究
-- PE 上市以来分位：需历史数据
+- 商誉/净资产：脚本未覆盖，需查年报确认是否有并购扩张雷。
+- 行业渗透率/市占率：需行业研究。
+- PE 上市以来分位：需历史数据。
+
+## 订单积压信号分析（参考 `order_backlog_score` 等列）
+
+成长股的"成长"必须有订单支撑，否则是纸面增长。对每只票判断：
+
+1. **订单充足度**：`order_backlog_score` 高（DRR 合同负债/TTM营收比值高、DRGS 合同负债增速快于营收）= 订单积压待交付，成长有能见度。
+2. **排除"卖不出去"杂质**：`ibr` 异常高（存货同比远超营收增速）且 `order_backlog_score` 低 → 存货堆积非订单驱动，疑似滞销囤货，应 REJECT 或降级。
+3. **三道过滤**：`filter_pass=否` 说明毛利率大幅下滑（降价甩卖）/营收预告非正/现金流恶化，预收款可能非真实现金流入，需在理由里说明哪道过滤未过。
+4. **应收质量**：`arr` 应收账款同比远超营收 = 降价赊销/回款恶化，成长质量存疑。
+
+> 订单积压信号与 C 桶景气文本作用类似——作为参考维度辅助判断，不替代主排序（1/PEG）。
 
 ## 备注
 - 排序依据：1/PEG + LLM 巴菲特视角复核

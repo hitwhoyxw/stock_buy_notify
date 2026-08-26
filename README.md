@@ -212,6 +212,14 @@ Agent 只出提醒、买卖仍由人决策的 A 股三桶（红利逆向 / 成�
 | loss_q_3y | 近3年单季亏损次数，须=0 |
 | pe_ttm | 滚动市盈率，0<PE≤60才入池 |
 | peg | PEG = PE ÷ 增速，≤1.2才入池（低PEG=便宜成长） |
+| gross_margin / gross_margin_yoy | 最新毛利率 / 毛利率同比变化（pct） |
+| rev_yoy_latest / ocf_yoy | 最新营收同比 / 每股经营现金流同比 |
+| drr | 期末合同负债÷TTM营收，越大越好（订单积压待交付充足度） |
+| drgs | 合同负债同比−营收同比，越大越好（订单加速积压） |
+| ibr | 存货同比−营收同比，适度为好（过大=滞销囤货风险） |
+| arr | 应收账款同比−营收同比，越小越好（应收超营收=降价赊销） |
+| order_backlog_score | 订单积压综合分=0.4×DRR+0.4×DRGS+0.2×IBR（归一化0~100），越大越好 |
+| filter_pass | 三道过滤是否全过（毛利率未大幅下滑/营收预告正/现金流改善） |
 | sort_value | 排序值 = min(增速,100)/PE = 1/PEG，越高越优先 |
 | pick_reason | 入选理由 |
 
@@ -225,8 +233,14 @@ Agent 只出提醒、买卖仍由人决策的 A 股三桶（红利逆向 / 成�
 | np_yoy | 净利润同比增速（财报验证，clip 500%防极端值） |
 | revenue_yoy | 营收同比增速（验证量是否跟上） |
 | gross_margin | 毛利率（验证定价权，<10%说明无定价权） |
-| has_irm | 是否有互动易文本 |
-| negative_hits | 反向词命中（顶部信号） |
+| pe_ttm / pe_dynamic / pe_method | PE(TTM) / 动态PE（年化推算）/ 动态PE口径 |
+| peg | PEG = PE÷净利同比增速 |
+| drr / drgs / ibr / arr | 订单积压指标（含义同B桶，验证景气文本是否被预收款/存货数据印证） |
+| order_backlog_score | 订单积压综合分（同B桶），越大越好 |
+| filter_pass | 三道过滤是否全过 |
+| price_index_1y_high | 行业价格指数是否创1年新高（LLM层验证） |
+| contract_liability_yoy | 合同负债同比原值（验证景气文本） |
+| price_above_ma60 | 价格是否在60日均线上方（顶部预警） |
 
 **产出**：`candidates_A/B/C.csv` + `skill_input_T6_A/B/C.md` → 喂LLM → `skill_output_T6_A/B/C.md`（三档全量+REJECT+景气分析）
 

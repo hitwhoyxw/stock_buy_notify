@@ -16,13 +16,13 @@
 
 ### B 桶（成长）
 - **主排序**：（营收 CAGR 3年 × 净利 CAGR 3年）÷ PEG
-- 一句话理由结构：`{行业}赛道渗透率{X}%，营收/净利 3 年 CAGR {Y}/{Z}%，PEG {W}，{核心竞争力}`
-- **红线**：单季扣非环比减速、经营现金流/净利润<0.5、商誉/净资产>30% 任一命中即 REJECT
+- 一句话理由结构：`{行业}赛道渗透率{X}%，营收/净利 3 年 CAGR {Y}/{Z}%，PEG {W}，订单积压{order_backlog_score}分（DRR{a}/DRGS{b}/IBR{c}），{订单充足/积压不足/疑似滞销}，{核心竞争力}`
+- **红线**：单季扣非环比减速、经营现金流/净利润<0.5、商誉/净资产>30% 任一命中即 REJECT；`order_backlog_score` 低且 `ibr` 异常高（存货同比远超营收增速）→ 标注"疑似卖不出去的囤货"并剔除；`filter_pass=否` 需在理由里说明哪道过滤未过
 
 ### C 桶（热点周期）
 - **主排序**：文本得分（来自 T4-C 输出）+ 数据验证条数
-- 一句话理由结构：`{行业}景气拐点，{关键景气证据一句原文}，单季扣非 +{X}%，{价格/供给证据}`
-- **红线**：命中任一顶部反指（低PE+高利润；行业新增产能激增；价格指数<MA60）→ REJECT
+- 一句话理由结构：`{行业}景气拐点，{关键景气证据一句原文}，单季扣非 +{X}%，订单能见度{order_backlog_score}分（合同负债同比{Y}%{验证景气/或存降价甩卖杂质}），{价格/供给证据}`
+- **红线**：命中任一顶部反指（低PE+高利润；行业新增产能激增；价格指数<MA60）→ REJECT；`ibr` 异常高（存货堆积远超营收）且 `order_backlog_score` 低 → 标注"疑似滞销囤货"剔除；`filter_pass=否` 需说明哪道过滤未过
 
 ## 输入格式
 
@@ -33,11 +33,13 @@
 （CSV 列头 + 已过硬门槛的候选，含 code, name, industry, dividend_yield_ttm, dividend_percentile_5y, roe_5y_avg, fcf_coverage, pb, pb_percentile, dividend_years, quality_score）
 
 === BUCKET: B ===
-（筛选规则与排序公式见该段头部说明；CSV 列头，含 code, name, industry, price, total_mv_yi, profit_cagr_3y, revenue_cagr_3y, np_yoy_latest, roe_ann, ocf_to_np, loss_q_3y, pe_ttm, peg, sort_value, pick_reason）
-（批量层未覆盖、需你重点复核：商誉/净资产、应收vs营收增速、研发占比、行业渗透率、PE 上市以来分位）
+（筛选规则与排序公式见该段头部说明；CSV 列头，含 code, name, industry, price, total_mv_yi, profit_cagr_3y, revenue_cagr_3y, np_yoy_latest, roe_ann, ocf_to_np, loss_q_3y, pe_ttm, peg, gross_margin, gross_margin_yoy, rev_yoy_latest, ocf_yoy, drr, drgs, ibr, arr, order_backlog_score, filter_pass, sort_value, pick_reason）
+订单积压参考列（drr/drgs/ibr/arr/order_backlog_score/filter_pass）含义与方向见 skill_input 头部规则说明，供 LLM 复核订单能见度，不进硬门槛/排序。
+（批量层未覆盖、需你重点复核：商誉/净资产、研发占比、行业渗透率、PE 上市以来分位）
 
 === BUCKET: C ===
-（CSV 列头，含 code, name, industry, text_score, categories_hit_count, price_index_1y_high, gross_margin_qoq, contract_liability_yoy, earnings_yoy_recurring）
+（CSV 列头，含 code, name, industry, text_score, categories_hit_count, np_yoy, revenue_yoy, gross_margin, pe_ttm, pe_dynamic, pe_method, peg, drr, drgs, ibr, arr, order_backlog_score, filter_pass, price_index_1y_high, contract_liability_yoy, price_above_ma60）
+订单积压参考列（drr/drgs/ibr/arr/order_backlog_score/filter_pass）含义与方向见 skill_input 头部规则说明，用于验证景气文本是否被预收款/存货数据印证，不参与脚本排序。
 ```
 
 ## 输出格式（严格结构 · Markdown + 表格 · 三档全量）

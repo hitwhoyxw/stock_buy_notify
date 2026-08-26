@@ -30,6 +30,18 @@ public sealed record HolderRow(string Name, double? Ratio);
 /// <summary>现金分红行（RPT_SHAREBONUS_DET，替代 akshare stock_dividend_cninfo）。</summary>
 public sealed record DividendRow(DateTime ExDate, double Dps);
 
+/// <summary>资产负债表行（RPT_F10_FINANCE_GBALANCE，逐票拉取，按报告期返回多期）。
+/// 只取订单积压指标需要的科目：合同负债/存货/应收账款 期末值 + 各自同比增速。</summary>
+public sealed record BalanceSheetRow(
+    string Code,
+    DateTime? ReportDate,
+    double? ContractLiab,     // 合同负债（元）
+    double? ContractLiabYoy,   // 合同负债同比 %
+    double? Inventory,         // 存货（元）
+    double? InventoryYoy,      // 存货同比 %
+    double? AccountsRece,      // 应收账款（元）
+    double? AccountsReceYoy);  // 应收账款同比 %
+
 /// <summary>
 /// 东方财富 datacenter HTTP 客户端（桌面/移动端通用，替代 akshare 的 5 个数据接口）。
 /// 全部接口已实测：yjbb / yjyg / 机构持仓 / 分红送配 / 中国国债收益率。
@@ -186,6 +198,56 @@ public class EastMoneyClient
             return items.Select(i => new HolderRow(Str(i, "HOLDER_NAME"), Num(i, "FREE_HOLDNUM_RATIO"))).ToList();
         }
         catch { return new List<HolderRow>(); }
+    }
+
+    /// <summary>个股资产负债表（RPT_F10_FINANCE_GBALANCE，逐票，按报告期降序返回多期）。
+    /// 仅取订单积压指标所需科目：合同负债/存货/应收账款 期末值 + 同比。
+    /// 失败或无数据返回空表。历史报告期永久缓存、最新期 24h（同 yjbb 缓存策略）。</summary>
+    public async Task<List<BalanceSheetRow>> GetBalanceSheetAsync(string code,
+        Action<string>? log = null, CancellationToken ct = default)
+    {
+        var cacheFile = Path.Combine(_cacheDir, $"zcfz_{code}.json");
+        if (TryReadCache(cacheFile, out List<BalanceSheetRow>? cached))
+        {
+            log?.Invoke($"[EM] zcfz {code} 命中缓存 {cached!.Count} 期");
+            return cached;
+        }
+
+        var prefix = code.StartsWith("920") ? "BJ"
+            : code.Length == 6 && code[0] is '0' or '2' or '3' ? "SZ"
+            : "SH";
+        var filter = Uri.EscapeDataString($"(SECUCODE=\"{code}.{prefix}\")");
+        // 注意：HSF10 接口域名是 datacenter.eastmoney.com（非 datacenter-web），
+        // source=HSF10 client=PC，与 GetHoldersAsync 的 WEB 源不同——实测此接口只在 HSF10 源可用。
+        var url = $"https://datacenter.eastmoney.com/securities/api/data/v1/get"
+            + $"?reportName=RPT_F10_FINANCE_GBALANCE&columns=REPORT_DATE,CONTRACT_LIAB,CONTRACT_LIAB_YOY,INVENTORY,INVENTORY_YOY,ACCOUNTS_RECE,ACCOUNTS_RECE_YOY"
+            + $"&filter={filter}&pageNumber=1&pageSize=100&sortColumns=REPORT_DATE&sortTypes=-1&source=HSF10&client=PC";
+        try
+        {
+            var items = await FetchOnePageAsync(url, ct);
+            var rows = items.Select(i => new BalanceSheetRow(
+                code,
+                ParseDate(Str(i, "REPORT_DATE")),
+                Num(i, "CONTRACT_LIAB"), Num(i, "CONTRACT_LIAB_YOY"),
+                Num(i, "INVENTORY"), Num(i, "INVENTORY_YOY"),
+                Num(i, "ACCOUNTS_RECE"), Num(i, "ACCOUNTS_RECE_YOY"))).ToList();
+            // 历史期数据不会变 → 永久缓存；最新期（当年）靠 24h TTL 失效。
+            // 缓存 TTL 按 code 无 reportDate 维度，取保守 24h（含最新期）。
+            TryWriteCache(cacheFile, rows, TimeSpan.FromHours(24));
+            return rows;
+        }
+        catch (Exception e)
+        {
+            log?.Invoke($"[EM] 资产负债表({code}) 拉取失败: {e.Message}");
+            return new List<BalanceSheetRow>();
+        }
+    }
+
+    private static DateTime? ParseDate(string s)
+    {
+        if (s.Length >= 10 && DateTime.TryParseExact(s[..10], "yyyy-MM-dd", Inv,
+                DateTimeStyles.None, out var d)) return d;
+        return null;
     }
 
     /// <summary>个股历史现金分红（每10股税前股利 → 每股 DPS；按除权日升序）。

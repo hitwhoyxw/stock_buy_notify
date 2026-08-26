@@ -96,6 +96,9 @@ public class CandidatePoolTask : IBuiltinTask
         "code", "name", "industry", "price", "total_mv_yi",
         "profit_cagr_3y", "revenue_cagr_3y", "np_yoy_latest",
         "roe_ann", "ocf_to_np", "loss_q_3y", "pe_ttm", "peg",
+        // 订单积压参考列（LLM 复核用，不进硬门槛/排序）
+        "gross_margin", "gross_margin_yoy", "rev_yoy_latest", "ocf_yoy",
+        "drr", "drgs", "ibr", "arr", "order_backlog_score", "filter_pass",
         "has_insurance", "has_social_security", "has_pension", "has_qfii",
         "inst_detail", "sort_value", "pick_reason",
     };
@@ -106,6 +109,8 @@ public class CandidatePoolTask : IBuiltinTask
         "code", "name", "industry", "text_score", "categories_hit_count",
         "np_yoy", "revenue_yoy", "gross_margin",
         "pe_ttm", "pe_dynamic", "pe_method", "peg",
+        // 订单积压参考列（LLM 复核用，不进排序）
+        "drr", "drgs", "ibr", "arr", "order_backlog_score", "filter_pass",
         "price_index_1y_high", "contract_liability_yoy", "price_above_ma60",
         "has_insurance", "has_social_security", "has_pension", "has_qfii",
         "inst_detail", "sort_value",
@@ -178,6 +183,9 @@ public class CandidatePoolTask : IBuiltinTask
         Dictionary<string, GrowthRow> Growth,
         Dictionary<string, QualityRow> Quality,
         Dictionary<string, YjbbRow> Yjbb,
+        Dictionary<string, double> TtmRevenue,        // TTM 营收 = 最近4单季营收之和（DRR 分母）
+        Dictionary<string, double> PrevGrossMargin,  // 上年同期毛利率（过滤1：毛利率同比）
+        Dictionary<string, double> PrevOcf,          // 上年同期每股经营现金流（过滤3：现金流改善）
         string Period);
 
     /// <summary>
@@ -233,6 +241,7 @@ public class CandidatePoolTask : IBuiltinTask
         var rangePeriods = chrono.Skip(1).ToList();               // 前 12 个季度判亏损
 
         var cumNp = new Dictionary<string, Dictionary<string, double>>(StringComparer.Ordinal);
+        var cumRev = new Dictionary<string, Dictionary<string, double>>(StringComparer.Ordinal); // 营收累计（TTM 用）
         var ocfMap = new Dictionary<string, double>(StringComparer.Ordinal);
         foreach (var p in chrono)
         {
@@ -244,6 +253,12 @@ public class CandidatePoolTask : IBuiltinTask
                     if (!cumNp.TryGetValue(r.Code, out var m))
                         cumNp[r.Code] = m = new Dictionary<string, double>(StringComparer.Ordinal);
                     m[p] = np;
+                }
+                if (r.Revenue is { } rev)
+                {
+                    if (!cumRev.TryGetValue(r.Code, out var mr))
+                        cumRev[r.Code] = mr = new Dictionary<string, double>(StringComparer.Ordinal);
+                    mr[p] = rev;
                 }
                 if (p == annualPeriod && r.OcfPs is { } ocf)
                     ocfMap[r.Code] = ocf;
@@ -267,12 +282,50 @@ public class CandidatePoolTask : IBuiltinTask
             quality[code] = new QualityRow(loss, ocfMap.GetValueOrDefault(code));
         }
 
+        // — TTM 营收 = 最近 4 个单季营收之和（单季推导与净利同口径：Q1累计即单季，其余=本期−上期） —
+        var ttmRevenue = new Dictionary<string, double>(StringComparer.Ordinal);
+        foreach (var (code, pmap) in cumRev)
+        {
+            // chrono 旧→新，取最新 4 个能推导出单季的报告期
+            var singles = new List<double>();
+            for (var i = chrono.Count - 1; i >= 0 && singles.Count < 4; i--)
+            {
+                var p = chrono[i];
+                if (!pmap.TryGetValue(p, out var cur)) continue;
+                double single;
+                if (p.EndsWith("0331", StringComparison.Ordinal))
+                    single = cur;
+                else if (!prevOf.TryGetValue(p, out var prev) || !pmap.TryGetValue(prev, out var prevVal))
+                    continue;
+                else
+                    single = cur - prevVal;
+                singles.Add(single);
+            }
+            if (singles.Count == 4)
+                ttmRevenue[code] = singles.Sum();
+        }
+
         // — 最新报告期 yjbb —
         var yjbbRows = await _em.GetYjbbAsync(period, L, ct);
         var yjbb = yjbbRows.GroupBy(r => r.Code)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
 
-        return new Snapshots(growth, quality, yjbb, period);
+        // — 上年同期毛利率 / 每股经营现金流（三道过滤用，取 chrono 倒数第5期 = 同一季上年）—
+        // chrono 旧→新 13 期，最新 chrono[^1] 即 period，上年同期 = chrono[^5]（往前4季）
+        var prevGrossMargin = new Dictionary<string, double>(StringComparer.Ordinal);
+        var prevOcf = new Dictionary<string, double>(StringComparer.Ordinal);
+        if (chrono.Count >= 5)
+        {
+            var prevPeriod = chrono[^5];
+            var prevRows = await _em.GetYjbbAsync(prevPeriod, L, ct); // 历史期有磁盘缓存，无新增网络压力
+            foreach (var r in prevRows)
+            {
+                if (r.GrossMargin is { } gm) prevGrossMargin[r.Code] = gm;
+                if (r.OcfPs is { } ocf) prevOcf[r.Code] = ocf;
+            }
+        }
+
+        return new Snapshots(growth, quality, yjbb, ttmRevenue, prevGrossMargin, prevOcf, period);
     }
 
     // ── A 桶 · 红利逆向 ────────────────────────────────────────────
@@ -564,6 +617,45 @@ public class CandidatePoolTask : IBuiltinTask
             }
         }
 
+        // 通过硬门槛后再逐票拉资产负债表，计算订单积压指标（DRR/DRGS/IBR/ARR + 综合得分 + 三道过滤）
+        if (results.Count > 0)
+        {
+            var obCodes = results.Select(r => r.F["code"]).ToList();
+            var raw = await FetchOrderBacklogAsync(obCodes, snap, L, ct);
+            var scores = NormalizeAndScore(raw);
+            var yjyg = await _em.GetYjygSnapshotAsync(L, ct);
+
+            foreach (var row in results)
+            {
+                var code = row.F["code"];
+                // 透传已有 yjbb 字段：最新毛利率 / 营收同比 / 现金流同比（B 桶此前未透传）
+                if (snap.Yjbb.TryGetValue(code, out var yb))
+                {
+                    row.F["gross_margin"] = yb.GrossMargin is { } gm ? gm.ToString("0.0", Inv) : "";
+                    row.F["rev_yoy_latest"] = yb.RevYoy is { } ry ? ry.ToString("0.0", Inv) : "";
+                    row.F["gross_margin_yoy"] = gm2(yb, snap.PrevGrossMargin, code);
+                    row.F["ocf_yoy"] = ocfYoy(yb, snap.PrevOcf, code);
+                }
+                else
+                {
+                    row.F["gross_margin"] = ""; row.F["rev_yoy_latest"] = "";
+                    row.F["gross_margin_yoy"] = ""; row.F["ocf_yoy"] = "";
+                }
+
+                var r = raw.GetValueOrDefault(code);
+                row.F["drr"] = r?.Drr is { } drr ? drr.ToString("0.000", Inv) : "";
+                row.F["drgs"] = r?.Drgs is { } drgs ? drgs.ToString("0.0", Inv) : "";
+                row.F["ibr"] = r?.Ibr is { } ibr ? ibr.ToString("0.0", Inv) : "";
+                row.F["arr"] = r?.Arr is { } arr ? arr.ToString("0.0", Inv) : "";
+
+                var (score, hasData) = scores.GetValueOrDefault(code);
+                row.F["order_backlog_score"] = hasData ? score.ToString("0.0", Inv) : "";
+
+                var (pass, note) = ComputeFilterPass(code, snap, snap.PrevGrossMargin, snap.PrevOcf, yjyg);
+                row.F["filter_pass"] = pass ? "是" : $"否({note})";
+            }
+        }
+
         // 剔除分布分两行打印：阈值不足是真实没达门槛，数据缺失是源没覆盖到。
         // 数据缺失这本账是 B 桶塌成 1 只的铁证——一眼可判是数据故障而非策略结果。
         var dropNote = string.Join("、", dropped.Where(kv => kv.Value > 0)
@@ -612,6 +704,11 @@ public class CandidatePoolTask : IBuiltinTask
         L($"[C] T4 PASS {passed.Count} 只，补充财务指标（yjbb + 腾讯行情）…");
         var fund = await _tencent.GetBatchAsync(allCodes, L, ct);
         var inst = await FetchInstitutionalHoldersAsync(allCodes, L, ct);
+
+        // 订单积压指标：逐票拉资产负债表 + 归一化评分（allCodes 本就是 T4 PASS 小样本）
+        var orderRaw = await FetchOrderBacklogAsync(allCodes, snap, L, ct);
+        var orderScores = NormalizeAndScore(orderRaw);
+        var yjyg = await _em.GetYjygSnapshotAsync(L, ct);
 
         // 报告期 → 年化系数（动态 PE 用：一季报×4 / 中报×2 / 三季报×4/3 / 年报×1）
         var (qLabel, annFactor) = snap.Period[^4..] switch
@@ -689,7 +786,18 @@ public class CandidatePoolTask : IBuiltinTask
             row.F["pe_method"] = peMethod;
             row.F["peg"] = pegStr;
             row.F["price_index_1y_high"] = "";          // 需要行业指数，LLM 层验证
-            row.F["contract_liability_yoy"] = "";       // 需要财报，LLM 层验证
+            // 订单积压指标（填实原空占位 + 新增列）
+            var or = orderRaw.GetValueOrDefault(code);
+            // contract_liability_yoy 用合同负债同比原值填实（保留原列名供 yaml 既有契约）
+            row.F["contract_liability_yoy"] = or?.ContractLiabYoy is { } cy ? cy.ToString("0.0", Inv) : "";
+            row.F["drr"] = or?.Drr is { } drr ? drr.ToString("0.000", Inv) : "";
+            row.F["drgs"] = or?.Drgs is { } drgs ? drgs.ToString("0.0", Inv) : "";
+            row.F["ibr"] = or?.Ibr is { } ibr ? ibr.ToString("0.0", Inv) : "";
+            row.F["arr"] = or?.Arr is { } arr ? arr.ToString("0.0", Inv) : "";
+            var (ocs, ocsHas) = orderScores.GetValueOrDefault(code);
+            row.F["order_backlog_score"] = ocsHas ? ocs.ToString("0.0", Inv) : "";
+            var (fpass, fnote) = ComputeFilterPass(code, snap, snap.PrevGrossMargin, snap.PrevOcf, yjyg);
+            row.F["filter_pass"] = fpass ? "是" : $"否({fnote})";
             row.F["price_above_ma60"] = aboveMa60 ? "是" : "否";
             row.F["has_insurance"] = info.Insurance ? "是" : "";
             row.F["has_social_security"] = info.SocialSecurity ? "是" : "";
@@ -772,6 +880,143 @@ public class CandidatePoolTask : IBuiltinTask
         return result;
     }
 
+    // ── 订单积压指标（合同负债/存货/应收账款，逐票拉资产负债表） ───────
+
+    /// <summary>订单积压原始指标（归一化前）。DRR 为比值，DRGS/IBR/ARR 为增速差(pct)。
+    /// ContractLiabYoy 为合同负债同比原值（填实 C 桶既有 contract_liability_yoy 占位列）。</summary>
+    private sealed record OrderBacklogRaw(
+        string Code, double? Drr, double? Drgs, double? Ibr, double? Arr,
+        double? ContractLiabYoy);
+
+    /// <summary>逐票拉资产负债表，计算订单积压原始指标（B/C 桶共用）。
+    /// DRR=期末合同负债/TTM营收；DRGS=合同负债同比−营收同比；IBR=存货同比−营收同比；
+    /// ARR=应收账款同比−营收同比。资产负债表 *_YOY 字段直接给同比，省去自算两年值。
+    /// 失败/缺数据 → 对应字段 null（后续归一化跳过、输出留空）。</summary>
+    private async Task<Dictionary<string, OrderBacklogRaw>> FetchOrderBacklogAsync(
+        IReadOnlyList<string> codes, Snapshots snap, Action<string> L, CancellationToken ct)
+    {
+        L($"拉取资产负债表（{codes.Count} 只，逐票）…");
+        var result = new Dictionary<string, OrderBacklogRaw>(StringComparer.Ordinal);
+        for (var i = 0; i < codes.Count; i++)
+        {
+            var code = codes[i];
+            double? contractLiab = null, contractLiabYoy = null, inventoryYoy = null, accountsReceYoy = null;
+            try
+            {
+                // 资产负债表按报告期降序，取最新一期
+                var bs = await _em.GetBalanceSheetAsync(code, L, ct);
+                if (bs.Count > 0)
+                {
+                    var latest = bs[0];
+                    contractLiab = latest.ContractLiab;
+                    contractLiabYoy = latest.ContractLiabYoy;
+                    inventoryYoy = latest.InventoryYoy;
+                    accountsReceYoy = latest.AccountsReceYoy;
+                }
+            }
+            catch
+            {
+                // 单票失败不影响整体，字段留 null
+            }
+
+            // 营收同比（yjbb rev_yoy，pct）
+            double? revYoy = snap.Yjbb.TryGetValue(code, out var y) ? y.RevYoy : null;
+
+            // DRR = 期末合同负债 / TTM营收（TTM 来自快照；合同负债或 TTM 缺失 → null）
+            double? drr = null;
+            if (contractLiab is { } cl && snap.TtmRevenue.TryGetValue(code, out var ttm) && ttm > 0)
+                drr = cl / ttm;
+
+            // DRGS/IBR/ARR = 各科目同比 − 营收同比（同比接口直接给，pct 口径）
+            double? drgs = contractLiabYoy is { } cy && revYoy is { } ry ? cy - ry : null;
+            double? ibr = inventoryYoy is { } iy && revYoy is { } ry2 ? iy - ry2 : null;
+            double? arr = accountsReceYoy is { } ay && revYoy is { } ry3 ? ay - ry3 : null;
+
+            result[code] = new OrderBacklogRaw(code, drr, drgs, ibr, arr, contractLiabYoy);
+            if ((i + 1) % 20 == 0) L($"  资产负债表 {i + 1}/{codes.Count}");
+            await Task.Delay(150, ct); // 与机构持仓同节奏防限频
+        }
+        L("资产负债表拉取完成");
+        return result;
+    }
+
+    /// <summary>批次内 min-max 归一化到 0~100 并加权得 order_backlog_score。
+    /// DRR/DRGS/IBR 各自在批次内归一化（缺值跳过，不参与 min/max 计算）。
+    /// 权重：DRR 0.4 / DRGS 0.4 / IBR 0.2。ARR 仅展示不进得分。
+    /// 返回 code → (score 0~100, 是否有足够数据计算)。</summary>
+    private static Dictionary<string, (double Score, bool HasData)> NormalizeAndScore(
+        Dictionary<string, OrderBacklogRaw> raw)
+    {
+        static (double min, double max) Range(IEnumerable<double?> vals)
+        {
+            var present = vals.Where(v => v.HasValue).Select(v => v!.Value).ToList();
+            if (present.Count == 0) return (0, 0);
+            return (present.Min(), present.Max());
+        }
+        static double Norm(double? v, double min, double max) =>
+            v is { } x && max > min ? (x - min) / (max - min) * 100 : 50; // 单值/缺值给中位
+
+        var (drrMin, drrMax) = Range(raw.Values.Select(r => r.Drr));
+        var (drgsMin, drgsMax) = Range(raw.Values.Select(r => r.Drgs));
+        var (ibrMin, ibrMax) = Range(raw.Values.Select(r => r.Ibr));
+
+        var scores = new Dictionary<string, (double, bool)>(StringComparer.Ordinal);
+        foreach (var (code, r) in raw)
+        {
+            var hasData = r.Drr.HasValue || r.Drgs.HasValue || r.Ibr.HasValue;
+            if (!hasData) { scores[code] = (0, false); continue; }
+            var score = 0.4 * Norm(r.Drr, drrMin, drrMax)
+                      + 0.4 * Norm(r.Drgs, drgsMin, drgsMax)
+                      + 0.2 * Norm(r.Ibr, ibrMin, ibrMax);
+            scores[code] = (score, true);
+        }
+        return scores;
+    }
+
+    /// <summary>三道过滤（准入参考，不剔除）：毛利率同比未大幅下滑(>-3pct)、
+    /// 营收预告正(>0)、经营现金流改善。返回 (是否全过, 未过的说明)。</summary>
+    private static (bool Pass, string Note) ComputeFilterPass(
+        string code, Snapshots snap, Dictionary<string, double> prevGrossMargin,
+        Dictionary<string, double> prevOcf, IReadOnlyList<YjygRow> yjyg)
+    {
+        var notes = new List<string>();
+
+        // 过滤1：毛利率同比 > -3pct（需上年同期毛利率，缺则放行）
+        if (snap.Yjbb.TryGetValue(code, out var y) && y.GrossMargin is { } gm
+            && prevGrossMargin.TryGetValue(code, out var prevGm))
+        {
+            if (gm - prevGm < -3.0) notes.Add("毛利率同比下滑>3pct");
+        }
+
+        // 过滤2：营收增速预期 > 0（业绩预告正面 gain_pct > 0；无预告则放行）
+        var yg = yjyg.FirstOrDefault(r => r.Code == code);
+        if (yg is not null && yg.GainPct is { } g && g <= 0) notes.Add("营收预告非正");
+
+        // 过滤3：经营现金流改善（最新 ocf_ps >= 上年同期；缺则放行）
+        if (y?.OcfPs is { } ocf && prevOcf.TryGetValue(code, out var prevO))
+        {
+            if (ocf < prevO) notes.Add("经营现金流同比恶化");
+        }
+
+        return notes.Count == 0 ? (true, "") : (false, string.Join("；", notes));
+    }
+
+    /// <summary>毛利率同比变化（pct，最新 − 上年同期；缺则空串）。</summary>
+    private static string gm2(YjbbRow y, Dictionary<string, double> prevGm, string code)
+    {
+        if (y.GrossMargin is { } gm && prevGm.TryGetValue(code, out var p))
+            return (gm - p).ToString("0.0", Inv);
+        return "";
+    }
+
+    /// <summary>每股经营现金流同比变化（最新 − 上年同期；缺则空串）。</summary>
+    private static string ocfYoy(YjbbRow y, Dictionary<string, double> prevOcf, string code)
+    {
+        if (y.OcfPs is { } ocf && prevOcf.TryGetValue(code, out var p))
+            return (ocf - p).ToString("0.00", Inv);
+        return "";
+    }
+
     // ── 输出组装（skill_input_T6_{X}.md 格式对齐 Python assemble_bucket） ──
 
     private sealed class Row
@@ -806,6 +1051,7 @@ public class CandidatePoolTask : IBuiltinTask
         var parts = new List<string> { $"=== BUCKET: {letter} ===" };
         if (letter == "A") parts.Add(RulesNoteA());
         else if (letter == "B") parts.Add(RulesNoteB());
+        else if (letter == "C") parts.Add(RulesNoteC());
         parts.Add(rows.Count == 0 ? $"（{letter} 桶候选为空）" : ToCsv(mdCols, rows));
         parts.Add("");
         parts.Add($"=== YAML_TAG: {StrategyConfig.YamlTag} ===");
@@ -833,8 +1079,30 @@ public class CandidatePoolTask : IBuiltinTask
         + $" + 0<PE(TTM)≤{MaxPe:0} + PEG≤{MaxPeg}"
         + "（PEG=PE÷min(净利CAGR,100%)）；核心数据缺失即剔除，每只票见 pick_reason",
         "排序公式: sort_value = min(净利CAGR,100)/PE（即 1/PEG）降序",
-        "批量层未覆盖、需 LLM/人工复核: 商誉/净资产、应收vs营收增速、研发占比、"
-        + "行业渗透率、PE 上市以来分位",
+        "订单积压参考列（LLM 复核用，不进硬门槛/排序，数据缺失留空）:",
+        "  drr = 期末合同负债/TTM营收，越大越好（订单积压待交付越充足）",
+        "  drgs = 合同负债同比−营收同比，越大越好（合同负债增速快于营收=订单加速积压）",
+        "  ibr = 存货同比−营收同比，适度为好（过大=滞销囤货风险，过小=无货可交）",
+        "  arr = 应收账款同比−营收同比，越小越好（应收增速超营收=降价赊销/回款恶化）",
+        "  order_backlog_score = 0.4×DRR+0.4×DRGS+0.2×IBR（批次内min-max归一化0~100），越大越好",
+        "  filter_pass = 三道过滤是否全过（毛利率同比>-3pct / 营收预告正 / 现金流改善），全过为好",
+        "  gross_margin/gross_margin_yoy/rev_yoy_latest/ocf_yoy = 最新毛利率/毛利率同比/营收同比/现金流同比",
+        "批量层未覆盖、需 LLM/人工复核: 商誉/净资产、研发占比、行业渗透率、PE 上市以来分位",
+    });
+
+    private static string RulesNoteC() => string.Join("\n", new[]
+    {
+        "筛选规则: T4 文本判定 PASS（≥1类命中即可）→ 补 yjbb 增速/毛利率 + 动态PE + MA60",
+        "排序公式: sort_value = min(净利同比,500) + 机构持仓×10 降序（文本得分仅初筛，不进排序）",
+        "订单积压参考列（LLM 复核用，不进排序，数据缺失留空）:",
+        "  drr = 期末合同负债/TTM营收，越大越好（订单积压待交付越充足）",
+        "  drgs = 合同负债同比−营收同比，越大越好（合同负债增速快于营收=订单加速积压）",
+        "  ibr = 存货同比−营收同比，适度为好（过大=滞销囤货风险，过小=无货可交）",
+        "  arr = 应收账款同比−营收同比，越小越好（应收增速超营收=降价赊销/回款恶化）",
+        "  order_backlog_score = 0.4×DRR+0.4×DRGS+0.2×IBR（批次内min-max归一化0~100），越大越好",
+        "  filter_pass = 三道过滤是否全过（毛利率同比>-3pct / 营收预告正 / 现金流改善），全过为好",
+        "  contract_liability_yoy = 合同负债同比原值（验证景气文本是否被预收款数据印证）",
+        "需 LLM/人工复核: price_index_1y_high（行业价格指数是否创1年新高）",
     });
 
     /// <summary>rows → CSV 文本（与 pandas to_csv 等价：表头 + 数据行，含转义）。</summary>
