@@ -8,29 +8,29 @@
     {
       "Code": "601919",
       "Name": "中远海控",
-      "StrategyId": "S8",
-      "StrategyName": "均线多头排列",
+      "Time": "2026-08-26 13:53",
       "Action": "MA5>MA10>MA20多头排列且量比≥1.5倍放量，短期上升趋势确立，持有或逢低介入",
       "Priority": "P1",
-      "Time": "2026-08-26 13:53"
+      "StrategyId": "S8",
+      "StrategyName": "均线多头排列"
     },
     {
       "Code": "000833",
       "Name": "粤桂股份",
-      "StrategyId": "S1",
-      "StrategyName": "跌破MA60减仓",
+      "Time": "2026-08-26 09:15",
       "Action": "现价跌破MA60均线，建议减仓1/3观察",
       "Priority": "",
-      "Time": "2026-08-26 09:15"
+      "StrategyId": "S1",
+      "StrategyName": "跌破MA60减仓"
     },
     {
       "Code": "000833",
       "Name": "粤桂股份",
-      "StrategyId": "S1",
-      "StrategyName": "跌破MA60减仓",
+      "Time": "2026-08-25 15:39",
       "Action": "现价跌破MA60均线，建议减仓1/3观察",
       "Priority": "",
-      "Time": "2026-08-25 15:39"
+      "StrategyId": "S1",
+      "StrategyName": "跌破MA60减仓"
     }
   ]
 }
