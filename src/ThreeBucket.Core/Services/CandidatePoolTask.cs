@@ -366,10 +366,10 @@ public class CandidatePoolTask : IBuiltinTask
             if (pb is { } p && p != 0 && p > MaxPb) continue;
             if (roe is { } ro && ro < MinRoeA) continue;
 
-            // 盈利质量：近3年单季亏损 → 剔除；年报经营现金流为负（借钱分红）→ 剔除
+            // 盈利质量：近3年单季亏损 → 剔除；年报经营现金流为负（借钱分红嫌疑）→ 不剔除，仅显眼标记
             snap.Quality.TryGetValue(c.Code, out var q);
             if (q is { LossQ: > 0 }) continue;
-            if (q?.OcfPsAnnual is < 0) continue;
+            var ocfNeg = q?.OcfPsAnnual is < 0;
 
             // quality_score（Python 近似口径：fcf=1.0、div_years=5、机构每种 +0.05）
             var roeNorm = roe is { } rv && rv != 0 ? rv : 10.0; // Python: roe or 10.0
@@ -391,7 +391,9 @@ public class CandidatePoolTask : IBuiltinTask
                 pb is { } p2 && p2 != 0 ? $"PB {p2:0.00}≤{MaxPb:0.0}" : "PB缺失放行",
                 roe is { } r2 ? $"ROE年化{r2:0.0}%≥{MinRoeA:0.0}%" : "ROE缺失放行",
                 q is not null ? $"近3年亏损季度{q.LossQ}" : "亏损数据缺失放行",
-                q?.OcfPsAnnual is { } oq ? $"年报经营现金流/股{oq:0.00}≥0" : "现金流数据缺失放行",
+                q?.OcfPsAnnual is { } oq
+                    ? (ocfNeg ? $"⚠️年报经营现金流/股{oq:0.00}<0（借钱分红嫌疑，请人工复核）" : $"年报经营现金流/股{oq:0.00}≥0")
+                    : "现金流数据缺失放行",
             };
 
             var row = new Row { Sort = sortValue };
@@ -1062,7 +1064,7 @@ public class CandidatePoolTask : IBuiltinTask
     {
         $"筛选规则: 中证红利成分 + 股息率TTM≥{MinDy:0.0}% + PB≤{MaxPb:0.0} + ROE≥{MinRoeA:0.0}%"
         + "（ROE 为最新报告期年化近似，非5年均值）"
-        + " + 近3年无单季亏损 + 最新年报每股经营现金流≥0（自由现金流近似，剔除借钱分红）"
+        + " + 近3年无单季亏损；年报每股经营现金流为负（借钱分红嫌疑）不剔除，仅在 pick_reason 标⚠️显眼提示，请人工/LLM 复核"
         + "；数据缺失时放行，见 pick_reason",
         "排序公式: sort_value = 股息率TTM × quality_score（quality_score 含 ROE 权重）",
     });
