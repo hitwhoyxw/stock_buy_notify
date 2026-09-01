@@ -12,12 +12,13 @@ namespace ThreeBucket.Core.Services;
 /// - A 桶（红利逆向）：中证红利成分 → 股息率/PB/ROE 过滤（数据缺失放行）→ quality_score 排序
 /// - B 桶（成长）：中证1000+500+A500+800 成分 → 市值/CAGR/增速/ROE/现金流/PEG 过滤
 ///   （核心数据缺失即剔除）→ 1/PEG 排序
-/// - C 桶（热点周期）：T4 文本判定 PASS → yjbb 补充增速/毛利率 → 动态PE + MA60 → 增速排序
+/// - C 桶（热点周期）：T4 文本判定 PASS → yjbb 补充增速/毛利率 → 动态PE + MA20（仅提示） → 增速排序
 ///
 /// 产出：data/skill_input_T6_{A,B,C}.md（LLM 消费，格式对齐 skills/t6_semantic_ranking.md）
 /// + data/candidates_{A,B,C}.csv（直接查看）。每桶按排序值截断 Top 100（LLM 分析上限）。
 ///
-/// 阈值硬编码自 yaml v1.0（bucket_A.stock_filters / bucket_B.batch_screen）。
+/// 阈值从 trading-system/02_strategy_config.yaml 加载（PoolThresholds，改 yaml 即生效无需重编译；
+/// yaml 缺失时回退内置默认）。Python 端 scripts/lib/config.py 读同一文件，两端口径强制一致。
 /// ROE 口径：yjbb 最新报告期加权 ROE × 年化系数（对齐 Python _attach_roe——
 /// 腾讯行情快照无 ROE，Python 版同样从 yjbb 年化补齐）。
 /// </summary>
@@ -44,22 +45,14 @@ public class CandidatePoolTask : IBuiltinTask
         _tencent = tencent;
         _emSnap = emSnap;
         _klines = klines;
+        // 阈值源：<项目根>/trading-system/02_strategy_config.yaml（dataDir 的上一级）
+        var projectRoot = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(dataDir)));
+        _th = PoolThresholds.Load(Path.Combine(projectRoot ?? "", "trading-system", "02_strategy_config.yaml"));
     }
 
-    // ── 阈值（yaml v1.0 硬编码） ───────────────────────────────────
-
-    private const double MinDy = 3.0;      // A桶 股息率TTM下限 %
-    private const double MaxPb = 2.0;      // A桶 PB 上限
-    private const double MinRoeA = 10.0;   // A桶 ROE 年化下限 %
-    private const double MinMv = 50.0;     // B桶 总市值下限（亿）
-    private const double MinNpCagr = 20.0; // B桶 净利3年CAGR下限 %
-    private const double MinRevCagr = 15.0;// B桶 营收3年CAGR下限 %
-    private const double MinNpYoy = 15.0;  // B桶 最新期净利同比下限 %
-    private const double MinRoeB = 8.0;    // B桶 ROE 年化下限 %
-    private const double MinOcfRatio = 0.5;// B桶 年报 OCF/NP 下限
-    private const double MaxPe = 60.0;     // B桶 PE(TTM) 上限
-    private const double MaxPeg = 1.2;     // B桶 PEG 上限
-    private const int TopN = 100;          // 每桶 LLM 分析上限
+    // ── 阈值：从 trading-system/02_strategy_config.yaml 加载（人工编辑该文件即生效，无需重编译）──
+    // yaml 缺失/解析失败时回退 PoolThresholds.Defaults()。字段含义见 PoolThresholds 注释。
+    private readonly PoolThresholds _th;
 
     // ── 机构持仓识别关键词（险资/社保/养老金/QFII） ─────────────────
 
@@ -139,11 +132,11 @@ public class CandidatePoolTask : IBuiltinTask
 
             // Top N 截断（每桶 LLM 分析上限）
             var cBefore = cRows.Count;
-            aRows = aRows.Take(TopN).ToList();
-            bRows = bRows.Take(TopN).ToList();
-            cRows = cRows.Take(TopN).ToList();
+            aRows = aRows.Take(_th.TopN).ToList();
+            bRows = bRows.Take(_th.TopN).ToList();
+            cRows = cRows.Take(_th.TopN).ToList();
             L($"三桶候选：A {aRows.Count}/{aScanned}、B {bRows.Count}/{bScanned}、"
-              + $"C {cRows.Count}/{cScanned}（C 截前 {cBefore}，上限 Top{TopN}）");
+              + $"C {cRows.Count}/{cScanned}（C 截前 {cBefore}，上限 Top{_th.TopN}）");
 
             // 输出 skill_input_T6_{A,B,C}.md + candidates_{A,B,C}.csv
             Directory.CreateDirectory(_dataDir);
@@ -362,9 +355,9 @@ public class CandidatePoolTask : IBuiltinTask
             var industry = snap.Yjbb.GetValueOrDefault(c.Code)?.Industry ?? "";
 
             // 硬门槛：数据缺失放行（成分股本身已由指数做过股息筛选）
-            if (dy is { } d && d != 0 && d < MinDy) continue;
-            if (pb is { } p && p != 0 && p > MaxPb) continue;
-            if (roe is { } ro && ro < MinRoeA) continue;
+            if (dy is { } d && d != 0 && d < _th.MinDy) continue;
+            if (pb is { } p && p != 0 && p > _th.MaxPb) continue;
+            if (roe is { } ro && ro < _th.MinRoeA) continue;
 
             // 盈利质量：近3年单季亏损 → 剔除；年报经营现金流为负（借钱分红嫌疑）→ 不剔除，仅显眼标记
             snap.Quality.TryGetValue(c.Code, out var q);
@@ -387,9 +380,9 @@ public class CandidatePoolTask : IBuiltinTask
 
             var reasons = new List<string>
             {
-                dy is { } d2 && d2 != 0 ? $"股息率{d2:0.00}%≥{MinDy:0.0}%" : "股息率缺失放行",
-                pb is { } p2 && p2 != 0 ? $"PB {p2:0.00}≤{MaxPb:0.0}" : "PB缺失放行",
-                roe is { } r2 ? $"ROE年化{r2:0.0}%≥{MinRoeA:0.0}%" : "ROE缺失放行",
+                dy is { } d2 && d2 != 0 ? $"股息率{d2:0.00}%≥{_th.MinDy:0.0}%" : "股息率缺失放行",
+                pb is { } p2 && p2 != 0 ? $"PB {p2:0.00}≤{_th.MaxPb:0.0}" : "PB缺失放行",
+                roe is { } r2 ? $"ROE年化{r2:0.0}%≥{_th.MinRoeA:0.0}%" : "ROE缺失放行",
                 q is not null ? $"近3年亏损季度{q.LossQ}" : "亏损数据缺失放行",
                 q?.OcfPsAnnual is { } oq
                     ? (ocfNeg ? $"⚠️年报经营现金流/股{oq:0.00}<0（借钱分红嫌疑，请人工复核）" : $"年报经营现金流/股{oq:0.00}≥0")
@@ -519,7 +512,7 @@ public class CandidatePoolTask : IBuiltinTask
 
             // 市值门槛（缺市值视为不满足：中盘定位是硬约束）
             if (totalMv is null) { droppedMissing["市值"]++; continue; }
-            if (totalMv < MinMv) { dropped["市值不足"]++; continue; }
+            if (totalMv < _th.MinMv) { dropped["市值不足"]++; continue; }
 
             // 成长门槛：CAGR 缺失（基期为负/缺披露）直接剔除，不放行
             snap.Growth.TryGetValue(code, out var g);
@@ -528,19 +521,19 @@ public class CandidatePoolTask : IBuiltinTask
             var ocfRatio = g?.OcfNpRatio;
             var ocfPsA = g?.OcfPsAnnual;
             if (npCagr is null) { droppedMissing["净利CAGR"]++; continue; }
-            if (npCagr < MinNpCagr) { dropped["净利CAGR"]++; continue; }
+            if (npCagr < _th.MinNpCagr) { dropped["净利CAGR"]++; continue; }
             if (revCagr is null) { droppedMissing["营收CAGR"]++; continue; }
-            if (revCagr < MinRevCagr) { dropped["营收CAGR"]++; continue; }
+            if (revCagr < _th.MinRevCagr) { dropped["营收CAGR"]++; continue; }
 
             // 最新报告期净利同比（成长未熄火）；快照缺该票则剔除
             var npYoy = y?.NpYoy;
             var industry = y?.Industry ?? "";
             if (npYoy is null) { droppedMissing["最新期增速"]++; continue; }
-            if (npYoy < MinNpYoy) { dropped["最新期增速"]++; continue; }
+            if (npYoy < _th.MinNpYoy) { dropped["最新期增速"]++; continue; }
 
             // ROE 年化门槛
             if (roe is null) { droppedMissing["ROE"]++; continue; }
-            if (roe < MinRoeB) { dropped["ROE"]++; continue; }
+            if (roe < _th.MinRoeB) { dropped["ROE"]++; continue; }
 
             // 盈利质量：近 3 年单季亏损（缺失同样剔除——核心数据缺失即剔除）
             snap.Quality.TryGetValue(code, out var q);
@@ -550,14 +543,14 @@ public class CandidatePoolTask : IBuiltinTask
 
             // 现金流：年报 OCF/NP 与每股 OCF
             if (ocfRatio is null || ocfPsA is null) { droppedMissing["现金流"]++; continue; }
-            if (ocfRatio < MinOcfRatio || ocfPsA <= 0) { dropped["现金流"]++; continue; }
+            if (ocfRatio < _th.MinOcfRatio || ocfPsA <= 0) { dropped["现金流"]++; continue; }
 
             // 估值：PE 区间 + PEG
             if (pe is null) { droppedMissing["PE"]++; continue; }
-            if (pe <= 0 || pe > MaxPe) { dropped["PE"]++; continue; }
+            if (pe <= 0 || pe > _th.MaxPe) { dropped["PE"]++; continue; }
             var cagrCapped = Math.Min(npCagr.Value, 100.0);
             var peg = pe.Value / cagrCapped;
-            if (peg > MaxPeg)
+            if (peg > _th.MaxPeg)
             {
                 dropped["PEG"]++;
                 continue;
@@ -565,14 +558,14 @@ public class CandidatePoolTask : IBuiltinTask
 
             var sortVal = cagrCapped / pe.Value; // = 1/PEG
             var reason =
-                $"总市值{totalMv:0}亿≥{MinMv:0} | " +
-                $"净利CAGR3年+{npCagr:0}%≥{MinNpCagr:0}% | " +
-                $"营收CAGR3年+{revCagr:0}%≥{MinRevCagr:0}% | " +
-                $"最新期净利同比+{npYoy:0}%≥{MinNpYoy:0}% | " +
-                $"ROE年化{roe:0.0}%≥{MinRoeB:0}% | " +
+                $"总市值{totalMv:0}亿≥{_th.MinMv:0} | " +
+                $"净利CAGR3年+{npCagr:0}%≥{_th.MinNpCagr:0}% | " +
+                $"营收CAGR3年+{revCagr:0}%≥{_th.MinRevCagr:0}% | " +
+                $"最新期净利同比+{npYoy:0}%≥{_th.MinNpYoy:0}% | " +
+                $"ROE年化{roe:0.0}%≥{_th.MinRoeB:0}% | " +
                 "近3年亏损季度0 | " +
-                $"年报OCF/NP {ocfRatio:0.00}≥{MinOcfRatio} | " +
-                $"PE(TTM){pe:0.0}≤{MaxPe:0} | PEG {peg:0.00}≤{MaxPeg}";
+                $"年报OCF/NP {ocfRatio:0.00}≥{_th.MinOcfRatio} | " +
+                $"PE(TTM){pe:0.0}≤{_th.MaxPe:0} | PEG {peg:0.00}≤{_th.MaxPeg}";
 
             var row = new Row { Sort = sortVal };
             row.F["code"] = code;
@@ -767,7 +760,8 @@ public class CandidatePoolTask : IBuiltinTask
             var pegStr = peTtm is > 0 && npYoy is > 0
                 ? (peTtm.Value / npYoy.Value).ToString("0.00", Inv) : "";
 
-            var aboveMa60 = await CheckPriceAboveMa60Async(code, ct);
+            // 价在 MA20 上方：仅提示，不进硬门槛/排序（列名 price_above_ma60 沿用旧契约）
+            var aboveMa20 = await CheckPriceAboveMaAsync(code, 20, ct);
 
             // 主排序值：净利润同比增速封顶 500 防极端值；机构持仓每种 +10
             var sortVal = npYoy is { } ny ? Math.Min(ny, 500.0) : 0.0;
@@ -800,7 +794,7 @@ public class CandidatePoolTask : IBuiltinTask
             row.F["order_backlog_score"] = ocsHas ? ocs.ToString("0.0", Inv) : "";
             var (fpass, fnote) = ComputeFilterPass(code, snap, snap.PrevGrossMargin, snap.PrevOcf, yjyg);
             row.F["filter_pass"] = fpass ? "是" : $"否({fnote})";
-            row.F["price_above_ma60"] = aboveMa60 ? "是" : "否";
+            row.F["price_above_ma60"] = aboveMa20 ? "是" : "否";
             row.F["has_insurance"] = info.Insurance ? "是" : "";
             row.F["has_social_security"] = info.SocialSecurity ? "是" : "";
             row.F["has_pension"] = info.Pension ? "是" : "";
@@ -814,14 +808,14 @@ public class CandidatePoolTask : IBuiltinTask
         return (results.OrderByDescending(r => r.Sort).ToList(), passed.Count, "");
     }
 
-    /// <summary>个股当前价格是否在 MA60 上方（不足 60 根K线视为否）。</summary>
-    private async Task<bool> CheckPriceAboveMa60Async(string code, CancellationToken ct)
+    /// <summary>个股当前价格是否在 N 日均线上方（不足 N 根K线视为否）。C 桶 MA20 仅提示，不构成过滤。</summary>
+    private async Task<bool> CheckPriceAboveMaAsync(string code, int window, CancellationToken ct)
     {
         try
         {
-            var bars = await _klines.GetStockDailyAsync(code, 60);
-            if (bars is not { Count: >= 60 }) return false;
-            var ma = bars.TakeLast(60).Average(b => b.Close);
+            var bars = await _klines.GetStockDailyAsync(code, window);
+            if (bars is null || bars.Count < window) return false;
+            var ma = bars.TakeLast(window).Average(b => b.Close);
             return bars[^1].Close > ma;
         }
         catch
@@ -1048,9 +1042,11 @@ public class CandidatePoolTask : IBuiltinTask
         }
     }
 
-    private static string AssembleBucket(string letter, List<Row> rows, string[] mdCols)
+    private string AssembleBucket(string letter, List<Row> rows, string[] mdCols)
     {
-        var parts = new List<string> { $"=== BUCKET: {letter} ===" };
+        // 生成日期显式注入：skill 模板要求输出标题带 YYYY-MM-DD，若不告知 LLM 今天的日期，
+        // 它会拿训练数据里的旧日期来填（实测 A/B 桶输出写成 2024-05-20）
+        var parts = new List<string> { $"=== BUCKET: {letter} ===", $"生成日期: {DateTime.Today:yyyy-MM-dd}" };
         if (letter == "A") parts.Add(RulesNoteA());
         else if (letter == "B") parts.Add(RulesNoteB());
         else if (letter == "C") parts.Add(RulesNoteC());
@@ -1060,25 +1056,25 @@ public class CandidatePoolTask : IBuiltinTask
         return string.Join("\n", parts);
     }
 
-    private static string RulesNoteA() => string.Join("\n", new[]
+    private string RulesNoteA() => string.Join("\n", new[]
     {
-        $"筛选规则: 中证红利成分 + 股息率TTM≥{MinDy:0.0}% + PB≤{MaxPb:0.0} + ROE≥{MinRoeA:0.0}%"
+        $"筛选规则: 中证红利成分 + 股息率TTM≥{_th.MinDy:0.0}% + PB≤{_th.MaxPb:0.0} + ROE≥{_th.MinRoeA:0.0}%"
         + "（ROE 为最新报告期年化近似，非5年均值）"
         + " + 近3年无单季亏损；年报每股经营现金流为负（借钱分红嫌疑）不剔除，仅在 pick_reason 标⚠️显眼提示，请人工/LLM 复核"
         + "；数据缺失时放行，见 pick_reason",
         "排序公式: sort_value = 股息率TTM × quality_score（quality_score 含 ROE 权重）",
     });
 
-    private static string RulesNoteB() => string.Join("\n", new[]
+    private string RulesNoteB() => string.Join("\n", new[]
     {
-        $"筛选规则: 中证1000+500+A500+800成分(剔ST/退) + 总市值≥{MinMv:0}亿"
-        + $" + 净利3年CAGR≥{MinNpCagr:0}%(年报首末期,基期须为正)"
-        + $" + 营收3年CAGR≥{MinRevCagr:0}%"
-        + $" + 最新报告期净利同比≥{MinNpYoy:0}%"
-        + $" + ROE年化≥{MinRoeB:0}%"
+        $"筛选规则: 中证1000+500+A500+800成分(剔ST/退) + 总市值≥{_th.MinMv:0}亿"
+        + $" + 净利3年CAGR≥{_th.MinNpCagr:0}%(年报首末期,基期须为正)"
+        + $" + 营收3年CAGR≥{_th.MinRevCagr:0}%"
+        + $" + 最新报告期净利同比≥{_th.MinNpYoy:0}%"
+        + $" + ROE年化≥{_th.MinRoeB:0}%"
         + " + 近3年无单季亏损"
-        + $" + 最新年报OCF/NP≥{MinOcfRatio}且每股OCF>0"
-        + $" + 0<PE(TTM)≤{MaxPe:0} + PEG≤{MaxPeg}"
+        + $" + 最新年报OCF/NP≥{_th.MinOcfRatio}且每股OCF>0"
+        + $" + 0<PE(TTM)≤{_th.MaxPe:0} + PEG≤{_th.MaxPeg}"
         + "（PEG=PE÷min(净利CAGR,100%)）；核心数据缺失即剔除，每只票见 pick_reason",
         "排序公式: sort_value = min(净利CAGR,100)/PE（即 1/PEG）降序",
         "订单积压参考列（LLM 复核用，不进硬门槛/排序，数据缺失留空）:",
@@ -1094,7 +1090,7 @@ public class CandidatePoolTask : IBuiltinTask
 
     private static string RulesNoteC() => string.Join("\n", new[]
     {
-        "筛选规则: T4 文本判定 PASS（≥1类命中即可）→ 补 yjbb 增速/毛利率 + 动态PE + MA60",
+        "筛选规则: T4 文本判定 PASS（≥1类命中即可）→ 补 yjbb 增速/毛利率 + 动态PE + MA20（仅提示，不构成过滤）",
         "排序公式: sort_value = min(净利同比,500) + 机构持仓×10 降序（文本得分仅初筛，不进排序）",
         "订单积压参考列（LLM 复核用，不进排序，数据缺失留空）:",
         "  drr = 期末合同负债/TTM营收，越大越好（订单积压待交付越充足）",
@@ -1141,7 +1137,7 @@ public class CandidatePoolTask : IBuiltinTask
                 r => new[] { r.F["code"], r.F["name"], r.F["total_mv_yi"], r.F["profit_cagr_3y"],
                     r.F["pe_ttm"], r.F["peg"], r.F["sort_value"] }),
             _ => TopTable(rows,
-                new[] { "代码", "名称", "净利同比%", "动态PE", "MA60上", "排序值" },
+                new[] { "代码", "名称", "净利同比%", "动态PE", "MA20上", "排序值" },
                 r => new[] { r.F["code"], r.F["name"], r.F["np_yoy"], r.F["pe_dynamic"],
                     r.F["price_above_ma60"], r.F["sort_value"] }),
         });

@@ -70,6 +70,11 @@ public partial class PortfolioView : UserControl, IRefreshable
         MenuClear.Click += (_, _) => _ = QuickClearAsync();
         MenuTrades.Click += (_, _) => { ViewCombo.SelectedIndex = 1; };
 
+        // 右键「加入监控自选」：与候选池同口径，把当前选中持仓写入 watchlist.csv
+        MenuAddWatch.Click += (_, _) => AddToWatch();
+        // 右键打开菜单时按选中行是否已在监控池切换两项可见性
+        PosMenu.Opening += (_, _) => SyncWatchMenu();
+
         // 流水表双击内联编辑：校验 → 归一化 → 回写 CSV → 持仓/图表联动刷新
         TradesGrid.CellEditEnding += (_, e) => OnTradeCellEditEnding(e);
 
@@ -385,6 +390,25 @@ public partial class PortfolioView : UserControl, IRefreshable
         if (PosGrid.SelectedItem is not Position pos) return 100;
         var half = Math.Max(100, (int)(pos.Shares / 2 / 100) * 100);
         return Math.Min(half, (int)pos.Shares);
+    }
+
+    // ── 加入监控自选（与候选池 AddToWatch 同口径） ──
+
+    private void AddToWatch()
+    {
+        if (PosGrid.SelectedItem is not Position pos) { _status("请先选中一行持仓"); return; }
+        var (ok, msg) = _store.AddWatch(pos.Code, pos.Name, "portfolio");
+        _status(msg);
+        if (ok) SyncWatchMenu();
+    }
+
+    /// <summary>右键菜单打开时，按选中行是否已在监控池切换两项可见性：
+    /// 未在池 → 显示「加入监控自选」；已在池 → 显示「已在监控池」。</summary>
+    private void SyncWatchMenu()
+    {
+        var inWatch = PosGrid.SelectedItem is Position pos && _store.InWatchlist(pos.Code);
+        MenuAddWatch.IsVisible = !inWatch;
+        MenuAlreadyWatch.IsVisible = inWatch;
     }
 
     private async Task OnEditTradeAsync()

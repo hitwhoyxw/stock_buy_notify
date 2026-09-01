@@ -22,7 +22,8 @@
 ### C 桶（热点周期）
 - **主排序**：文本得分（来自 T4-C 输出）+ 数据验证条数
 - 一句话理由结构：`{行业}景气拐点，{关键景气证据一句原文}，单季扣非 +{X}%，订单能见度{order_backlog_score}分（合同负债同比{Y}%{验证景气/或存降价甩卖杂质}），{价格/供给证据}`
-- **红线**：命中任一顶部反指（低PE+高利润；行业新增产能激增；价格指数<MA60）→ REJECT；`ibr` 异常高（存货堆积远超营收）且 `order_backlog_score` 低 → 标注"疑似滞销囤货"剔除；`filter_pass=否` 需说明哪道过滤未过
+- **红线**：命中任一顶部反指（低PE+高利润；行业新增产能激增）→ REJECT；`ibr` 异常高（存货堆积远超营收）且 `order_backlog_score` 低 → 标注"疑似滞销囤货"剔除；`filter_pass=否` 需说明哪道过滤未过
+- **价格均线仅提示（2026-08-31 起不再作为剔除依据）**：`price_above_ma60` 列实际口径为 **MA20**（列名沿用旧契约），未站上 MA20 说明短期动能弱，但**不得仅凭此列 REJECT**——需结合景气验证（订单/现金流/合同负债）综合判断；理由中可写"价在MA20下（动能待确认）"作为提示，最终去留由景气证据决定
 
 ## 输入格式
 
@@ -38,7 +39,7 @@
 （批量层未覆盖、需你重点复核：商誉/净资产、研发占比、行业渗透率、PE 上市以来分位）
 
 === BUCKET: C ===
-（CSV 列头，含 code, name, industry, text_score, categories_hit_count, np_yoy, revenue_yoy, gross_margin, pe_ttm, pe_dynamic, pe_method, peg, drr, drgs, ibr, arr, order_backlog_score, filter_pass, price_index_1y_high, contract_liability_yoy, price_above_ma60）
+（CSV 列头，含 code, name, industry, text_score, categories_hit_count, np_yoy, revenue_yoy, gross_margin, pe_ttm, pe_dynamic, pe_method, peg, drr, drgs, ibr, arr, order_backlog_score, filter_pass, price_index_1y_high, contract_liability_yoy, price_above_ma60（实际口径 MA20，仅提示））
 订单积压参考列（drr/drgs/ibr/arr/order_backlog_score/filter_pass）含义与方向见 skill_input 头部规则说明，用于验证景气文本是否被预收款/存货数据印证，不参与脚本排序。
 ```
 
@@ -48,6 +49,8 @@
 
 ```markdown
 # {A|B|C} 桶候选池 · YYYY-MM-DD
+
+（标题日期取输入文件头部的「生成日期」行，不得使用你训练数据中的日期）
 
 ## A 桶 · 红利逆向
 

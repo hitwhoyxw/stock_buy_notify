@@ -104,6 +104,8 @@ code,name,industry,price,total_mv_yi,profit_cagr_3y,revenue_cagr_3y,np_yoy_lates
 ```markdown
 # B 桶 · 成长候选池 · YYYY-MM-DD
 
+（标题日期取输入文件头部的「生成日期」行，不得使用你训练数据中的日期）
+
 ## Top 10 推荐
 
 | 排名 | 代码 | 名称 | 行业 | 净利CAGR% | 营收CAGR% | ROE% | PEG | PE | 排序值 | 巴菲特视角入选理由 |

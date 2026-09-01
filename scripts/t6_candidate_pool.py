@@ -171,7 +171,7 @@ def screen_bucket_a() -> pd.DataFrame:
     except Exception:
         cfg = {}
     min_dy = cfg.get("dividend_yield_ttm_min_pct", 3.0)
-    max_pb = cfg.get("pb_max", 2.0)
+    max_pb = cfg.get("pb_max", 3.0)  # 2026-08-31 放宽：默认 2.0→3.0，与 yaml 对齐
     min_roe = cfg.get("roe_5y_avg_min_pct", 10.0)
     min_div_years = cfg.get("dividend_continuous_years_min", 3)
 
@@ -216,7 +216,9 @@ def screen_bucket_a() -> pd.DataFrame:
         if roe is not None and roe < min_roe:
             continue
 
-        # 盈利质量门槛：近3年出现过单季亏损 → 剔除；年报经营现金流为负 → 剔除（借钱分红）
+        # 盈利质量门槛：近3年出现过单季亏损 → 剔除；年报经营现金流为负 → 不剔除，
+        # 仅在 pick_reason 显眼标记（2026-08-31 放宽：借钱分红嫌疑交给 LLM 按行业特点复核——
+        # 银行等金融行业经营现金流天然受存贷款变动影响，直接剔除会误杀）
         loss_q = None
         ocf_ps = None
         if not pq_df.empty and code in pq_df.index:
@@ -224,8 +226,7 @@ def screen_bucket_a() -> pd.DataFrame:
             ocf_ps = _safe_float(pq_df.loc[code], ["ocf_ps_annual"])
         if loss_q is not None and loss_q > 0:
             continue
-        if ocf_ps is not None and ocf_ps < 0:
-            continue
+        ocf_neg = ocf_ps is not None and ocf_ps < 0
 
         # quality_score 近似计算
         roe_score = min(roe or 10.0, 30.0) / 30.0  # 归一化到 [0,1]
@@ -250,7 +251,8 @@ def screen_bucket_a() -> pd.DataFrame:
         reason_parts.append(f"PB {pb:.2f}≤{max_pb}" if pb is not None else "PB缺失放行")
         reason_parts.append(f"ROE年化{roe:.1f}%≥{min_roe}%" if roe is not None else "ROE缺失放行")
         reason_parts.append(f"近3年亏损季度{int(loss_q)}" if loss_q is not None else "亏损数据缺失放行")
-        reason_parts.append(f"年报经营现金流/股{ocf_ps:.2f}≥0" if ocf_ps is not None else "现金流数据缺失放行")
+        reason_parts.append(f"年报经营现金流/股{ocf_ps:.2f}≥0" if ocf_ps is not None and not ocf_neg else
+                            (f"⚠️年报经营现金流/股{ocf_ps:.2f}<0（借钱分红嫌疑，请 LLM/人工按行业特点复核）" if ocf_ps is not None else "现金流数据缺失放行"))
 
         results.append({
             "code": code,
@@ -527,7 +529,7 @@ def screen_bucket_c() -> pd.DataFrame:
     """C 桶候选：从 T4 文本判定输出中读取 PASS 条目，补充财务指标并按增速排序。
 
     C 桶逻辑：文本信号只做初筛（≥1类命中即可），排序由净利润同比增速决定。
-    数据验证维度：净利润同比增速 YoY（主排序值）、营收同比、毛利率、价格是否高于 MA60。
+    数据验证维度：净利润同比增速 YoY（主排序值）、营收同比、毛利率、价格是否高于 MA20（仅提示）。
     """
     print("[T6-C] 从 T4 输出读取文本判定 PASS 标的...")
 
@@ -614,8 +616,8 @@ def screen_bucket_c() -> pd.DataFrame:
         if pe_ttm is not None and pe_ttm > 0 and np_yoy is not None and np_yoy > 0:
             peg = round(pe_ttm / np_yoy, 2)
 
-        # 价格是否高于 MA60
-        price_above_ma60 = _check_price_above_ma(code)
+        # 价格是否高于 MA20（仅提示不参与过滤/排序；MA60 观察太钝，2026-08-31 改 20 日线）
+        price_above_ma20 = _check_price_above_ma(code, ma_window=20)
 
         # 主排序值：净利润同比增速，封顶 500% 防极端值
         sort_val = min(np_yoy, 500.0) if np_yoy is not None else 0.0
@@ -640,7 +642,7 @@ def screen_bucket_c() -> pd.DataFrame:
             "peg": peg if peg is not None else "",
             "price_index_1y_high": "",  # 需要行业指数
             "contract_liability_yoy": "",  # 需要财报
-            "price_above_ma60": "是" if price_above_ma60 else "否",
+            "price_above_ma60": "是" if price_above_ma20 else "否",
             "has_insurance": "是" if inst.get("insurance") else "",
             "has_social_security": "是" if inst.get("social_security") else "",
             "has_pension": "是" if inst.get("pension") else "",
@@ -656,8 +658,8 @@ def screen_bucket_c() -> pd.DataFrame:
     return df
 
 
-def _check_price_above_ma(code: str, ma_window: int = 60) -> bool:
-    """检查个股当前价格是否在 MA60 上方。"""
+def _check_price_above_ma(code: str, ma_window: int = 20) -> bool:
+    """检查个股当前价格是否在 N 日均线上方（C 桶现用 MA20，仅提示不构成过滤）。"""
     try:
         from lib.data_fetch import get_stock_daily
         end = dt.date.today()
@@ -811,6 +813,7 @@ def assemble_bucket(letter: str, bucket: pd.DataFrame) -> str:
         if bucket.empty:
             parts.append("（C 桶候选为空）")
         else:
+            # price_above_ma60 列名沿用（下游 UI/报告契约），口径已改为 MA20、仅提示不构成过滤
             cols = ["code", "name", "industry", "text_score", "categories_hit_count",
                     "np_yoy", "revenue_yoy", "gross_margin",
                     "pe_ttm", "pe_dynamic", "pe_method", "peg",

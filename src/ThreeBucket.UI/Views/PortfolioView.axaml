@@ -39,6 +39,9 @@
               <MenuItem x:Name="MenuClear" Header="🗑️ 清仓" />
               <Separator />
               <MenuItem x:Name="MenuTrades" Header="🔎 查看该股的全部交易" />
+              <Separator />
+              <MenuItem x:Name="MenuAddWatch" Header="🎯 加入监控自选" />
+              <MenuItem x:Name="MenuAlreadyWatch" Header="✅ 已在监控池" IsEnabled="False" />
             </ContextMenu>
           </data:DataGrid.ContextMenu>
         </data:DataGrid>

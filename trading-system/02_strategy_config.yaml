@@ -91,7 +91,7 @@ bucket_A:
     consecutive_dividend_years_min: 3  # 放宽 5→3
     payout_ratio_range_pct: [20, 80]   # 放宽 [30,70]→[20,80]
     roe_5y_avg_min_pct: 6.0            # 放宽 8→6
-    pb_max: 3.0                        # 新增：PB上限 3.0（之前脚本默认2.0）
+    pb_max: 4.0                        # PB上限（2026-08-31 放宽 2→3→4；C#/Python 两端均读本值）
     fcf_positive_years_min: 2         # 放宽 3→2
     interest_bearing_debt_ratio_max_pct: 70   # 放宽 60→70
     pb_percentile_max: 50              # 放宽 30→50

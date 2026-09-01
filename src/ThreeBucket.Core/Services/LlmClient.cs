@@ -36,6 +36,9 @@ public class LlmClient
     /// <summary>
     /// 非流式补全：单条 user message → 返回 (是否成功, 回复文本或错误说明)。
     /// temperature=0.3 偏确定性（候选排序需稳定，避免每次结果漂移）。
+    /// reasoning_effort=low：网关路由到的模型可能是推理模型（实测 glm-5.3-flash 把 token 全花在
+    /// reasoning 字段、content 返回 null），T6 复杂任务思考 >5 分钟撞上 HttpClient 超时即"调用失败"；
+    /// low 档思考 20-60s 即转入正文，标准 OpenAI 兼容端点会忽略未知字段，不影响其它网关。
     /// cancellationToken 用于「调用 LLM」/「全桶调用」的取消按钮：取消时 SendAsync 抛 OperationCanceledException，
     /// 走 catch 统一回 "已取消"，不发空请求、不残留半截响应。
     /// </summary>
@@ -49,6 +52,7 @@ public class LlmClient
             model = Model,
             messages = new[] { new { role = "user", content = userMessage } },
             temperature = 0.3,
+            reasoning_effort = "low",
         });
         try
         {
