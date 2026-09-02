@@ -14,10 +14,17 @@
 - 一句话理由结构：`{行业}龙头，股息率{X}%（近5年{Y}分位），FCF 覆盖{Z}倍，{质量维度突出点}`
 - **红线**：若发现候选公司存在"分红靠卖资产/借钱"迹象或"主营连续2年下滑"，一律 REJECT 并解释
 
-### B 桶（成长）
-- **主排序**：（营收 CAGR 3年 × 净利 CAGR 3年）÷ PEG
-- 一句话理由结构：`{行业}赛道渗透率{X}%，营收/净利 3 年 CAGR {Y}/{Z}%，PEG {W}，订单积压{order_backlog_score}分（DRR{a}/DRGS{b}/IBR{c}），{订单充足/积压不足/疑似滞销}，{核心竞争力}`
-- **红线**：单季扣非环比减速、经营现金流/净利润<0.5、商誉/净资产>30% 任一命中即 REJECT；`order_backlog_score` 低且 `ibr` 异常高（存货同比远超营收增速）→ 标注"疑似卖不出去的囤货"并剔除；`filter_pass=否` 需在理由里说明哪道过滤未过
+### B 桶（成长）· 巴菲特式业务质量复核（2026-09-02 起）
+脚本层已按"巴菲特式财务指标筛选标准"完成批量硬门槛（ROE/毛利率趋势/OCF含金量/CAGR/周期过滤），你的任务是**业务质量维度**的定性复核——评估重点从"增速有多快"转向"这门生意有多好、能好多久"：
+
+- **护城河（权重最高）**：定价权/品牌、网络效应、转换成本、成本优势、无形资产或牌照。依据：`gross_margin_by_year`/`gm_trend`（毛利率逐年走高=定价权硬证据）、行业地位描述。毛利率逐年下滑但靠放量增长的票，护城河分要压低。
+- **业务持久性**：10-20 年后需求是否大概率仍在；商业模式能否一句话说清；收入是否经常性（订阅/复购/长协）。
+- **增长连贯性**：`np_yoy_by_year`/`rev_yoy_by_year` 逐年序列——增长是否逐年连贯，还是某一年爆发（配合 `drgs`/`drr` 判断订单真实性能否延续）。
+- **竞争格局**：行业理性竞争 vs 价格战红海；进入壁垒。`arr`（应收增速远超营收=降价赊销）是竞争恶化的硬信号。
+- **"缺少"列的处理**：`roic`/`debt_ratio`/`interest_coverage`/`bvps_cagr`/`fcf_margin`/`capex_intensity`/`owner_earnings` 批量源无法计算，固定填「缺少」——**不要编造数值**；能从输入文本/行业常识给出方向性判断就写进理由（如"重资产船厂 Capex 强度大概率高"），无法判断就明说该维度证据不足，降档处理。
+
+- 一句话理由结构：`{行业}，{护城河来源}（毛利率{gm_trend}{升/降}），3年CAGR 营收/净利 {Y}/{Z}%，OCF/净利{X}，订单积压{order_backlog_score}分（DRR{a}/DRGS{b}/IBR{c}），{持久性/竞争格局一句判断}`
+- **红线（REJECT）**：`ocf_to_np<0.5`（利润纸面化）、`filter_pass=否` 且订单积压分低、`arr` 异常高（回款恶化）、业务依赖单一爆款/单一大客户证据明确；「缺少」项占比过高且无文本证据补强 → 降入中立并标注"数据不足，评分仅供参考"
 
 ### C 桶（热点周期）
 - **主排序**：文本得分（来自 T4-C 输出）+ 数据验证条数
@@ -34,9 +41,9 @@
 （CSV 列头 + 已过硬门槛的候选，含 code, name, industry, dividend_yield_ttm, dividend_percentile_5y, roe_5y_avg, fcf_coverage, pb, pb_percentile, dividend_years, quality_score）
 
 === BUCKET: B ===
-（筛选规则与排序公式见该段头部说明；CSV 列头，含 code, name, industry, price, total_mv_yi, profit_cagr_3y, revenue_cagr_3y, np_yoy_latest, roe_ann, ocf_to_np, loss_q_3y, pe_ttm, peg, gross_margin, gross_margin_yoy, rev_yoy_latest, ocf_yoy, drr, drgs, ibr, arr, order_backlog_score, filter_pass, sort_value, pick_reason）
+（筛选规则与排序公式见该段头部说明；CSV 列头，含 code, name, industry, price, total_mv_yi, profit_cagr_3y, revenue_cagr_3y, roe_ann, gross_margin_by_year, gm_trend, ocf_to_np, ocf_ps_annual, loss_q_3y, pe_ttm, peg, np_yoy_by_year, rev_yoy_by_year, np_yoy_latest, roic/debt_ratio/interest_coverage/bvps_cagr/fcf_margin/capex_intensity/owner_earnings（固定「缺少」）, drr, drgs, ibr, arr, order_backlog_score, filter_pass, sort_value, pick_reason）
 订单积压参考列（drr/drgs/ibr/arr/order_backlog_score/filter_pass）含义与方向见 skill_input 头部规则说明，供 LLM 复核订单能见度，不进硬门槛/排序。
-（批量层未覆盖、需你重点复核：商誉/净资产、研发占比、行业渗透率、PE 上市以来分位）
+（巴菲特式业务质量复核维度见上方 B 桶说明：护城河/持久性/增长连贯性/竞争格局；「缺少」列不要编数值）
 
 === BUCKET: C ===
 （CSV 列头，含 code, name, industry, text_score, categories_hit_count, np_yoy, revenue_yoy, gross_margin, pe_ttm, pe_dynamic, pe_method, peg, drr, drgs, ibr, arr, order_backlog_score, filter_pass, price_index_1y_high, contract_liability_yoy, price_above_ma60（实际口径 MA20，仅提示））
@@ -78,9 +85,9 @@
 ```
 
 **三档划分标准**：
-- **推荐**：排序值前列 + 无红线 + 增速/估值/现金流相互匹配（约 Top 10-15）
-- **中立**：硬门槛达标但排序值中后段、周期属性与桶定位有偏差、估值偏高、或存在待验证项（低基数/数据缺口）
-- **不推荐**：触发红线、跨桶冲突（归另一桶）、风格明显不符（如纯市场 beta）、估值安全边际不足
+- **推荐**：排序值前列 + 无红线 + 护城河证据明确（毛利率趋势/订单积压佐证）+ 增长连贯（约 Top 10-15）
+- **中立**：硬门槛达标但排序值中后段、护城河证据不足（「缺少」项多且文本无补强）、增长连贯性存疑、或存在待验证项（低基数/数据缺口）
+- **不推荐**：触发红线、跨桶冲突（归另一桶）、风格明显不符（如纯市场 beta/周期暴利伪装成长）、安全边际不足
 
 ## 硬约束
 

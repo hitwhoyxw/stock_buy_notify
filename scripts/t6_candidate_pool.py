@@ -300,17 +300,23 @@ def screen_bucket_b() -> pd.DataFrame:
     + 中证800（000906，含沪深300）全部成分股（合并去重），剔除 ST/退。
     （2026-08 扩池：原仅中证1000，大中盘成长如科达利等被池子排除）
     硬门槛（阈值读 config bucket_B.batch_screen，默认值如下）：
-    - 总市值 ≥ 50 亿（统一亿元口径）
-    - 净利 3 年 CAGR ≥ 20%（2022→2025 年报首末期水平，基期/末期净利均须为正）
-    - 营收 3 年 CAGR ≥ 15%
-    - 最新报告期净利同比 ≥ 15%（成长未熄火）
-    - ROE 年化 ≥ 8%
+    - 总市值 ≥ 30 亿（统一亿元口径）
+    - 净利 3 年 CAGR ≥ 15%（2022→2025 年报首末期水平，基期/末期净利均须为正）
+    - 营收 3 年 CAGR ≥ 10%
+    - 最新报告期净利同比 ≥ 10%（成长未熄火）
+    - ROE 年化 ≥ 6%
     - 近 3 年无单季亏损
-    - 最新年报 经营现金流/净利润 ≥ 0.5 且每股经营现金流 > 0（成长有现金支撑）
-    - 0 < PE(TTM) ≤ 60
-    - PEG ≤ 1.2（PEG = PE ÷ min(净利CAGR, 100)，封顶防低基数虚高）
+    - 0 < PE(TTM) ≤ 80
+    - 增长稳健性 growth_quality：4 个年报期逐年净利同比 ≥0 的年数 ≥3，
+      且任一年净利同比 > -10% 不出现（防"一年爆发撑起 CAGR"）
+    - 周期污染过滤 cycle_contamination（任一命中即剔除）：
+      * 净利CAGR > 150% 或 最新期净利同比 > 150%（低基数/价格暴动，非结构成长）
+      * max(净利CAGR, 最新期同比) − 营收CAGR > 120pct（利润与收入脱钩=涨价/成本红利）
+      * 行业命中周期关键词（贵金属/煤炭/航运/农化等价格驱动型）
+    展示列（不参与过滤，供 LLM 复核）：OCF/净利润、每股OCF、PEG
+    （2026-09-02 降级：原硬门槛 0.4 / >0 / ≤1.5 删除）。
     核心数据缺失 → 剔除（不放行），缺哪一项在统计中打印。
-    排序值 = min(净利CAGR, 100) / PE（即 1/PEG）降序。
+    排序值 = min(净利CAGR, 100) / PE（即 1/PEG）降序，机构持仓 +0.3/类。
 
     批量口径：成分/业绩/现金流全部来自全市场快照 merge，绝不逐票请求。
     非批量指标（商誉、应收、研发、渗透率、PE 历史分位）留 LLM 层验证。
@@ -350,17 +356,27 @@ def screen_bucket_b() -> pd.DataFrame:
         bcfg = {}
     bs = bcfg.get("batch_screen", {})
     qf = bcfg.get("quality_filters", {})
-    min_mv = bs.get("total_mv_min_yi", 50.0)
-    min_np_cagr = bs.get("np_cagr_3y_min_pct",
-                         qf.get("recurring_profit_cagr_3y_min_pct", 20.0))
-    min_rev_cagr = bs.get("rev_cagr_3y_min_pct",
-                          qf.get("revenue_cagr_3y_min_pct", 15.0))
-    min_np_yoy = bs.get("latest_np_yoy_min_pct", 15.0)
-    min_roe = bs.get("roe_annualized_min_pct", 8.0)
-    min_ocf_ratio = bs.get("ocf_to_np_annual_min", 0.5)
-    max_pe = bs.get("pe_ttm_max", 60.0)
-    max_peg = bs.get("peg_max", 1.2)
+    min_mv = bs.get("total_mv_min_yi", 30.0)
+    min_np_cagr = bs.get("np_cagr_3y_min_pct", 15.0)
+    min_rev_cagr = bs.get("rev_cagr_3y_min_pct", 10.0)
+    min_np_yoy = bs.get("latest_np_yoy_min_pct", 10.0)
+    min_roe = bs.get("roe_annualized_min_pct", 6.0)
+    max_pe = bs.get("pe_ttm_max", 80.0)
     require_no_loss = bs.get("no_loss_quarters_3y", True)
+
+    # 增长稳健性（一年爆发 ≠ 三年成长）
+    gq = bs.get("growth_quality", {})
+    gq_yoy_years_min = gq.get("yoy_years_min", 3)
+    gq_np_floor = gq.get("np_yoy_floor_pct", 0.0)
+    gq_rev_floor = gq.get("rev_yoy_floor_pct", -5.0)
+    gq_max_drop = gq.get("max_single_year_np_drop_pct", 10.0)
+
+    # 周期污染过滤
+    cc = bs.get("cycle_contamination", {})
+    cc_np_cagr_cap = cc.get("np_cagr_cap_pct", 150.0)
+    cc_np_yoy_cap = cc.get("np_yoy_cap_pct", 150.0)
+    cc_gap_max = cc.get("cagr_yoy_gap_max_pct", 120.0)
+    cc_industries = [str(s) for s in cc.get("cyclical_industries", [])]
 
     # 批量数据源（各自全市场一次，进程内缓存）
     print("[T6-B] 拉取 3 年成长快照（4 个年报期全市场业绩报表）...")
@@ -387,8 +403,9 @@ def screen_bucket_b() -> pd.DataFrame:
 
     results: List[Dict[str, Any]] = []
     dropped = {"基本面缺失": 0, "市值不足": 0, "净利CAGR": 0, "营收CAGR": 0,
-               "最新期增速": 0, "ROE": 0, "亏损季度": 0, "现金流": 0,
-               "PE": 0, "PEG": 0}
+               "最新期增速": 0, "ROE": 0, "亏损季度": 0,
+               "PE": 0, "周期CAGR暴增": 0, "周期最新期暴增": 0,
+               "利润收入脱钩": 0, "周期行业": 0, "增长断档": 0}
     total = len(cons)
 
     for i, row in cons.iterrows():
@@ -415,6 +432,8 @@ def screen_bucket_b() -> pd.DataFrame:
         rev_cagr = _safe_float(g, ["rev_cagr_3y"]) if g is not None else None
         ocf_ratio = _safe_float(g, ["ocf_np_ratio"]) if g is not None else None
         ocf_ps_a = _safe_float(g, ["ocf_ps_annual"]) if g is not None else None
+        np_series_raw = str(g.get("np_yoy_by_year", "")) if g is not None else ""
+        rev_series_raw = str(g.get("rev_yoy_by_year", "")) if g is not None else ""
         if np_cagr is None or np_cagr < min_np_cagr:
             dropped["净利CAGR"] += 1
             continue
@@ -445,23 +464,48 @@ def screen_bucket_b() -> pd.DataFrame:
             dropped["亏损季度"] += 1
             continue
 
-        # 现金流：年报 OCF/NP 与每股 OCF
-        if ocf_ratio is None or ocf_ratio < min_ocf_ratio \
-                or ocf_ps_a is None or ocf_ps_a <= 0:
-            dropped["现金流"] += 1
+        # 周期污染过滤 ①：CAGR / 最新期同比暴增（价格暴动/低基数，非结构成长）
+        if np_cagr > cc_np_cagr_cap:
+            dropped["周期CAGR暴增"] += 1
+            continue
+        if np_yoy > cc_np_yoy_cap:
+            dropped["周期最新期暴增"] += 1
             continue
 
-        # 估值：PE 区间 + PEG
+        # 周期污染过滤 ②：利润与收入脱钩——利润增速远超营收增速 = 涨价/成本红利
+        # 而非量增驱动；真正的结构成长收入利润同步放大（gap≤120pct 容忍温和利润率扩张）
+        if max(np_cagr, np_yoy) - rev_cagr > cc_gap_max:
+            dropped["利润收入脱钩"] += 1
+            continue
+
+        # 周期污染过滤 ③：价格驱动型周期行业（贵金属/煤炭/航运/农化等，子串匹配）
+        if cc_industries and any(kw in industry for kw in cc_industries):
+            dropped["周期行业"] += 1
+            continue
+
+        # 增长稳健性：CAGR 是首末两点连线，一年爆发即可达标。
+        # 用 4 个年报期逐年同比做单调性检验——逐年净利同比 ≥0 的年数须 ≥3，
+        # 且任一年净利同比 < -10% 即周期尖峰嫌疑。
+        np_yoy_by_year = _parse_yoy_series(np_series_raw)
+        rev_yoy_by_year = _parse_yoy_series(rev_series_raw)
+        n_pos = sum(1 for v in np_yoy_by_year if v >= gq_np_floor)
+        n_req = min(gq_yoy_years_min, len(np_yoy_by_year))  # 数据齐才卡年数
+        if len(np_yoy_by_year) < 3 or n_pos < n_req \
+                or (np_yoy_by_year and min(np_yoy_by_year) < -gq_max_drop) \
+                or (rev_yoy_by_year and min(rev_yoy_by_year) < gq_rev_floor):
+            dropped["增长断档"] += 1
+            continue
+
+        # 估值（仅 PE 区间过滤；OCF/NP、每股OCF、PEG 降级为展示列）
         if pe is None or pe <= 0 or pe > max_pe:
             dropped["PE"] += 1
             continue
-        cagr_capped = min(np_cagr, 100.0)
-        peg = pe / cagr_capped
-        if peg > max_peg:
-            dropped["PEG"] += 1
-            continue
 
+        cagr_capped = min(np_cagr, 100.0)
+        peg = pe / cagr_capped if cagr_capped > 0 else None
         sort_val = cagr_capped / pe  # = 1/PEG
+
+        series_disp = "/".join(f"{v:+.0f}%" for v in np_yoy_by_year)
         reason = (
             f"总市值{total_mv:.0f}亿≥{min_mv:.0f} | "
             f"净利CAGR3年+{np_cagr:.0f}%≥{min_np_cagr:.0f}% | "
@@ -469,8 +513,9 @@ def screen_bucket_b() -> pd.DataFrame:
             f"最新期净利同比+{np_yoy:.0f}%≥{min_np_yoy:.0f}% | "
             f"ROE年化{roe:.1f}%≥{min_roe:.0f}% | "
             f"近3年亏损季度0 | "
-            f"年报OCF/NP {ocf_ratio:.2f}≥{min_ocf_ratio} | "
-            f"PE(TTM){pe:.1f}≤{max_pe:.0f} | PEG {peg:.2f}≤{max_peg}"
+            f"逐年净利同比[{series_disp}]单调达标 | "
+            f"周期过滤(行业:{industry or '—'}) | "
+            f"PE(TTM){pe:.1f}≤{max_pe:.0f}"
         )
 
         results.append({
@@ -483,10 +528,13 @@ def screen_bucket_b() -> pd.DataFrame:
             "revenue_cagr_3y": round(rev_cagr, 1),
             "np_yoy_latest": round(np_yoy, 1),
             "roe_ann": round(roe, 1),
-            "ocf_to_np": round(ocf_ratio, 2),
+            "ocf_to_np": round(ocf_ratio, 2) if ocf_ratio is not None else "",
+            "ocf_ps_annual": round(ocf_ps_a, 2) if ocf_ps_a is not None else "",
+            "np_yoy_by_year": np_series_raw,
+            "rev_yoy_by_year": rev_series_raw,
             "loss_q_3y": int(loss_q),
             "pe_ttm": round(pe, 1),
-            "peg": round(peg, 2),
+            "peg": round(peg, 2) if peg is not None else "",
             "sort_value": round(sort_val, 3),
             "has_insurance": "",
             "has_social_security": "",
@@ -679,6 +727,17 @@ def _check_price_above_ma(code: str, ma_window: int = 20) -> bool:
 # 工具函数
 # ============================================================
 
+def _parse_yoy_series(raw: str) -> List[float]:
+    """"2023:12.3|2024:8.5|2025:20.1" → [12.3, 8.5, 20.1]（缺失/脏数据跳过）。"""
+    vals = []
+    for part in (raw or "").split("|"):
+        try:
+            vals.append(float(part.split(":", 1)[1]))
+        except (IndexError, ValueError):
+            continue
+    return vals
+
+
 def _safe_float(row: Any, candidates: List[str]) -> Optional[float]:
     """从 DataFrame 行中安全提取浮点值，兼容多种列名。"""
     for col in candidates:
@@ -741,17 +800,20 @@ def _rules_note_b(df: pd.DataFrame) -> str:
     except Exception:
         bcfg = {}
     bs = bcfg.get("batch_screen", {})
-    qf = bcfg.get("quality_filters", {})
-    min_mv = bs.get("total_mv_min_yi", 50.0)
-    min_np_cagr = bs.get("np_cagr_3y_min_pct",
-                         qf.get("recurring_profit_cagr_3y_min_pct", 20.0))
-    min_rev_cagr = bs.get("rev_cagr_3y_min_pct",
-                          qf.get("revenue_cagr_3y_min_pct", 15.0))
-    min_np_yoy = bs.get("latest_np_yoy_min_pct", 15.0)
-    min_roe = bs.get("roe_annualized_min_pct", 8.0)
-    min_ocf = bs.get("ocf_to_np_annual_min", 0.5)
-    max_pe = bs.get("pe_ttm_max", 60.0)
-    max_peg = bs.get("peg_max", 1.2)
+    min_mv = bs.get("total_mv_min_yi", 30.0)
+    min_np_cagr = bs.get("np_cagr_3y_min_pct", 15.0)
+    min_rev_cagr = bs.get("rev_cagr_3y_min_pct", 10.0)
+    min_np_yoy = bs.get("latest_np_yoy_min_pct", 10.0)
+    min_roe = bs.get("roe_annualized_min_pct", 6.0)
+    max_pe = bs.get("pe_ttm_max", 80.0)
+    gq = bs.get("growth_quality", {})
+    gq_years = gq.get("yoy_years_min", 3)
+    gq_drop = gq.get("max_single_year_np_drop_pct", 10.0)
+    cc = bs.get("cycle_contamination", {})
+    cc_cagr_cap = cc.get("np_cagr_cap_pct", 150.0)
+    cc_yoy_cap = cc.get("np_yoy_cap_pct", 150.0)
+    cc_gap = cc.get("cagr_yoy_gap_max_pct", 120.0)
+    n_cyc = len(cc.get("cyclical_industries", []))
     lines = [
         f"筛选规则: 中证1000+500+A500+800成分(剔ST/退) + 总市值≥{min_mv:.0f}亿"
         f" + 净利3年CAGR≥{min_np_cagr:.0f}%(年报首末期,基期须为正)"
@@ -759,10 +821,16 @@ def _rules_note_b(df: pd.DataFrame) -> str:
         f" + 最新报告期净利同比≥{min_np_yoy:.0f}%"
         f" + ROE年化≥{min_roe:.0f}%"
         f" + 近3年无单季亏损"
-        f" + 最新年报OCF/NP≥{min_ocf}且每股OCF>0"
-        f" + 0<PE(TTM)≤{max_pe:.0f} + PEG≤{max_peg}"
-        f"（PEG=PE÷min(净利CAGR,100%)）；核心数据缺失即剔除，每只票见 pick_reason",
+        f" + 0<PE(TTM)≤{max_pe:.0f}"
+        f" + 增长稳健性(4年报期逐年净利同比≥0的年数≥{gq_years}，任一年净利同比>-{gq_drop:.0f}%不破)"
+        f" + 周期污染过滤(净利CAGR≤{cc_cagr_cap:.0f}%且最新期同比≤{cc_yoy_cap:.0f}%"
+        f" + max(净利CAGR,最新期同比)−营收CAGR≤{cc_gap:.0f}pct + 非价格驱动型周期行业{n_cyc}类关键词)"
+        f"；核心数据缺失即剔除，每只票见 pick_reason",
         "排序公式: sort_value = min(净利CAGR,100)/PE（即 1/PEG）降序",
+        "展示列（不参与过滤，LLM 复核用）: ocf_to_np（年报OCF/净利）、ocf_ps_annual（每股OCF）、"
+        "peg；2026-09-02 由硬门槛降级——现金流质量与估值性价比交给 LLM 按行业特点个案判断",
+        "np_yoy_by_year/rev_yoy_by_year = 4 个年报期逐年同比（'年份:增速' 拼接），"
+        "扭亏年份（基期为负）不含——逐年查看增长是否连贯",
         "批量层未覆盖、需 LLM/人工复核: 商誉/净资产、应收vs营收增速、研发占比、"
         "行业渗透率、PE 上市以来分位",
     ]
@@ -801,7 +869,8 @@ def assemble_bucket(letter: str, bucket: pd.DataFrame) -> str:
         else:
             cols = ["code", "name", "industry", "price", "total_mv_yi",
                     "profit_cagr_3y", "revenue_cagr_3y", "np_yoy_latest",
-                    "roe_ann", "ocf_to_np", "loss_q_3y", "pe_ttm", "peg",
+                    "roe_ann", "np_yoy_by_year", "rev_yoy_by_year",
+                    "ocf_to_np", "ocf_ps_annual", "loss_q_3y", "pe_ttm", "peg",
                     "has_insurance", "has_social_security", "has_pension", "has_qfii",
                     "sort_value", "pick_reason"]
             available = [c for c in cols if c in bucket.columns]

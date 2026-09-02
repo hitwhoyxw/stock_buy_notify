@@ -1083,9 +1083,12 @@ def get_growth_snapshot() -> pd.DataFrame:
     """全市场 3 年成长快照（进程内只拉一次）。
 
     列：code, np_cagr_3y(%), rev_cagr_3y(%), ocf_np_ratio（最新年报
-    经营现金流/净利润）, ocf_ps_annual（最新年报每股经营现金流）。
+    经营现金流/净利润）, ocf_ps_annual（最新年报每股经营现金流），
+    np_yoy_by_year / rev_yoy_by_year（4 个年报期逐年同比 %，
+    "2023:12.3|2024:8.5|2025:20.1" 拼接，缺失年份不含）。
     CAGR 用 4 个年报期的首末期水平计算，要求基期与末期净利均为正
-    （剔除低基数暴增与扭亏假成长）。"""
+    （剔除低基数暴增与扭亏假成长）。逐年同比供 B 桶增长稳健性检验——
+    CAGR 是首末两点连线，一年爆发即可达标，单调性检验识别该伪成长。"""
     return _memo("growth_snapshot", _fetch_growth_snapshot)
 
 
@@ -1148,12 +1151,33 @@ def _fetch_growth_snapshot() -> pd.DataFrame:
         except (TypeError, ValueError):
             ocf_ps, ocf_ratio = None, None
 
+        # 逐年同比（B 桶增长稳健性检验用）：相邻年报期水平值推导，
+        # 基期为负/缺失的年份跳过（不猜）。"2023:12.3|2024:8.5|2025:20.1" 拼接。
+        def _yoy_series(key: str) -> str:
+            parts = []
+            for i in range(1, len(periods)):
+                prev, cur = yearly.get(periods[i - 1]), yearly.get(periods[i])
+                if prev is None or cur is None or code not in prev.index \
+                        or code not in cur.index:
+                    continue
+                try:
+                    v0 = float(prev.loc[code].get(key))
+                    v1 = float(cur.loc[code].get(key))
+                except (TypeError, ValueError):
+                    continue
+                if pd.isna(v0) or pd.isna(v1) or v0 <= 0:
+                    continue  # 基期非正：同比无意义（扭亏年份）
+                parts.append(f"{periods[i][:4]}:{(v1 / v0 - 1) * 100:.1f}")
+            return "|".join(parts)
+
         rows.append({
             "code": code,
             "np_cagr_3y": round(np_cagr, 1) if np_cagr is not None else None,
             "rev_cagr_3y": round(rev_cagr, 1) if rev_cagr is not None else None,
             "ocf_np_ratio": round(ocf_ratio, 2) if ocf_ratio is not None else None,
             "ocf_ps_annual": round(ocf_ps, 2) if ocf_ps is not None else None,
+            "np_yoy_by_year": _yoy_series("np"),
+            "rev_yoy_by_year": _yoy_series("revenue"),
         })
     return pd.DataFrame(rows)
 

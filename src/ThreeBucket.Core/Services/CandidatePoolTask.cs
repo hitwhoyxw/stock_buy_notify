@@ -87,8 +87,14 @@ public class CandidatePoolTask : IBuiltinTask
     private static readonly string[] BCols =
     {
         "code", "name", "industry", "price", "total_mv_yi",
-        "profit_cagr_3y", "revenue_cagr_3y", "np_yoy_latest",
-        "roe_ann", "ocf_to_np", "loss_q_3y", "pe_ttm", "peg",
+        // 巴菲特式批量可得指标（硬门槛 + 展示）
+        "profit_cagr_3y", "revenue_cagr_3y", "roe_ann",
+        "gross_margin_by_year", "gm_trend",
+        "ocf_to_np", "ocf_ps_annual", "loss_q_3y", "pe_ttm", "peg",
+        "np_yoy_by_year", "rev_yoy_by_year", "np_yoy_latest",
+        // 巴菲特式批量不可得指标（固定填"缺少"，LLM 复核确认或解释）
+        "roic", "debt_ratio", "interest_coverage", "bvps_cagr",
+        "fcf_margin", "capex_intensity", "owner_earnings",
         // 订单积压参考列（LLM 复核用，不进硬门槛/排序）
         "gross_margin", "gross_margin_yoy", "rev_yoy_latest", "ocf_yoy",
         "drr", "drgs", "ibr", "arr", "order_backlog_score", "filter_pass",
@@ -170,7 +176,11 @@ public class CandidatePoolTask : IBuiltinTask
 
     // ── 共享快照 ───────────────────────────────────────────────────
 
-    private sealed record GrowthRow(double? NpCagr, double? RevCagr, double? OcfNpRatio, double? OcfPsAnnual);
+    /// <summary>4 个年报期逐年同比序列（"2023:12.3|2024:8.5|2025:20.1"，扭亏年份不含）。</summary>
+    private sealed record YearlyYoy(string Np, string Rev);
+
+    private sealed record GrowthRow(double? NpCagr, double? RevCagr, double? OcfNpRatio, double? OcfPsAnnual,
+        YearlyYoy? Yoy, double? GmTrend, string GmByYear);
     private sealed record QualityRow(int LossQ, double? OcfPsAnnual);
     private sealed record Snapshots(
         Dictionary<string, GrowthRow> Growth,
@@ -216,7 +226,28 @@ public class CandidatePoolTask : IBuiltinTask
                 double? revCagr = b.Revenue is > 0 && l.Revenue is > 0
                     ? (Math.Pow(l.Revenue.Value / b.Revenue.Value, 1.0 / span) - 1) * 100 : null;
                 double? ocfRatio = l.OcfPs is { } o && l.Eps is > 0 ? o / l.Eps : null;
-                growth[code] = new GrowthRow(npCagr, revCagr, ocfRatio, l.OcfPs);
+
+                // 逐年同比（B 桶增长稳健性检验用）：相邻年报期水平值推导，
+                // 基期非正/缺失的年份跳过（扭亏年份同比无意义，不猜）。
+                var npYoyParts = new List<string>();
+                var revYoyParts = new List<string>();
+                for (var i = 1; i < annualPeriods.Count; i++)
+                {
+                    if (!yearly.TryGetValue(annualPeriods[i - 1], out var py)
+                        || !yearly.TryGetValue(annualPeriods[i], out var cy))
+                        continue;
+                    if (!py.TryGetValue(code, out var pv) || !cy.TryGetValue(code, out var cv))
+                        continue;
+                    var yr = annualPeriods[i][..4];
+                    if (pv.Np is > 0 && cv.Np is { } n2)
+                        npYoyParts.Add($"{yr}:{(n2 / pv.Np.Value - 1) * 100:0.0}");
+                    if (pv.Revenue is > 0 && cv.Revenue is { } r2)
+                        revYoyParts.Add($"{yr}:{(r2 / pv.Revenue.Value - 1) * 100:0.0}");
+                }
+
+                growth[code] = new GrowthRow(npCagr, revCagr, ocfRatio, l.OcfPs,
+                    new YearlyYoy(string.Join("|", npYoyParts), string.Join("|", revYoyParts)),
+                    GmTrendOf(yearly, annualPeriods, code), GmSeriesOf(yearly, annualPeriods, code));
             }
         }
         else
@@ -319,6 +350,35 @@ public class CandidatePoolTask : IBuiltinTask
         }
 
         return new Snapshots(growth, quality, yjbb, ttmRevenue, prevGrossMargin, prevOcf, period);
+    }
+
+    /// <summary>毛利率 4 个年报期趋势（巴菲特"5年不下滑"批量近似）：
+    /// 末期 − 基期，正=上行/持平；某期缺失跳过该期。数据不足 → null。</summary>
+    private static double? GmTrendOf(Dictionary<string, Dictionary<string, YjbbRow>> yearly,
+        List<string> annualPeriods, string code)
+    {
+        var gms = new List<double>();
+        foreach (var p in annualPeriods)
+        {
+            if (yearly.TryGetValue(p, out var yr) && yr.TryGetValue(code, out var row)
+                && row.GrossMargin is { } gm)
+                gms.Add(gm);
+        }
+        return gms.Count >= 2 ? gms[^1] - gms[0] : null;
+    }
+
+    /// <summary>毛利率逐年序列展示串："2022:31.5|2023:32.0|…"（缺失期不含）。</summary>
+    private static string GmSeriesOf(Dictionary<string, Dictionary<string, YjbbRow>> yearly,
+        List<string> annualPeriods, string code)
+    {
+        var parts = new List<string>();
+        foreach (var p in annualPeriods)
+        {
+            if (yearly.TryGetValue(p, out var yr) && yr.TryGetValue(code, out var row)
+                && row.GrossMargin is { } gm)
+                parts.Add($"{p[..4]}:{gm:0.0}");
+        }
+        return string.Join("|", parts);
     }
 
     // ── A 桶 · 红利逆向 ────────────────────────────────────────────
@@ -482,15 +542,17 @@ public class CandidatePoolTask : IBuiltinTask
 
         // 剔除计数拆「阈值不足」与「数据缺失」两本账：null 归缺失、值在但不达标归阈值。
         // 否则数据源抽风时大批 null 被算成"没达门槛"，B 桶塌成 1 只却看不出是数据故障。
+        // 2026-09-02 巴菲特式指标集（纯财务指标，无行业黑名单）：CAGR/毛利率趋势/ROE/
+        // 亏损季/现金含金量/PE；周期与爆发属性由 LLM 复核（业务质量维度）个案定性。
         var dropped = new Dictionary<string, int>(StringComparer.Ordinal)
         {
-            ["市值不足"] = 0, ["净利CAGR"] = 0, ["营收CAGR"] = 0, ["最新期增速"] = 0,
-            ["ROE"] = 0, ["亏损季度"] = 0, ["现金流"] = 0, ["PE"] = 0, ["PEG"] = 0,
+            ["市值不足"] = 0, ["净利CAGR"] = 0, ["营收CAGR"] = 0, ["毛利率下滑"] = 0,
+            ["ROE"] = 0, ["亏损季度"] = 0, ["现金含金量"] = 0, ["PE"] = 0,
         };
         var droppedMissing = new Dictionary<string, int>(StringComparer.Ordinal)
         {
             ["基本面"] = 0, ["市值"] = 0, ["净利CAGR"] = 0, ["营收CAGR"] = 0,
-            ["最新期增速"] = 0, ["ROE"] = 0, ["亏损季度"] = 0, ["现金流"] = 0, ["PE"] = 0,
+            ["毛利率"] = 0, ["ROE"] = 0, ["亏损季度"] = 0, ["现金含金量"] = 0, ["PE"] = 0,
         };
         var results = new List<Row>();
 
@@ -520,52 +582,52 @@ public class CandidatePoolTask : IBuiltinTask
             var revCagr = g?.RevCagr;
             var ocfRatio = g?.OcfNpRatio;
             var ocfPsA = g?.OcfPsAnnual;
+            var npSeriesRaw = g?.Yoy?.Np ?? "";
+            var revSeriesRaw = g?.Yoy?.Rev ?? "";
             if (npCagr is null) { droppedMissing["净利CAGR"]++; continue; }
             if (npCagr < _th.MinNpCagr) { dropped["净利CAGR"]++; continue; }
             if (revCagr is null) { droppedMissing["营收CAGR"]++; continue; }
             if (revCagr < _th.MinRevCagr) { dropped["营收CAGR"]++; continue; }
 
-            // 最新报告期净利同比（成长未熄火）；快照缺该票则剔除
+            // 盈利能力：毛利率逐年不趋势下滑（巴菲特定价权代理；缺失剔除）
+            var gmTrend = g?.GmTrend;
+            if (gmTrend is null) { droppedMissing["毛利率"]++; continue; }
+            if (_th.GmNoDecline && gmTrend < 0) { dropped["毛利率下滑"]++; continue; }
+
+            // 最新报告期净利同比（仅展示列，不构成门槛——周期暴增由过滤②拦）
             var npYoy = y?.NpYoy;
             var industry = y?.Industry ?? "";
-            if (npYoy is null) { droppedMissing["最新期增速"]++; continue; }
-            if (npYoy < _th.MinNpYoy) { dropped["最新期增速"]++; continue; }
 
-            // ROE 年化门槛
+            // ROE 年化门槛（巴菲特 ≥15% 标准线的批量近似 12%）
             if (roe is null) { droppedMissing["ROE"]++; continue; }
             if (roe < _th.MinRoeB) { dropped["ROE"]++; continue; }
 
-            // 盈利质量：近 3 年单季亏损（缺失同样剔除——核心数据缺失即剔除）
+            // 盈利稳定性：近 3 年单季亏损（ROE 稳定性批量代理；缺失同样剔除）
             snap.Quality.TryGetValue(code, out var q);
             var lossQ = (int?)q?.LossQ;
             if (lossQ is null) { droppedMissing["亏损季度"]++; continue; }
             if (lossQ > 0) { dropped["亏损季度"]++; continue; }
 
-            // 现金流：年报 OCF/NP 与每股 OCF
-            if (ocfRatio is null || ocfPsA is null) { droppedMissing["现金流"]++; continue; }
-            if (ocfRatio < _th.MinOcfRatio || ocfPsA <= 0) { dropped["现金流"]++; continue; }
+            // 财务稳健：最新年报现金含金量 OCF/净利（巴菲特 ≥1.0 的单年近似 0.8；缺失剔除）
+            if (ocfRatio is null) { droppedMissing["现金含金量"]++; continue; }
+            if (ocfRatio < _th.MinOcfRatio) { dropped["现金含金量"]++; continue; }
 
-            // 估值：PE 区间 + PEG
+            // 估值兜底：PE 区间（防负 PE/极端值；PEG 不再作为门槛，仅展示）
             if (pe is null) { droppedMissing["PE"]++; continue; }
             if (pe <= 0 || pe > _th.MaxPe) { dropped["PE"]++; continue; }
+
+            var sortVal = npCagr.Value / pe.Value; // = 1/PEG 降序
             var cagrCapped = Math.Min(npCagr.Value, 100.0);
             var peg = pe.Value / cagrCapped;
-            if (peg > _th.MaxPeg)
-            {
-                dropped["PEG"]++;
-                continue;
-            }
-
-            var sortVal = cagrCapped / pe.Value; // = 1/PEG
             var reason =
                 $"总市值{totalMv:0}亿≥{_th.MinMv:0} | " +
                 $"净利CAGR3年+{npCagr:0}%≥{_th.MinNpCagr:0}% | " +
                 $"营收CAGR3年+{revCagr:0}%≥{_th.MinRevCagr:0}% | " +
-                $"最新期净利同比+{npYoy:0}%≥{_th.MinNpYoy:0}% | " +
+                $"毛利率4年{(gmTrend >= 0 ? "未下滑" : "下滑")}({g?.GmByYear}) | " +
                 $"ROE年化{roe:0.0}%≥{_th.MinRoeB:0}% | " +
                 "近3年亏损季度0 | " +
-                $"年报OCF/NP {ocfRatio:0.00}≥{_th.MinOcfRatio} | " +
-                $"PE(TTM){pe:0.0}≤{_th.MaxPe:0} | PEG {peg:0.00}≤{_th.MaxPeg}";
+                $"OCF/净利{ocfRatio:0.00}≥{_th.MinOcfRatio:0.0} | " +
+                $"PE(TTM){pe:0.0}≤{_th.MaxPe:0}";
 
             var row = new Row { Sort = sortVal };
             row.F["code"] = code;
@@ -575,9 +637,22 @@ public class CandidatePoolTask : IBuiltinTask
             row.F["total_mv_yi"] = totalMv.Value.ToString("0", Inv);
             row.F["profit_cagr_3y"] = npCagr.Value.ToString("0.0", Inv);
             row.F["revenue_cagr_3y"] = revCagr.Value.ToString("0.0", Inv);
-            row.F["np_yoy_latest"] = npYoy.Value.ToString("0.0", Inv);
+            row.F["np_yoy_latest"] = npYoy is { } nyp ? nyp.ToString("0.0", Inv) : "";
             row.F["roe_ann"] = roe.Value.ToString("0.0", Inv);
+            row.F["np_yoy_by_year"] = npSeriesRaw;
+            row.F["rev_yoy_by_year"] = revSeriesRaw;
+            row.F["gross_margin_by_year"] = g?.GmByYear ?? "";
+            row.F["gm_trend"] = gmTrend.Value.ToString("+0.0;-0.0", Inv);
             row.F["ocf_to_np"] = ocfRatio.Value.ToString("0.00", Inv);
+            row.F["ocf_ps_annual"] = ocfPsA is { } ops ? ops.ToString("0.00", Inv) : "";
+            // 巴菲特式批量不可得指标：标"缺少"，供 LLM 复核确认或解释
+            row.F["roic"] = "缺少";
+            row.F["debt_ratio"] = "缺少";
+            row.F["interest_coverage"] = "缺少";
+            row.F["bvps_cagr"] = "缺少";
+            row.F["fcf_margin"] = "缺少";
+            row.F["capex_intensity"] = "缺少";
+            row.F["owner_earnings"] = "缺少";
             row.F["loss_q_3y"] = lossQ.Value.ToString(Inv);
             row.F["pe_ttm"] = pe.Value.ToString("0.0", Inv);
             row.F["peg"] = peg.ToString("0.00", Inv);
@@ -1067,16 +1142,27 @@ public class CandidatePoolTask : IBuiltinTask
 
     private string RulesNoteB() => string.Join("\n", new[]
     {
-        $"筛选规则: 中证1000+500+A500+800成分(剔ST/退) + 总市值≥{_th.MinMv:0}亿"
-        + $" + 净利3年CAGR≥{_th.MinNpCagr:0}%(年报首末期,基期须为正)"
-        + $" + 营收3年CAGR≥{_th.MinRevCagr:0}%"
-        + $" + 最新报告期净利同比≥{_th.MinNpYoy:0}%"
-        + $" + ROE年化≥{_th.MinRoeB:0}%"
-        + " + 近3年无单季亏损"
-        + $" + 最新年报OCF/NP≥{_th.MinOcfRatio}且每股OCF>0"
-        + $" + 0<PE(TTM)≤{_th.MaxPe:0} + PEG≤{_th.MaxPeg}"
-        + "（PEG=PE÷min(净利CAGR,100%)）；核心数据缺失即剔除，每只票见 pick_reason",
+        // 2026-09-02 巴菲特式指标集（参考 巴菲特式财务指标筛选标准.md）：
+        // 批量可得的进硬门槛，不可得的标"缺少"交给 LLM 复核
+        "筛选规则(巴菲特式财务指标·批量可得部分): 中证1000+500+A500+800成分(剔ST/退) + 总市值≥"
+        + $"{_th.MinMv:0}亿"
+        + $" + 净利3年CAGR≥{_th.MinNpCagr:0}% + 营收3年CAGR≥{_th.MinRevCagr:0}%"
+        + " + 毛利率4个年报期不趋势下滑（定价权代理）"
+        + $" + ROE年化≥{_th.MinRoeB:0}%（标准线15%的批量近似）"
+        + " + 近3年无单季亏损（ROE稳定性代理）"
+        + $" + 最新年报OCF/净利≥{_th.MinOcfRatio:0.0}（现金含金量，标准线1.0的单年近似）"
+        + $" + 0<PE(TTM)≤{_th.MaxPe:0}（估值兜底）"
+        + "；核心数据缺失即剔除，每只票见 pick_reason",
         "排序公式: sort_value = min(净利CAGR,100)/PE（即 1/PEG）降序",
+        "缺少列说明: roic/debt_ratio/interest_coverage/bvps_cagr/fcf_margin/capex_intensity/"
+        + "owner_earnings 为巴菲特式标准要求的指标，但批量数据源（业绩报表/行情快照）无对应字段，"
+        + "固定填「缺少」——请你在复核时结合文本证据评估该维度，无法判断就照实写证据不足，不要编造数值",
+        "复核重点（巴菲特式业务质量）: 护城河（定价权/网络效应/转换成本/成本优势/牌照）、"
+        + "业务持久性（10-20年需求仍在）、增长连贯性（逐年序列）、竞争格局（理性竞争 vs 价格战）；"
+        + "周期性/爆发性标的（利润靠涨价而非量增）请在复核时识别并降档——财务指标无法完全区分",
+        "np_yoy_by_year/rev_yoy_by_year = 4 个年报期逐年同比（'年份:增速' 拼接），扭亏年份不含——"
+        + "用于评估增长连贯性（一年爆发撑起 CAGR 的伪成长请你在复核时识别）",
+        "gross_margin_by_year = 4 个年报期毛利率逐年值，gm_trend = 末期−基期（正=定价权稳固）",
         "订单积压参考列（LLM 复核用，不进硬门槛/排序，数据缺失留空）:",
         "  drr = 期末合同负债/TTM营收，越大越好（订单积压待交付越充足）",
         "  drgs = 合同负债同比−营收同比，越大越好（合同负债增速快于营收=订单加速积压）",
@@ -1085,7 +1171,6 @@ public class CandidatePoolTask : IBuiltinTask
         "  order_backlog_score = 0.4×DRR+0.4×DRGS+0.2×IBR（批次内min-max归一化0~100），越大越好",
         "  filter_pass = 三道过滤是否全过（毛利率同比>-3pct / 营收预告正 / 现金流改善），全过为好",
         "  gross_margin/gross_margin_yoy/rev_yoy_latest/ocf_yoy = 最新毛利率/毛利率同比/营收同比/现金流同比",
-        "批量层未覆盖、需 LLM/人工复核: 商誉/净资产、研发占比、行业渗透率、PE 上市以来分位",
     });
 
     private static string RulesNoteC() => string.Join("\n", new[]
@@ -1133,9 +1218,10 @@ public class CandidatePoolTask : IBuiltinTask
                 r => new[] { r.F["code"], r.F["name"], r.F["dividend_yield_ttm"], r.F["pb"],
                     r.F["roe_5y_avg"], r.F["quality_score"], r.F["sort_value"] }),
             "B" => TopTable(rows,
-                new[] { "代码", "名称", "总市值(亿)", "净利CAGR%", "PE", "PEG", "排序值" },
+                new[] { "代码", "名称", "总市值(亿)", "净利CAGR%", "营收CAGR%", "ROE%", "OCF/净利", "毛利率趋势", "PE", "排序值" },
                 r => new[] { r.F["code"], r.F["name"], r.F["total_mv_yi"], r.F["profit_cagr_3y"],
-                    r.F["pe_ttm"], r.F["peg"], r.F["sort_value"] }),
+                    r.F["revenue_cagr_3y"], r.F["roe_ann"], r.F["ocf_to_np"], r.F["gm_trend"],
+                    r.F["pe_ttm"], r.F["sort_value"] }),
             _ => TopTable(rows,
                 new[] { "代码", "名称", "净利同比%", "动态PE", "MA20上", "排序值" },
                 r => new[] { r.F["code"], r.F["name"], r.F["np_yoy"], r.F["pe_dynamic"],

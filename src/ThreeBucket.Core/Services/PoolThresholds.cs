@@ -19,17 +19,16 @@ public sealed class PoolThresholds
     public double MaxPb;      // pb_max PB 上限
     public double MinRoeA;    // roe_5y_avg_min_pct ROE 年化下限 %
 
-    // ── B 桶 · 成长（bucket_B.batch_screen） ──
+    // ── B 桶 · 成长（bucket_B.batch_screen，2026-09-02 巴菲特式指标集） ──
     public double MinMv;      // total_mv_min_yi 总市值下限（亿）
     public double MinNpCagr;  // np_cagr_3y_min_pct 净利3年CAGR下限 %
     public double MinRevCagr; // rev_cagr_3y_min_pct 营收3年CAGR下限 %
-    public double MinNpYoy;   // latest_np_yoy_min_pct 最新期净利同比下限 %
+    public bool GmNoDecline;  // gross_margin_5y_no_decline 毛利率逐年不趋势下滑
     public double MinRoeB;    // roe_annualized_min_pct ROE 年化下限 %
-    public double MinOcfRatio;// ocf_to_np_annual_min 年报 OCF/NP 下限
+    public double MinOcfRatio;// ocf_to_np_annual_min 最新年报 OCF/净利下限
     public double MaxPe;      // pe_ttm_max PE(TTM) 上限
-    public double MaxPeg;     // peg_max PEG 上限
-
-    /// <summary>每桶 LLM 分析上限（Top N 截断；当前 yaml 未收录，代码常量兜底）。</summary>
+    // 注意：无周期行业黑名单、无暴增上限（用户明确要求）——纯按巴菲特式财务指标
+    // 标准筛选；周期/爆发属性交给 LLM 复核（巴菲特式业务质量维度）个案定性。
     public int TopN = 100;
 
     /// <summary>兜底默认值：与 02_strategy_config.yaml 当前值一致。yaml 缺失/缺项时用。</summary>
@@ -41,11 +40,10 @@ public sealed class PoolThresholds
         MinMv = 30.0,
         MinNpCagr = 15.0,
         MinRevCagr = 10.0,
-        MinNpYoy = 10.0,
-        MinRoeB = 6.0,
-        MinOcfRatio = 0.4,
+        GmNoDecline = true,
+        MinRoeB = 12.0,   // 2026-09-02 巴菲特式：6→12（标准线15%的批量近似）
+        MinOcfRatio = 0.8,// 2026-09-02 巴菲特式现金含金量（0.4→0.8，标准线1.0单年近似放宽）
         MaxPe = 80.0,
-        MaxPeg = 1.5,
         TopN = 100,
     };
 
@@ -67,17 +65,17 @@ public sealed class PoolThresholds
                 d.MaxPb = af.Num("pb_max", d.MaxPb);
                 d.MinRoeA = af.Num("roe_5y_avg_min_pct", d.MinRoeA);
             }
-            // B 桶：bucket_B.batch_screen
+            // B 桶：bucket_B.batch_screen（2026-09-02 巴菲特式指标集）
             if (root.TryGet("bucket_B", out var b) && b.TryGet("batch_screen", out var bs))
             {
                 d.MinMv = bs.Num("total_mv_min_yi", d.MinMv);
                 d.MinNpCagr = bs.Num("np_cagr_3y_min_pct", d.MinNpCagr);
                 d.MinRevCagr = bs.Num("rev_cagr_3y_min_pct", d.MinRevCagr);
-                d.MinNpYoy = bs.Num("latest_np_yoy_min_pct", d.MinNpYoy);
+                if (bs.TryGet("gross_margin_5y_no_decline", out var gmNd))
+                    d.GmNoDecline = !gmNd.Scalar.Trim().Equals("false", StringComparison.OrdinalIgnoreCase);
                 d.MinRoeB = bs.Num("roe_annualized_min_pct", d.MinRoeB);
                 d.MinOcfRatio = bs.Num("ocf_to_np_annual_min", d.MinOcfRatio);
                 d.MaxPe = bs.Num("pe_ttm_max", d.MaxPe);
-                d.MaxPeg = bs.Num("peg_max", d.MaxPeg);
             }
         }
         catch

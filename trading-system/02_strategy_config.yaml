@@ -135,25 +135,34 @@ bucket_B:
   ladder: [0.25, 0.25, 0.25, 0.25]
 
   # 批量静态筛选层（scripts/t6_candidate_pool.py screen_bucket_b 读取）
-  # 只用全市场批量接口可得的指标；商誉/研发/渗透率/PE分位留 LLM 层验证
-  # 订单积压参考列（gross_margin_yoy/ocf_yoy/drr/drgs/ibr/arr/order_backlog_score/filter_pass）
-  # 由 C# 端硬门槛后逐票拉资产负债表计算，供 LLM 复核，不进硬门槛/排序（见 05 文档 3.5 changelog）
+  # 2026-09-02 重构为巴菲特式财务指标筛选（参考 巴菲特式财务指标筛选标准.md）：
+  # - 能由批量接口计算的指标进硬门槛；拿不到的（ROIC/利息保障/FCF/BVPS/所有者收益）
+  #   在输出标"缺少"，留给 LLM 复核或后续数据源升级
+  # - 指标可得性: ROE(年报加权,年化)✓ 毛利率(逐年)✓ 营收CAGR✓ 净利CAGR✓
+  #   OCF/净利(最新年报)✓ 逐年营收/净利同比✓ | ROIC✗ 资产负债率✗ 利息保障✗
+  #   BVPS-CAGR✗ FCF利润率✗ Capex强度✗ 所有者收益✗（✗=批量源无该字段，输出"缺少"）
   batch_screen:
     universe_index: ["000852.SH", "000905.SH", "000510.SH", "000906.SH"]
     # 中证1000+500+A500+800 全市场大中盘（2026-08 扩池：
     # 800=沪深300+500，故沪深300大盘股亦纳入；去重后约1800+只）
     exclude_st: true
-    total_mv_min_yi: 30              # 放宽 50→30，拉大候选池到50+
-    np_cagr_3y_min_pct: 15           # 放宽 20→15
-    rev_cagr_3y_min_pct: 10          # 放宽 15→10
-    latest_np_yoy_min_pct: 10        # 放宽 15→10
-    roe_annualized_min_pct: 6        # 放宽 8→6
-    no_loss_quarters_3y: true        # 近3年无单季亏损
-    ocf_to_np_annual_min: 0.4        # 放宽 0.5→0.4
-    ocf_ps_annual_positive: true     # 最新年报每股经营现金流 > 0
-    pe_ttm_max: 80                   # 放宽 60→80
-    peg_max: 1.5                     # 放宽 1.2→1.5
-    sort: "np_cagr_capped_over_pe"   # min(净利CAGR,100)/PE 降序（=1/PEG）
+    total_mv_min_yi: 30              # 市值下限（亿），保持中盘定位
+
+    # --- 硬门槛（巴菲特式，全部满足；阈值均对应筛选标准.md 达标线的批量近似口径）---
+    np_cagr_3y_min_pct: 15           # 成长质量：净利3年CAGR ≥15%（标准要求营收CAGR≥8%/5年，
+    rev_cagr_3y_min_pct: 10          #   净利更快是成长桶前提；>30% 太快由周期过滤拦）
+    gross_margin_5y_no_decline: true # 盈利能力：毛利率 4 个年报期不趋势下滑（定价权代理）
+    roe_annualized_min_pct: 12       # 盈利能力：ROE年化 ≥12%（标准线15%的批量近似：年报加权
+                                     #   ROE×年化系数含噪音，且为拉大池子让 LLM 分层）
+    ocf_to_np_annual_min: 0.8        # 财务稳健：最新年报 OCF/净利 ≥0.8（标准"现金含金量≥1.0"
+                                     #   的5年均值口径改单年近似，放宽到 0.8 减少行业噪音）
+    no_loss_quarters_3y: true        # 盈利稳定性：近3年无单季亏损（ROE稳定性批量代理）
+    pe_ttm_max: 80                   # 估值兜底：PE(TTM) 上限（防负PE/极端值进池）
+    # 注意：不加周期行业黑名单（用户明确要求）——周期与否交给财务指标本身判断：
+    # 价格驱动型周期股会被 ROE≥12 + 毛利率不下滑 + 现金含金量门槛自然挡住大半，
+    # 漏网的交给 LLM 复核（巴菲特式业务质量维度）个案定性。
+
+    sort: "np_cagr_capped_over_pe"   # 1/PEG 降序；机构持仓加分后作为初排序
 
   quality_filters:                  # 全部满足
     revenue_cagr_3y_min_pct: 15
