@@ -27,6 +27,31 @@ public sealed record YjygRow(
 /// <summary>十大流通股东行（RPT_F10_EH_FREEHOLDERS）。</summary>
 public sealed record HolderRow(string Name, double? Ratio);
 
+/// <summary>主要财务指标行（RPT_F10_FINANCE_MAINFINADATA，逐票拉取，按报告期降序返回多期）。
+/// 供 B 桶填充巴菲特式"缺少"指标：ROIC/资产负债率/利息保障/BPS/净现比等。</summary>
+public sealed record MainFinRow(
+    string Code,
+    DateTime? ReportDate,
+    double? RoeWeighted,          // ROEJQ 加权ROE %
+    double? Roic,                 // ROIC %
+    double? DebtRatio,            // ZCFZL 资产负债率 %
+    double? InterestCoverage,     // INTEREST_COVERAGE_RATIO 利息保障倍数
+    double? Bps,                  // BPS 每股净资产
+    double? OcfPs,                // MGJYXJJE 每股经营现金流
+    double? OcfToNp,              // NCO_NETPROFIT 净现比（经营现金净流量/净利润）
+    double? GrossMargin);         // XSMLL 销售毛利率 %
+
+/// <summary>个股现金流量表行（RPT_F10_FINANCE_GCASHFLOW，逐票，按报告期降序）。
+/// 供 B 桶计算 FCF 三项：FCF利润率/Capex强度/所有者收益（净值口径用年报期累计值）。</summary>
+public sealed record CashFlowRow(
+    string Code,
+    DateTime? ReportDate,
+    double? Ocf,              // NETCASH_OPERATE 经营活动现金流净额（元）
+    double? Capex,            // CONSTRUCT_LONG_ASSET 购建长期资产支出（元）
+    double? Depreciation,     // FA_IR_DEPR 固定资产折旧（元）
+    double? IntangibleAmort,  // IA_AMORTIZE 无形资产摊销（元）
+    double? DeferredAmort);   // DEFER_INCOME_AMORTIZE 长期待摊费用摊销（元）
+
 /// <summary>现金分红行（RPT_SHAREBONUS_DET，替代 akshare stock_dividend_cninfo）。</summary>
 public sealed record DividendRow(DateTime ExDate, double Dps);
 
@@ -240,6 +265,91 @@ public class EastMoneyClient
         {
             log?.Invoke($"[EM] 资产负债表({code}) 拉取失败: {e.Message}");
             return new List<BalanceSheetRow>();
+        }
+    }
+
+    /// <summary>个股主要财务指标（RPT_F10_FINANCE_MAINFINADATA，逐票，按报告期降序返回多期）。
+    /// 供 B 桶填充巴菲特式"缺少"指标：ROIC/资产负债率/利息保障/BPS/净现比等。
+    /// 失败或无数据返回空表。最新期 24h 缓存（同 zcfz 策略）。</summary>
+    public async Task<List<MainFinRow>> GetMainFinAsync(string code,
+        Action<string>? log = null, CancellationToken ct = default)
+    {
+        var cacheFile = Path.Combine(_cacheDir, $"mainfin_{code}.json");
+        if (TryReadCache(cacheFile, out List<MainFinRow>? cached))
+        {
+            log?.Invoke($"[EM] mainfin {code} 命中缓存 {cached!.Count} 期");
+            return cached;
+        }
+
+        var prefix = code.StartsWith("920") ? "BJ"
+            : code.Length == 6 && code[0] is '0' or '2' or '3' ? "SZ"
+            : "SH";
+        var filter = Uri.EscapeDataString($"(SECUCODE=\"{code}.{prefix}\")");
+        var url = $"https://datacenter.eastmoney.com/securities/api/data/v1/get"
+            + $"?reportName=RPT_F10_FINANCE_MAINFINADATA&columns=REPORT_DATE,ROEJQ,ROIC,ZCFZL,INTEREST_COVERAGE_RATIO,BPS,MGJYXJJE,NCO_NETPROFIT,XSMLL"
+            + $"&filter={filter}&pageNumber=1&pageSize=50&sortColumns=REPORT_DATE&sortTypes=-1&source=HSF10&client=PC";
+        try
+        {
+            var items = await FetchOnePageAsync(url, ct);
+            var rows = items.Select(i => new MainFinRow(
+                code,
+                ParseDate(Str(i, "REPORT_DATE")),
+                Num(i, "ROEJQ"),
+                Num(i, "ROIC"),
+                Num(i, "ZCFZL"),
+                Num(i, "INTEREST_COVERAGE_RATIO"),
+                Num(i, "BPS"),
+                Num(i, "MGJYXJJE"),
+                Num(i, "NCO_NETPROFIT"),
+                Num(i, "XSMLL"))).ToList();
+            TryWriteCache(cacheFile, rows, TimeSpan.FromHours(24));
+            return rows;
+        }
+        catch (Exception e)
+        {
+            log?.Invoke($"[EM] 主要财务指标({code}) 拉取失败: {e.Message}");
+            return new List<MainFinRow>();
+        }
+    }
+
+    /// <summary>个股现金流量表（RPT_F10_FINANCE_GCASHFLOW，逐票，按报告期降序返回多期）。
+    /// 供 B 桶计算 FCF 三项：FCF利润率/Capex强度/所有者收益。
+    /// 失败或无数据返回空表。最新期 24h 缓存（同 zcfz 策略）。</summary>
+    public async Task<List<CashFlowRow>> GetCashFlowAsync(string code,
+        Action<string>? log = null, CancellationToken ct = default)
+    {
+        var cacheFile = Path.Combine(_cacheDir, $"cashflow_{code}.json");
+        if (TryReadCache(cacheFile, out List<CashFlowRow>? cached))
+        {
+            log?.Invoke($"[EM] cashflow {code} 命中缓存 {cached!.Count} 期");
+            return cached;
+        }
+
+        var prefix = code.StartsWith("920") ? "BJ"
+            : code.Length == 6 && code[0] is '0' or '2' or '3' ? "SZ"
+            : "SH";
+        var filter = Uri.EscapeDataString($"(SECUCODE=\"{code}.{prefix}\")");
+        var url = $"https://datacenter.eastmoney.com/securities/api/data/v1/get"
+            + $"?reportName=RPT_F10_FINANCE_GCASHFLOW&columns=REPORT_DATE,NETCASH_OPERATE,CONSTRUCT_LONG_ASSET,FA_IR_DEPR,IA_AMORTIZE,DEFER_INCOME_AMORTIZE"
+            + $"&filter={filter}&pageNumber=1&pageSize=50&sortColumns=REPORT_DATE&sortTypes=-1&source=HSF10&client=PC";
+        try
+        {
+            var items = await FetchOnePageAsync(url, ct);
+            var rows = items.Select(i => new CashFlowRow(
+                code,
+                ParseDate(Str(i, "REPORT_DATE")),
+                Num(i, "NETCASH_OPERATE"),
+                Num(i, "CONSTRUCT_LONG_ASSET"),
+                Num(i, "FA_IR_DEPR"),
+                Num(i, "IA_AMORTIZE"),
+                Num(i, "DEFER_INCOME_AMORTIZE"))).ToList();
+            TryWriteCache(cacheFile, rows, TimeSpan.FromHours(24));
+            return rows;
+        }
+        catch (Exception e)
+        {
+            log?.Invoke($"[EM] 现金流量表({code}) 拉取失败: {e.Message}");
+            return new List<CashFlowRow>();
         }
     }
 

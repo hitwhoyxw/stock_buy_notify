@@ -668,6 +668,103 @@ public class CandidatePoolTask : IBuiltinTask
 
         L($"[B] 完成：{results.Count} 只通过硬门槛（共扫 {consMap.Count} 只）");
 
+        // 通过硬门槛后再拉主要财务指标（填充巴菲特式"缺少"指标：ROIC/资产负债率/利息保障/BPS/净现比）
+        if (results.Count > 0)
+        {
+            var mfCodes = results.Select(r => r.F["code"]).ToList();
+            L($"[B] 拉取主要财务指标（{mfCodes.Count} 只，逐票 MAINFINADATA）…");
+            var mfMap = new Dictionary<string, List<MainFinRow>>(StringComparer.Ordinal);
+            foreach (var c in mfCodes)
+            {
+                try
+                {
+                    var mfr = await _em.GetMainFinAsync(c, L, ct);
+                    if (mfr.Count > 0)
+                        mfMap[c] = mfr; // 保留全部期数，供多期计算（BPS-CAGR/净现比均值）
+                }
+                catch { /* 单票失败不影响整体，保持"缺少" */ }
+            }
+            L($"[B] 拉取现金流量表（{mfCodes.Count} 只，逐票 GCASHFLOW，FCF 三项用）…");
+            var cfMap = new Dictionary<string, List<CashFlowRow>>(StringComparer.Ordinal);
+            foreach (var c in mfCodes)
+            {
+                try
+                {
+                    var cfr = await _em.GetCashFlowAsync(c, L, ct);
+                    if (cfr.Count > 0)
+                        cfMap[c] = cfr;
+                }
+                catch { /* 单票失败不影响整体，保持"缺少" */ }
+            }
+
+            // 只看年报期（1231 结尾），排除季报失真；rows 已按报告期降序
+            var mfGot = 0;
+            foreach (var row in results)
+            {
+                var c0 = row.F["code"];
+                var mfs = mfMap.GetValueOrDefault(c0);
+                if (mfs is not null && mfs.Count > 0)
+                {
+                    mfGot++;
+                    var latest = mfs[0];
+
+                    // 单期字段：直接取最新报告期
+                    if (latest.Roic is { } roicV) row.F["roic"] = roicV.ToString("0.0", Inv);
+                    if (latest.DebtRatio is { } debtV) row.F["debt_ratio"] = debtV.ToString("0.0", Inv);
+                    if (latest.InterestCoverage is { } icV) row.F["interest_coverage"] = icV.ToString("0.0", Inv);
+
+                    // 多期字段：BPS-CAGR（最早~最晚年报），净现比取年报期均值
+                    var annual = mfs.Where(m => m.ReportDate is { } rd && rd.Month == 12).ToList();
+                    if (annual.Count >= 2
+                        && annual[^1].Bps is { } b0 && b0 > 0
+                        && annual[0].Bps is { } b1 && b1 > 0)
+                    {
+                        var years = (annual[0].ReportDate!.Value.Year - annual[^1].ReportDate!.Value.Year);
+                        if (years > 0)
+                        {
+                            var bvpsCagr = (Math.Pow(b1 / b0, 1.0 / years) - 1) * 100;
+                            row.F["bvps_cagr"] = bvpsCagr.ToString("0.0", Inv);
+                        }
+                    }
+                    var ratios = annual.Where(m => m.OcfToNp is { }).Select(m => m.OcfToNp.Value).ToList();
+                    if (ratios.Count > 0)
+                        row.F["fcf_margin"] = ratios.Average().ToString("0.00", Inv);
+                }
+
+                // FCF 三项：年报期 capex / 折旧摊销 / 营收（营收来自 yjbb TTM 或年报）
+                var cfs = cfMap.GetValueOrDefault(c0);
+                if (cfs is not null)
+                {
+                    var ann = cfs.Where(m => m.ReportDate is { } rd && rd.Month == 12).ToList();
+                    if (ann.Count > 0)
+                    {
+                        var a0 = ann[0]; // 最新年报
+                        if (a0.Ocf is { } ocf && ocf > 0)
+                        {
+                            if (a0.Capex is { } capex && capex > 0)
+                            {
+                                // FCF利润率 近似：年报 OCF − Capex（分母营收用 TTM）
+                                if (snap.TtmRevenue.TryGetValue(c0, out var ttmRev) && ttmRev > 0)
+                                    row.F["fcf_margin"] = (((ocf - capex) / ttmRev) * 100).ToString("0.0", Inv);
+                                // Capex强度 = Capex / OCF
+                                row.F["capex_intensity"] = (capex / ocf * 100).ToString("0.0", Inv);
+                            }
+                            // 所有者收益近似 = 净利 + 折旧摊销 − Capex
+                            // （净利取 yjbb 最新期净利润；净利润为负时无意义，留空）
+                            if (snap.Yjbb.TryGetValue(c0, out var yb) && yb.Np is { } npv && npv > 0)
+                            {
+                                var da = (a0.Depreciation ?? 0) + (a0.IntangibleAmort ?? 0)
+                                       + (a0.DeferredAmort ?? 0);
+                                var oe = npv + da - (a0.Capex ?? 0);
+                                row.F["owner_earnings"] = oe.ToString("0.0", Inv);
+                            }
+                        }
+                    }
+                }
+            }
+            L($"[B] 主要财务指标填充 {mfGot}/{results.Count} 只");
+        }
+
         // 通过硬门槛后再拉机构持仓（避免拉取上千只）；每种机构 sort +0.3
         if (results.Count > 0)
         {
@@ -1154,9 +1251,13 @@ public class CandidatePoolTask : IBuiltinTask
         + $" + 0<PE(TTM)≤{_th.MaxPe:0}（估值兜底）"
         + "；核心数据缺失即剔除，每只票见 pick_reason",
         "排序公式: sort_value = min(净利CAGR,100)/PE（即 1/PEG）降序",
-        "缺少列说明: roic/debt_ratio/interest_coverage/bvps_cagr/fcf_margin/capex_intensity/"
-        + "owner_earnings 为巴菲特式标准要求的指标，但批量数据源（业绩报表/行情快照）无对应字段，"
-        + "固定填「缺少」——请你在复核时结合文本证据评估该维度，无法判断就照实写证据不足，不要编造数值",
+        "巴菲特式扩展列（东财 MAINFINADATA/GCASHFLOW 接口逐票填充，2026-09-02 起）:",
+        "  roic = ROIC%（最新年报，标准线≥12）；debt_ratio = 资产负债率%（标准线≤50，非金融）",
+        "  interest_coverage = 利息保障倍数（标准线≥8x）；bvps_cagr = 每股净资产多年复合增速%（标准线≥10）",
+        "  fcf_margin = FCF利润率%（最新年报(OCF−Capex)/TTM营收，标准线≥10）",
+        "  capex_intensity = Capex强度%（Capex/经营现金流，标准线≤30，越低越轻资产）",
+        "  owner_earnings = 所有者收益（元，净利+折旧摊销−Capex，巴菲特估值锚点，为正且增长为佳）",
+        "  以上任一数据源未覆盖仍填「缺少」——请你在复核时结合文本证据评估该维度，无法判断就照实写证据不足，不要编造数值",
         "复核重点（巴菲特式业务质量）: 护城河（定价权/网络效应/转换成本/成本优势/牌照）、"
         + "业务持久性（10-20年需求仍在）、增长连贯性（逐年序列）、竞争格局（理性竞争 vs 价格战）；"
         + "周期性/爆发性标的（利润靠涨价而非量增）请在复核时识别并降档——财务指标无法完全区分",
