@@ -15,3 +15,8 @@ S13,均线空头排列,sell,,,,"{""logic"":""and"",""children"":[{""indicator"":
 S14,五日乖离过高,sell,,,,"{""logic"":""and"",""children"":[{""indicator"":""bias"",""operator"":"">="",""value"":5,""params"":{""period"":5}}]}",五日线乖离率超5%，短线涨幅过大，警惕冲高回落，可考虑兑现部分利润,P2,1
 S15,KDJ超买,sell,,,,"{""logic"":""and"",""children"":[{""indicator"":""kdj_j"",""operator"":"">="",""value"":100,""params"":{""n"":9}}]}",KDJ的J值超100进入超买区，短线过热，警惕回调，可逢高减仓,P2,1
 S16,KDJ超卖,buy,,,,"{""logic"":""and"",""children"":[{""indicator"":""kdj_j"",""operator"":""<="",""value"":0,""params"":{""n"":9}}]}",KDJ的J值跌破0进入超卖区，短线超跌，关注企稳反弹机会,P2,1
+S17,[巴] 澜起科技 PE≤60,buy,pe_ttm,<,60,,关注买入,P1,1
+S18,[巴] 恒瑞医药 PE≤35,buy,pe_ttm,<,35,,关注买入,P1,1
+S19,[巴] 三花智控 PE≤30,buy,pe_ttm,<,30,,关注买入,P1,1
+S20,[巴] 德业股份 PE≤20,buy,pe_ttm,<,20,,关注买入,P1,1
+S21,[巴] 福耀玻璃 回撤超20%,buy,drawdown_from_high_180d,<,-20,,关注买入,P1,1
