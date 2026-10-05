@@ -1,5 +1,5 @@
 === BUCKET: A ===
-生成日期: 2026-10-02
+生成日期: 2026-10-05
 筛选规则: 中证红利成分 + 股息率TTM≥3.0% + PB≤4.0 + ROE≥6.0%（ROE 为最新报告期年化近似，非5年均值） + 近3年无单季亏损；年报每股经营现金流为负（借钱分红嫌疑）不剔除，仅在 pick_reason 标⚠️显眼提示，请人工/LLM 复核；数据缺失时放行，见 pick_reason
 排序公式: sort_value = 股息率TTM × quality_score（quality_score 含 ROE 权重）
 code,name,industry,price,dividend_yield_ttm,dividend_percentile_5y,roe_5y_avg,fcf_coverage,pb,pb_percentile,dividend_years,loss_q_3y,ocf_ps_annual,quality_score,has_insurance,has_social_security,has_pension,has_qfii,sort_value,pick_reason
