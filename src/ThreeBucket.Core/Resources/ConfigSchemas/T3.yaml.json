@@ -1,0 +1,102 @@
+{
+  "schema": "config-contract-v1",
+  "source": "config\\quality_value\\T3.yaml",
+  "baseline": {
+    "roe_min": 0.08,
+    "npl_max": 0.02,
+    "npl_hard_max": 0.04,
+    "provision_cov_min": 1.5,
+    "leverage_max": 10,
+    "leverage_pb_haircut_at": 8,
+    "leverage_pb_haircut": 0.9,
+    "payout_min": 0.3,
+    "g_cap": 0.04,
+    "roe_sus_w5": 0.5,
+    "roe_sus_w3": 0.3,
+    "roe_sus_w1": 0.2,
+    "roe_sus_haircut": 0.0,
+    "roe_sus_pessimistic_cut": 0.02,
+    "roe_sus_optimistic_add": 0.01,
+    "weights": {
+      "profit": 20,
+      "asset": 25,
+      "capital": 20,
+      "efficiency": 10,
+      "shareholder": 15,
+      "growth": 10
+    }
+  },
+  "shape": {
+    "type": "object",
+    "properties": {
+      "roe_min": {
+        "type": "number"
+      },
+      "npl_max": {
+        "type": "number"
+      },
+      "npl_hard_max": {
+        "type": "number"
+      },
+      "provision_cov_min": {
+        "type": "number"
+      },
+      "leverage_max": {
+        "type": "number"
+      },
+      "leverage_pb_haircut_at": {
+        "type": "number"
+      },
+      "leverage_pb_haircut": {
+        "type": "number"
+      },
+      "payout_min": {
+        "type": "number"
+      },
+      "g_cap": {
+        "type": "number"
+      },
+      "roe_sus_w5": {
+        "type": "number"
+      },
+      "roe_sus_w3": {
+        "type": "number"
+      },
+      "roe_sus_w1": {
+        "type": "number"
+      },
+      "roe_sus_haircut": {
+        "type": "number"
+      },
+      "roe_sus_pessimistic_cut": {
+        "type": "number"
+      },
+      "roe_sus_optimistic_add": {
+        "type": "number"
+      },
+      "weights": {
+        "type": "object",
+        "properties": {
+          "profit": {
+            "type": "number"
+          },
+          "asset": {
+            "type": "number"
+          },
+          "capital": {
+            "type": "number"
+          },
+          "efficiency": {
+            "type": "number"
+          },
+          "shareholder": {
+            "type": "number"
+          },
+          "growth": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

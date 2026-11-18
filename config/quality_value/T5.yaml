@@ -1,0 +1,31 @@
+# T5 重资产强周期。用 10 年数据。65 分仅观察，合格仍 70。
+roe_min: 0.07
+profit_years_min: 7
+net_debt_ebitda_max: 2.5
+interest_coverage_min: 5
+payout_min: 0.30
+cycle_high: 1.50
+cycle_cold: 1.00
+fair_pe: 10
+fair_pe_min: 8
+fair_pe_max: 11
+opt_pe: 12
+pb_safe_percentile: 0.20
+pb_safe_cap: 1.0
+opt_vs_peak_cap: 0.60
+fine_chem_upgrade_gm_range_max: 0.06
+fine_chem_upgrade_roe_min: 0.08
+# 评分锚点相对 v1 收紧（减少中性分偏松导致的合格膨胀），不是为验证用例开后门。
+score:
+  roe_10y: [0.06, 0.14]
+  profit_year_ratio: [0.60, 1.00]
+  payout: [0.20, 0.50]
+  interest_coverage: [4, 12]
+  gm_stability: [0.20, 0.05]    # 毛利率十年极差，越小越好
+weights:
+  profit: 20
+  balance: 25
+  cycle: 20
+  shareholder: 15
+  cost: 10
+  gov: 10

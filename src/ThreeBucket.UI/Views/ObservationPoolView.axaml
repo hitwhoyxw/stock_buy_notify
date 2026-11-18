@@ -1,0 +1,97 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:data="using:Avalonia.Controls"
+             x:Class="ThreeBucket.UI.Views.ObservationPoolView"
+             x:CompileBindings="False">
+  <!-- t42：观察池页 = T9 观察池 + S27 底部反转买入信号 + S28 底部缓升买入信号（同一页内三个子表）；
+       现价/当日涨幅/累计涨幅 用实时行情（QuoteService：腾讯/新浪实时快照，含今日），只用于显示，不写 observation_pool.json -->
+  <DockPanel>
+    <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6" ItemSpacing="8" LineSpacing="4">
+      <TextBlock Text="👀 观察池" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+      <Button x:Name="QuoteBtn" Content="⚡ 刷新现价" Background="#27ae60" Foreground="White"
+              ToolTip.Tip="只拉实时行情更新 现价 / 当日涨幅 / 累计涨幅（三个表都刷新，不改任何数据文件）；交易时段每 60 秒自动刷新" />
+      <Button x:Name="RefreshBtn" Content="🔄 重算观察池(K线)" Background="#3498db" Foreground="White"
+              ToolTip.Tip="原「刷新行情」：按日K重算 T9 观察池的 涨跌%/最高%/回撤%/持有天数 并处理到期归档（会写 observation_pool.json）" />
+      <Button x:Name="RemoveBtn" Content="🗑 移除选中" Background="#e74c3c" Foreground="White" />
+      <ToggleButton x:Name="ArchiveToggle" Content="📦 查看归档" VerticalAlignment="Center" />
+      <ComboBox x:Name="StratCombo" Width="200" />
+      <TextBox x:Name="SearchBox" Watermark="搜索代码/名称…（三个表通用）" Width="210" />
+      <CheckBox x:Name="PendingB1Check" Content="S27 含待T+1确认的B1" VerticalAlignment="Center" />
+      <TextBlock x:Name="QuoteText" Foreground="#27ae60" FontSize="12" VerticalAlignment="Center" />
+    </WrapPanel>
+    <TextBlock x:Name="Stats" DockPanel.Dock="Bottom" Margin="6,0,6,2" FontSize="12" Foreground="#666" TextWrapping="Wrap" />
+    <TextBlock x:Name="Footnote" DockPanel.Dock="Bottom" Margin="6,0,6,6" FontSize="11" Foreground="#888" TextWrapping="Wrap" />
+    <TabControl x:Name="Tabs" Margin="2">
+      <TabItem x:Name="PoolTab" Header="T9 观察池（30天）">
+        <data:DataGrid x:Name="Grid" Margin="4" AutoGenerateColumns="False" IsReadOnly="True"
+                       GridLinesVisibility="All" SelectionMode="Single" CanUserResizeColumns="True" HorizontalScrollBarVisibility="Auto"
+                       CanUserSortColumns="True" FrozenColumnCount="2">
+          <data:DataGrid.Columns>
+            <data:DataGridTextColumn Header="代码" Binding="{Binding Code}" Width="70" />
+            <data:DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="90" />
+            <data:DataGridTextColumn Header="策略" Binding="{Binding Strategies}" Width="90" />
+            <data:DataGridTextColumn Header="入选日" Binding="{Binding EntryDate}" Width="95" />
+            <data:DataGridTextColumn Header="入选价" Binding="{Binding EntryPrice, StringFormat=F2}" Width="70" />
+            <data:DataGridTextColumn Header="现价" Binding="{Binding LastPrice, StringFormat=F2}" Width="70" />
+            <data:DataGridTextColumn Header="当日涨幅" Binding="{Binding DayPct, StringFormat='+0.00\\%;-0.00\\%;0.00\\%'}" Width="80" />
+            <data:DataGridTextColumn Header="累计涨幅" Binding="{Binding CumPct, StringFormat='+0.00\\%;-0.00\\%;0.00\\%'}" Width="80" />
+            <data:DataGridTextColumn Header="收盘涨跌%(复权)" Binding="{Binding ReturnPct, StringFormat='+0.00\\%;-0.00\\%;0.00\\%'}" Width="110" />
+            <data:DataGridTextColumn Header="最高%" Binding="{Binding MaxGainPct, StringFormat='+0.00\\%;-0.00\\%;0.00\\%'}" Width="75" />
+            <data:DataGridTextColumn Header="最大回撤%" Binding="{Binding MaxDrawdownPct, StringFormat='0.00\\%'}" Width="85" />
+            <data:DataGridTextColumn Header="持有(交易日)" Binding="{Binding HoldDays}" Width="90" />
+            <data:DataGridTextColumn Header="命中次数" Binding="{Binding HitCount}" Width="70" />
+            <data:DataGridTextColumn Header="最近命中" Binding="{Binding LastHitDate}" Width="95" />
+            <data:DataGridTextColumn Header="到期日" Binding="{Binding ExpireDate}" Width="95" />
+            <data:DataGridTextColumn Header="剩余天数" Binding="{Binding RemainingDays}" Width="70" />
+            <data:DataGridTextColumn Header="行情" Binding="{Binding QuoteSource}" Width="150" />
+            <data:DataGridTextColumn Header="状态/备注" Binding="{Binding Status}" Width="320" />
+          </data:DataGrid.Columns>
+        </data:DataGrid>
+      </TabItem>
+      <TabItem x:Name="BrTab" Header="S27 底部反转 买入信号">
+        <data:DataGrid x:Name="BrGrid" Margin="4" AutoGenerateColumns="False" IsReadOnly="True"
+                       GridLinesVisibility="All" SelectionMode="Single" CanUserResizeColumns="True" HorizontalScrollBarVisibility="Auto"
+                       CanUserSortColumns="True" FrozenColumnCount="2">
+          <data:DataGrid.Columns>
+            <data:DataGridTextColumn Header="代码" Binding="{Binding Code}" Width="70" />
+            <data:DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="90" />
+            <data:DataGridTextColumn Header="信号日" Binding="{Binding SignalDate}" Width="95" />
+            <data:DataGridTextColumn Header="信号" Binding="{Binding Signal}" Width="50" />
+            <data:DataGridTextColumn Header="分级/T+1检查" Binding="{Binding Grade}" Width="170" />
+            <data:DataGridTextColumn Header="入选价(计划价)" Binding="{Binding EntryPrice, StringFormat=F2}" Width="100" />
+            <data:DataGridTextColumn Header="止损" Binding="{Binding Stop, StringFormat=F2}" Width="66" />
+            <data:DataGridTextColumn Header="现价" Binding="{Binding LastPrice, StringFormat=F2}" Width="70" />
+            <data:DataGridTextColumn Header="当日涨幅" Binding="{Binding DayPct, StringFormat='+0.00\\%;-0.00\\%;0.00\\%'}" Width="80" />
+            <data:DataGridTextColumn Header="累计涨幅" Binding="{Binding CumPct, StringFormat='+0.00\\%;-0.00\\%;0.00\\%'}" Width="80" />
+            <data:DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="120" />
+            <data:DataGridTextColumn Header="天数(交易日)" Binding="{Binding Days}" Width="90" />
+            <data:DataGridTextColumn Header="行情" Binding="{Binding QuoteSource}" Width="150" />
+            <data:DataGridTextColumn Header="说明" Binding="{Binding Note}" Width="420" />
+          </data:DataGrid.Columns>
+        </data:DataGrid>
+      </TabItem>
+      <TabItem x:Name="SrTab" Header="S28 底部缓升 买入信号">
+        <data:DataGrid x:Name="SrGrid" Margin="4" AutoGenerateColumns="False" IsReadOnly="True"
+                       GridLinesVisibility="All" SelectionMode="Single" CanUserResizeColumns="True" HorizontalScrollBarVisibility="Auto"
+                       CanUserSortColumns="True" FrozenColumnCount="2">
+          <data:DataGrid.Columns>
+            <data:DataGridTextColumn Header="代码" Binding="{Binding Code}" Width="70" />
+            <data:DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="90" />
+            <data:DataGridTextColumn Header="信号日" Binding="{Binding SignalDate}" Width="95" />
+            <data:DataGridTextColumn Header="信号" Binding="{Binding Signal}" Width="50" />
+            <data:DataGridTextColumn Header="评分" Binding="{Binding Grade}" Width="60" />
+            <data:DataGridTextColumn Header="入选价(参考收盘)" Binding="{Binding EntryPrice, StringFormat=F2}" Width="110" />
+            <data:DataGridTextColumn Header="止损" Binding="{Binding Stop, StringFormat=F2}" Width="66" />
+            <data:DataGridTextColumn Header="现价" Binding="{Binding LastPrice, StringFormat=F2}" Width="70" />
+            <data:DataGridTextColumn Header="当日涨幅" Binding="{Binding DayPct, StringFormat='+0.00\\%;-0.00\\%;0.00\\%'}" Width="80" />
+            <data:DataGridTextColumn Header="累计涨幅" Binding="{Binding CumPct, StringFormat='+0.00\\%;-0.00\\%;0.00\\%'}" Width="80" />
+            <data:DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="160" />
+            <data:DataGridTextColumn Header="剩余天数" Binding="{Binding Days}" Width="70" />
+            <data:DataGridTextColumn Header="行情" Binding="{Binding QuoteSource}" Width="150" />
+            <data:DataGridTextColumn Header="说明" Binding="{Binding Note}" Width="460" />
+          </data:DataGrid.Columns>
+        </data:DataGrid>
+      </TabItem>
+    </TabControl>
+  </DockPanel>
+</UserControl>

@@ -1,0 +1,108 @@
+# 估值参数：要求回报率、目标股息率（Y_required，不得与 Re 混用）、分歧度分档。
+re_premium:
+  T1: { optimistic: 0.055, base: 0.070, conservative: 0.090 }
+  T2: { optimistic: 0.055, base: 0.070, conservative: 0.090 }
+  T3: { optimistic: 0.055, base: 0.070, conservative: 0.090 }
+  T4: { optimistic: 0.035, base: 0.045, conservative: 0.060 }
+  T5: { optimistic: 0.065, base: 0.080, conservative: 0.100 }
+# 股息率法使用 Y_required = max(rf + premium, floor)，不是 Re。
+div_yield_premium:
+  T1: { optimistic: 0.015, base: 0.025, conservative: 0.035 }
+  T2: { optimistic: 0.025, base: 0.035, conservative: 0.045 }
+  T3: { optimistic: 0.025, base: 0.035, conservative: 0.045 }
+  T4: { optimistic: 0.025, base: 0.035, conservative: 0.050 }
+  T5: { optimistic: 0.050, base: 0.065, conservative: 0.085 }
+div_yield_floor:
+  optimistic: 0.03
+  base: 0.04
+  conservative: 0.05
+dispersion_confidence:
+  high: 0.20
+  mid: 0.40
+  low: 0.60
+
+# ───── v1.2 P0 新增（初始配置，须经回测与样本验证后再定版，不得为过样本而改阈值）─────
+bank_valuation:
+  model_weight: 0.40
+  peer_weight: 0.60
+  growth_rate_max: 0.04
+  growth_rate_base_min: 0.02
+  growth_rate_base_max: 0.03
+  growth_rate_pess: 0.02
+  valuation_outlier_check: true
+  use_peer_valuation: true
+  use_pb_cap: false
+  require_regulatory_capital_verification: true
+  erp: 0.065
+  payout_assumption_if_missing: 0.30
+  roe_pess_cut: 0.025
+  roe_opt_add: 0.01
+  roe_sus_cap: 0.20
+  re_pess_add: 0.01
+  peer_full_sample: 8
+  peer_min_sample: 3
+  model_peer_gap_flag: 0.40
+  sensitivity_step: 0.005
+  sensitivity_dispersion: 0.40
+  denom_min: 0.03
+  cost_of_equity:
+    state_owned: { min: 0.10, max: 0.115 }
+    joint_stock: { min: 0.105, max: 0.12 }
+    city_commercial: { min: 0.11, max: 0.13 }
+    city_commercial_general: { min: 0.12, max: 0.145 }
+    rural_commercial: { min: 0.12, max: 0.145 }
+    high_risk: { min: 0.13, max: 0.16 }
+  outlier:
+    state_owned: 1.5
+    joint_stock: 1.6
+    city_commercial_quality: 1.8
+    city_commercial: 1.8
+    rural_commercial: 1.6
+  rbank:
+    npl_high: 0.02
+    npl_high_add: 0.008
+    npl_mid: 0.015
+    npl_mid_add: 0.004
+    npl_low: 0.008
+    npl_low_add: -0.002
+    prov_low: 1.5
+    prov_low_add: 0.004
+    prov_mid: 2.0
+    prov_mid_add: 0.002
+    prov_high: 3.0
+    prov_high_add: -0.001
+    cet1_low: 0.09
+    cet1_low_add: 0.004
+    cet1_mid: 0.10
+    cet1_mid_add: 0.002
+    cet1_high: 0.13
+    cet1_high_add: -0.001
+    capital_unknown_add: 0.002
+    vol_high: 0.05
+    vol_high_add: 0.006
+    vol_mid: 0.03
+    vol_mid_add: 0.003
+    red_flag_add: 0.005
+
+cycle_filter:
+  normalized_earnings: false   # P1 未实施，仅预留并用于报告基线统计
+  high_percentile: 0.80
+  top_risk_percentile: 0.90
+  qualified_pool_target_max: 0.40
+  core_pool_target_max: 0.35
+  block_strike_when_high: true
+  block_strike_when_top_risk: true
+
+data_quality:
+  classification_coverage_warning: 0.95
+  require_source_tracking: true
+  require_data_timestamp: true
+  block_strike_on_grade_e: true
+  block_strike_on_critical_missing: true
+  low_confidence: 60
+  mid_confidence: 75
+  high_confidence: 90
+
+dividend:
+  require_confirmed_data_for_yield_valuation: true
+  exclude_special_dividend_from_recurring_yield: true

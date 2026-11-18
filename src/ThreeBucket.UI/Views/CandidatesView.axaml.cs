@@ -12,6 +12,8 @@ public partial class CandidatesView : UserControl, IRefreshable
     private readonly AppState _app;
     private readonly Action<string> _status;
     private List<Dictionary<string, string>> _full = new();
+    private bool _loadingStrat;
+    private bool IsScanMode => BucketCombo.SelectedIndex == 3;
 
     private static readonly HashSet<string> InstCols = new() { "has_insurance", "has_social_security", "has_pension", "has_qfii" };
     private static readonly HashSet<string> Hidden = new() { "inst_detail", "pick_reason" };
@@ -86,6 +88,15 @@ public partial class CandidatesView : UserControl, IRefreshable
         ["inst_detail"] = "机构明细",
         ["pick_reason"] = "入选理由",
         ["sort_value"] = "排序值↑",
+        ["strategy_id"] = "策略ID",
+        ["strategy_name"] = "策略名",
+        ["priority"] = "优先级",
+        ["change_pct"] = "涨跌%",
+        ["rev_yoy"] = "营收同比↑",
+        ["np_qoq"] = "净利环比↑",
+        ["rev_qoq"] = "营收环比↑",
+        ["earnings_ok"] = "业绩粗评",
+        ["action"] = "建议",
     };
 
     /// <summary>仅供 XAML 编译器/设计器使用；运行时请用带参构造。</summary>
@@ -96,7 +107,8 @@ public partial class CandidatesView : UserControl, IRefreshable
         InitializeComponent();
         _app = app; _status = status;
 
-        BucketCombo.SelectionChanged += (_, _) => Load();
+        BucketCombo.SelectionChanged += (_, _) => OnBucketChanged();
+        StratCombo.SelectionChanged += (_, _) => { if (_loadingStrat) return; Load(); };
         RefreshBtn.Click += (_, _) => Load();
         InstFilter.IsCheckedChanged += (_, _) => Apply();
         SearchBox.TextChanged += (_, _) => Apply();
@@ -106,15 +118,61 @@ public partial class CandidatesView : UserControl, IRefreshable
 
     public void OnShown() => Load();
 
+    private void OnBucketChanged()
+    {
+        StratCombo.IsVisible = IsScanMode;
+        InstFilter.IsVisible = !IsScanMode;
+        if (IsScanMode) RefreshStratCombo();
+        Load();
+    }
+
+    private void RefreshStratCombo()
+    {
+        _loadingStrat = true;
+        try
+        {
+            var (headers, rows) = _app.Store.LoadStrategyScan();
+            var ids = rows.Select(r => r.GetValueOrDefault("strategy_id", ""))
+                .Where(s => s.Length > 0).Distinct().OrderBy(s => s).ToList();
+            var items = new List<string> { "全部策略" };
+            foreach (var id in ids)
+            {
+                var name = rows.FirstOrDefault(r => r.GetValueOrDefault("strategy_id", "") == id)
+                    ?.GetValueOrDefault("strategy_name", "") ?? "";
+                items.Add(string.IsNullOrEmpty(name) ? id : id + " " + name);
+            }
+            StratCombo.ItemsSource = items;
+            StratCombo.SelectedIndex = 0;
+        }
+        finally { _loadingStrat = false; }
+    }
+
     public void Load()
     {
+        if (IsScanMode)
+        {
+            string? sid = null;
+            if (StratCombo.SelectedIndex > 0 && StratCombo.SelectedItem is string sel)
+            {
+                var sp = sel.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                sid = sp.Length > 0 ? sp[0] : null;
+            }
+            var (headers, rows) = _app.Store.LoadStrategyScan(sid);
+            _full = rows;
+            BuildColumns(headers);
+            Apply();
+            var file = sid is null ? "strategy_scan.csv" : ("strategy_scan_" + sid + ".csv");
+            Stats.Text = $"策略扫描 {(sid ?? "ALL")}: {rows.Count} 条  |  更新于 {_app.Store.FileMtime(file)}";
+            return;
+        }
         var bucket = "ABC"[BucketCombo.SelectedIndex].ToString();
-        var (headers, rows) = _app.Store.LoadCandidates(bucket);
-        _full = rows;
-        BuildColumns(headers);
+        var (h2, r2) = _app.Store.LoadCandidates(bucket);
+        _full = r2;
+        BuildColumns(h2);
         Apply();
-        Stats.Text = $"{bucket}桶: {rows.Count} 只  |  更新于 {_app.Store.FileMtime($"candidates_{bucket}.csv")}";
+        Stats.Text = $"{bucket}桶: {r2.Count} 只  |  更新于 {_app.Store.FileMtime($"candidates_{bucket}.csv")}";
     }
+
 
     private void BuildColumns(List<string> headers)
     {
@@ -168,7 +226,8 @@ public partial class CandidatesView : UserControl, IRefreshable
         if (Grid.SelectedItem is not Dictionary<string, string> row) { _status("请先选中一行"); return; }
         var code = row.GetValueOrDefault("code", "").Trim();
         var name = row.GetValueOrDefault("name", "").Trim();
-        var (ok, msg) = _app.Store.AddWatch(code, name, "candidates");
+        var from = IsScanMode ? "strategy_scan" : "candidates";
+        var (ok, msg) = _app.Store.AddWatch(code, name, from);
         _status(msg);
         if (ok) Load();
     }

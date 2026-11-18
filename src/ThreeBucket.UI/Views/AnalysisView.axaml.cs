@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using Avalonia.Controls;
-using Avalonia.Controls.Templates;
 using ThreeBucket.UI.Services;
 
 namespace ThreeBucket.UI.Views;
@@ -174,101 +173,8 @@ public partial class AnalysisView : UserControl, IRefreshable
         var text = _app.Store.LoadText(f.FileName);
         var size = new FileInfo(path).Length;
         InfoText.Text = $"{f.FileName}  |  {size:N0} bytes  |  {File.GetLastWriteTime(path):yyyy-MM-dd HH:mm}";
-        RenderMarkdown(text);
-    }
-
-    // ── 轻量 markdown 渲染：标题/引用/段落用 TextBlock，| 表格 | 解析成 DataGrid ──
-
-    private void RenderMarkdown(string text)
-    {
-        var lines = text.Replace("\r\n", "\n").Split('\n');
-        int i = 0;
-        while (i < lines.Length)
-        {
-            var line = lines[i];
-
-            // 表格块：以 | 开头的连续行，第二行是 |---|---| 分隔行
-            if (line.TrimStart().StartsWith("|") && i + 1 < lines.Length && IsSeparatorRow(lines[i + 1]))
-            {
-                i = RenderTable(lines, i);
-                continue;
-            }
-
-            var t = line.Trim();
-            if (t.Length == 0) { i++; continue; }
-            if (t.StartsWith("### "))
-                Doc.Children.Add(new TextBlock { Text = t[4..], FontWeight = Avalonia.Media.FontWeight.Bold, FontSize = 14, Margin = new Avalonia.Thickness(0, 12, 0, 4) });
-            else if (t.StartsWith("## "))
-                Doc.Children.Add(new TextBlock { Text = t[3..], FontWeight = Avalonia.Media.FontWeight.Bold, FontSize = 15, Margin = new Avalonia.Thickness(0, 12, 0, 4) });
-            else if (t.StartsWith("# "))
-                Doc.Children.Add(new TextBlock { Text = t[2..], FontWeight = Avalonia.Media.FontWeight.Bold, FontSize = 17, Margin = new Avalonia.Thickness(0, 8, 0, 6) });
-            else if (t.StartsWith("> "))
-                Doc.Children.Add(new TextBlock { Text = t[2..], Foreground = Avalonia.Media.Brushes.Gray, FontSize = 12, TextWrapping = Avalonia.Media.TextWrapping.Wrap, Margin = new Avalonia.Thickness(0, 2, 0, 2) });
-            else
-                Doc.Children.Add(new TextBlock { Text = t, FontSize = 12, TextWrapping = Avalonia.Media.TextWrapping.Wrap, Margin = new Avalonia.Thickness(0, 2, 0, 2) });
-            i++;
-        }
-    }
-
-    /// <summary>渲染从 header 行开始的表格块，返回下一行下标。</summary>
-    private int RenderTable(string[] lines, int start)
-    {
-        var headers = SplitMdRow(lines[start]);
-        var rows = new List<Dictionary<string, string>>();
-        int i = start + 2; // 跳过 header 与 |---| 分隔行
-        while (i < lines.Length && lines[i].TrimStart().StartsWith("|"))
-        {
-            var cells = SplitMdRow(lines[i]);
-            var row = new Dictionary<string, string>();
-            for (int c = 0; c < headers.Count; c++)
-                row[headers[c]] = c < cells.Count ? cells[c] : "";
-            rows.Add(row);
-            i++;
-        }
-
-        var grid = new DataGrid
-        {
-            AutoGenerateColumns = false,
-            IsReadOnly = true,
-            GridLinesVisibility = DataGridGridLinesVisibility.All,
-            Margin = new Avalonia.Thickness(0, 4, 0, 8),
-            MaxHeight = 420,   // 限制高度避免长表撑爆外层 ScrollViewer
-        };
-        foreach (var h in headers)
-        {
-            // 列名来自 markdown 表头，无强类型属性可用；索引器路径在 Avalonia 版本间
-            // 行为不一致会导致整列空白——改绑行对象本身，ConverterParameter 传列名取值
-            grid.Columns.Add(new DataGridTemplateColumn
-            {
-                Header = h,
-                Width = new DataGridLength(1, DataGridLengthUnitType.Auto),
-                CellTemplate = new FuncDataTemplate<Dictionary<string, string>>((_, _) => new TextBlock
-                {
-                    [!TextBlock.TextProperty] = new Avalonia.Data.Binding
-                    {
-                        Converter = new DictValueConverter(),
-                        ConverterParameter = h,
-                    },
-                }),
-            });
-        }
-        grid.SetItemsSafe(new ObservableCollection<Dictionary<string, string>>(rows));
-        Doc.Children.Add(grid);
-        return i;
-    }
-
-    private static List<string> SplitMdRow(string line)
-    {
-        var t = line.Trim();
-        if (t.StartsWith("|")) t = t[1..];
-        if (t.EndsWith("|")) t = t[..^1];
-        return t.Split('|').Select(c => c.Trim()).ToList();
-    }
-
-    /// <summary>markdown 表格分隔行：每个单元格都是 :--- / --- / ---: 形态。</summary>
-    private static bool IsSeparatorRow(string line)
-    {
-        var cells = SplitMdRow(line);
-        return cells.Count > 0 && cells.All(c => System.Text.RegularExpressions.Regex.IsMatch(c, @"^:?-{3,}:?$"));
+        // 轻量 markdown 渲染（标题/引用/段落 + | 表格 | → DataGrid），逻辑已抽到
+        // Services/MarkdownRenderer 与「投资经验」页共用，避免两处行为漂移
+        MarkdownRenderer.Render(Doc, text);
     }
 }

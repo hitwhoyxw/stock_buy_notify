@@ -1,0 +1,204 @@
+{
+  "schema": "config-contract-v1",
+  "source": "config\\quality_value\\industry_relative.yaml",
+  "baseline": {
+    "enabled": true,
+    "window_years": 5,
+    "min_peers": 10,
+    "composite_min": 80,
+    "dimension_min": 80,
+    "supporting_dimensions": 2,
+    "core_min": 90,
+    "other_min": 60,
+    "eligible_types": [
+      "T1",
+      "T4",
+      "T5"
+    ],
+    "operating_gate_allowlist": [
+      "ROE",
+      "T4 双通道",
+      "10 年盈利"
+    ],
+    "profit_positive_years": 4,
+    "ocf_positive_years": 4,
+    "interest_coverage_min": 2.5,
+    "payout_ratio_max": 1.0,
+    "block_strong_until_review": true,
+    "cash_semantics_review_groups": [
+      "港口运营"
+    ],
+    "fallback_exact_industry": true,
+    "ambiguous_industries": [
+      "电力",
+      "航运港口",
+      "公用事业",
+      "综合",
+      "银行",
+      "多元金融"
+    ],
+    "groups": [
+      {
+        "name": "港口运营",
+        "industries": [
+          "航运港口",
+          "港口"
+        ],
+        "types": [
+          "T4"
+        ],
+        "name_contains_any": [
+          "港",
+          "码头"
+        ],
+        "exclude_name_contains": [
+          "轮船",
+          "海运",
+          "航运"
+        ]
+      },
+      {
+        "name": "核电运营",
+        "industries": [
+          "电力"
+        ],
+        "types": [
+          "T4",
+          "T5"
+        ],
+        "name_contains_any": [
+          "核电",
+          "广核"
+        ]
+      },
+      {
+        "name": "航运运输",
+        "industries": [
+          "航运港口"
+        ],
+        "types": [
+          "T5"
+        ],
+        "name_contains_any": [
+          "轮船",
+          "海运",
+          "航运",
+          "海控",
+          "海能",
+          "海特",
+          "海发"
+        ]
+      }
+    ],
+    "evidence": {}
+  },
+  "shape": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "window_years": {
+        "type": "number"
+      },
+      "min_peers": {
+        "type": "number"
+      },
+      "composite_min": {
+        "type": "number"
+      },
+      "dimension_min": {
+        "type": "number"
+      },
+      "supporting_dimensions": {
+        "type": "number"
+      },
+      "core_min": {
+        "type": "number"
+      },
+      "other_min": {
+        "type": "number"
+      },
+      "eligible_types": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "operating_gate_allowlist": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "profit_positive_years": {
+        "type": "number"
+      },
+      "ocf_positive_years": {
+        "type": "number"
+      },
+      "interest_coverage_min": {
+        "type": "number"
+      },
+      "payout_ratio_max": {
+        "type": "number"
+      },
+      "block_strong_until_review": {
+        "type": "boolean"
+      },
+      "cash_semantics_review_groups": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "fallback_exact_industry": {
+        "type": "boolean"
+      },
+      "ambiguous_industries": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "groups": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "industries": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "types": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "name_contains_any": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "exclude_name_contains": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "evidence": {
+        "type": "evidence"
+      }
+    }
+  }
+}

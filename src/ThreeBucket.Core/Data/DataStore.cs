@@ -1,3 +1,4 @@
+﻿using ThreeBucket.Core.Services;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -230,6 +231,78 @@ public class DataStore
     public (List<string> Headers, List<Dictionary<string, string>> Rows) LoadCandidates(string bucket)
         => ReadCsv($"candidates_{bucket}.csv");
 
+    /// <summary>T9 策略扫描结果：strategy_scan.csv；若传策略 ID 则读 strategy_scan_{id}.csv。</summary>
+    public (List<string> Headers, List<Dictionary<string, string>> Rows) LoadStrategyScan(string? strategyId = null)
+        => ReadCsv(string.IsNullOrWhiteSpace(strategyId) ? "strategy_scan.csv" : $"strategy_scan_{strategyId}.csv");
+
+    /// <summary>T9 扫描名单文件：每行一个策略 ID（# 开头为注释）。</summary>
+    public const string StrategyScanIdsFile = "strategy_scan_ids.txt";
+
+    /// <summary>
+    /// 读取 T9「全市场扫描」策略 ID 名单（仅全市场扫描 + 观察池使用；自选监控策略按股票绑定在 watchlist.csv，二者互不影响）。
+    /// 严格按文件内容：文件不存在或为空 → 返回空名单（T9 不扫），绝不自动播种/回退到全部策略。
+    /// </summary>
+    public List<string> ListStrategyScanIds()
+    {
+        var path = PathOf(StrategyScanIdsFile);
+        if (!File.Exists(path)) return new List<string>();
+        return File.ReadAllLines(path)
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0 && !l.StartsWith('#'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>覆盖写入 T9 扫描策略 ID 列表（保持给定顺序）。</summary>
+    public void SaveStrategyScanIds(IEnumerable<string> ids)
+    {
+        var list = ids.Select(id => (id ?? "").Trim())
+            .Where(id => id.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var path = PathOf(StrategyScanIdsFile);
+        Directory.CreateDirectory(DataDir);
+        var body = "# T9 全市场扫描名单（每行一个策略 ID；# 开头为注释）。仅用于全市场扫描与观察池入池；\n"
+                   + "# 自选股监控策略在 watchlist.csv 的 strategies 列按股票单独绑定，与本名单无关。名单为空则不扫描。\n"
+                   + string.Join("\n", list)
+                   + (list.Count > 0 ? "\n" : "");
+        File.WriteAllText(path, body, new UTF8Encoding(false));
+    }
+
+    /// <summary>把策略加入 T9 扫描名单；已存在则不变。返回是否新加入。</summary>
+    public bool AddStrategyScanId(string id)
+    {
+        id = (id ?? "").Trim();
+        if (id.Length == 0) return false;
+        var cur = ListStrategyScanIds();
+        if (cur.Any(x => string.Equals(x, id, StringComparison.OrdinalIgnoreCase))) return false;
+        cur.Add(id);
+        SaveStrategyScanIds(cur);
+        return true;
+    }
+
+    /// <summary>从 T9 扫描名单移除策略。返回是否确有删除。</summary>
+    public bool RemoveStrategyScanId(string id)
+    {
+        id = (id ?? "").Trim();
+        if (id.Length == 0) return false;
+        var cur = ListStrategyScanIds();
+        var next = cur.Where(x => !string.Equals(x, id, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (next.Count == cur.Count) return false;
+        SaveStrategyScanIds(next);
+        return true;
+    }
+
+    /// <summary>按扫描名单解析策略对象（保名单顺序；跳过已删除的 ID）。</summary>
+    public List<Strategy> ListStrategyScanStrategies()
+    {
+        var byId = ListStrategies().ToDictionary(s => s.Id, StringComparer.OrdinalIgnoreCase);
+        var result = new List<Strategy>();
+        foreach (var id in ListStrategyScanIds())
+            if (byId.TryGetValue(id, out var s)) result.Add(s);
+        return result;
+    }
+
     // ── 监控自选 ───────────────────────────────────────────────────
 
     public List<WatchItem> ListWatchlist()
@@ -291,6 +364,8 @@ public class DataStore
     public void SetStrategies(string code, List<string> ids)
     {
         var c = NormalizeCode(code);
+        // 绑定 ID 去空白，避免 "S18; S23" 这类写法匹配失败
+        ids = ids.Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
         var (headers, rows) = ReadCsv("watchlist.csv", WatchColumns);
         foreach (var r in rows)
             if (NormalizeCode(r.GetValueOrDefault("code", "")) == c)
@@ -347,12 +422,13 @@ public class DataStore
 
     public List<Strategy> ListStrategies()
     {
-        var (_, rows) = ReadCsv("strategies.csv", StrategyColumns);
-        if (rows.Count == 0) SeedDefaultStrategies();
+        var path=PathOf("strategies.csv");
+        if(!File.Exists(path))return DefaultStrategies();
+        ConfigGovernance.ValidateStrategiesCsv(path);
         return ReadCsv("strategies.csv", StrategyColumns).Rows.Select(ToStrategy).ToList();
     }
 
-    private void SeedDefaultStrategies()
+    private List<Strategy> DefaultStrategies()
     {
         var defaults = new List<Dictionary<string, string>>
         {
@@ -399,7 +475,7 @@ public class DataStore
             Strat("S16","KDJ超卖","buy","","","","KDJ的J值跌破0进入超卖区，短线超跌，关注企稳反弹机会","P2",Cond(And(
                 Leaf("kdj_j","<=",0.0,("n",9))))),
         };
-        WriteCsv("strategies.csv", StrategyColumns.ToList(), defaults);
+        return defaults.Select(ToStrategy).ToList();
     }
 
     // ── 种子策略的条件树 JSON 组装（与 data/strategies.csv 的 S6–S16 保持一致）──
@@ -457,8 +533,15 @@ public class DataStore
         return $"S{(nums.Count == 0 ? 0 : nums.Max()) + 1}";
     }
 
+    private void EnsureStrategyFileForExplicitWrite()
+    {
+        if(!File.Exists(PathOf("strategies.csv")))WriteCsv("strategies.csv",StrategyColumns.ToList(),DefaultStrategies().Select(ToRow).ToList());
+        else ConfigGovernance.ValidateStrategiesCsv(PathOf("strategies.csv"));
+    }
+
     public void AddStrategy(Strategy s)
     {
+        EnsureStrategyFileForExplicitWrite();
         var (headers, rows) = ReadCsv("strategies.csv", StrategyColumns);
         if (string.IsNullOrWhiteSpace(s.Id)) s.Id = NextStrategyId();
         if (string.IsNullOrWhiteSpace(s.Enabled ? "1" : "0")) s.Enabled = true;
@@ -468,6 +551,7 @@ public class DataStore
 
     public void UpdateStrategy(Strategy s)
     {
+        EnsureStrategyFileForExplicitWrite();
         var (headers, rows) = ReadCsv("strategies.csv", StrategyColumns);
         for (var i = 0; i < rows.Count; i++)
         {
@@ -479,6 +563,7 @@ public class DataStore
 
     public void DeleteStrategy(string id)
     {
+        EnsureStrategyFileForExplicitWrite();
         var (headers, rows) = ReadCsv("strategies.csv", StrategyColumns);
         var filtered = rows.Where(r => r.GetValueOrDefault("id", "") != id).ToList();
         WriteCsv("strategies.csv", headers, filtered);
@@ -486,7 +571,7 @@ public class DataStore
         var (wh, wr) = ReadCsv("watchlist.csv", WatchColumns);
         foreach (var r in wr)
         {
-            var ids = r.GetValueOrDefault("strategies", "").Split(';', StringSplitOptions.RemoveEmptyEntries)
+            var ids = r.GetValueOrDefault("strategies", "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Where(x => x != id).ToList();
             r["strategies"] = string.Join(";", ids);
         }
@@ -495,6 +580,7 @@ public class DataStore
 
     public void ToggleStrategy(string id)
     {
+        EnsureStrategyFileForExplicitWrite();
         var (headers, rows) = ReadCsv("strategies.csv", StrategyColumns);
         foreach (var r in rows)
             if (r.GetValueOrDefault("id", "") == id)

@@ -10,7 +10,7 @@ namespace ThreeBucket.UI.Dialogs;
 /// 为一只自选股绑定监控策略（CheckBox 多选）。
 /// 对应 Python tab_watchlist 的策略选择对话框：勾选结果分号拼接写入 watchlist.strategies。
 /// </summary>
-public class StrategyPickDialog : Window
+public class StrategyPickDialog : DialogBase
 {
     private readonly List<CheckBox> _boxes = new();
 
@@ -20,10 +20,8 @@ public class StrategyPickDialog : Window
     public StrategyPickDialog(string code, string name, List<Strategy> strategies, List<string> currentIds)
     {
         Title = $"绑定策略 — {code} {name}";
-        Width = 420;
-        SizeToContent = SizeToContent.Height;
-        MaxHeight = 560;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        DialogWidth = 420;
+        DialogMaxHeight = 560;
 
         var list = new StackPanel { Margin = new Thickness(16, 8, 16, 8), Spacing = 6 };
         if (strategies.Count == 0)
@@ -83,6 +81,4 @@ public class StrategyPickDialog : Window
             },
         };
     }
-
-    public Task<bool> ShowAsync(Window owner) => ShowDialog<bool>(owner);
 }

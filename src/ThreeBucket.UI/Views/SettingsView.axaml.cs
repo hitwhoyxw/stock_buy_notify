@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using ThreeBucket.Core.Models;
 using ThreeBucket.Core.Services;
 using ThreeBucket.UI.Dialogs;
@@ -26,6 +27,8 @@ public partial class SettingsView : UserControl, IRefreshable
     private readonly CheckBox _schedEnabled = new();
     private readonly TimePicker _schedTime = new();
     private readonly TextBox _schedTasks = new();
+    private readonly TimePicker _intradaySchedTime = new();
+    private readonly TextBox _intradaySchedTasks = new();
     private readonly NumericUpDown _monInterval = new() { Minimum = 10, Maximum = 3600, Increment = 5, FormatString = "F0" };
     private readonly CheckBox _emailEnabled = new();
     private readonly TextBox _smtpHost = new();
@@ -100,11 +103,14 @@ public partial class SettingsView : UserControl, IRefreshable
 
         _schedEnabled.Content = "启用定时执行（工作日）";
         _schedTasks.Watermark = "如 T1 T8";
+        _intradaySchedTasks.Watermark = "如 T9";
         Form.Children.Add(Group("内置定时器（本地自动跑任务）", new Control[]
         {
             _schedEnabled,
-            Row("每日运行时间:", _schedTime),
-            Row("运行任务:", _schedTasks),
+            Row("收盘后时间:", _schedTime),
+            Row("收盘后任务:", _schedTasks),
+            Row("尾盘时间:", _intradaySchedTime),
+            Row("尾盘任务:", _intradaySchedTasks),
         }));
 
         _emailEnabled.Content = "策略触发时发邮件提醒";
@@ -241,6 +247,9 @@ public partial class SettingsView : UserControl, IRefreshable
         if (TimeSpan.TryParse(c.SchedulerTime, out var ts)) _schedTime.SelectedTime = ts;
         else _schedTime.SelectedTime = new TimeSpan(16, 30, 0);
         _schedTasks.Text = c.SchedulerTasksStr;
+        if (TimeSpan.TryParse(c.IntradaySchedulerTime, out var its)) _intradaySchedTime.SelectedTime = its;
+        else _intradaySchedTime.SelectedTime = new TimeSpan(14, 30, 0);
+        _intradaySchedTasks.Text = c.IntradaySchedulerTasksStr;
         _monInterval.Value = c.MonitorInterval;
         _emailEnabled.IsChecked = c.MonitorEmailEnabled;
         _smtpHost.Text = c.SmtpHost;
@@ -272,6 +281,8 @@ public partial class SettingsView : UserControl, IRefreshable
         c.SchedulerEnabled = _schedEnabled.IsChecked == true;
         c.SchedulerTime = _schedTime.SelectedTime?.ToString(@"hh\:mm") ?? "16:30";
         c.SchedulerTasksStr = _schedTasks.Text?.Trim() ?? "T1 T8";
+        c.IntradaySchedulerTime = _intradaySchedTime.SelectedTime?.ToString(@"hh\:mm") ?? "14:30";
+        c.IntradaySchedulerTasksStr = _intradaySchedTasks.Text?.Trim() ?? "T9";
         c.MonitorInterval = (int)_monInterval.Value;
         c.MonitorEmailEnabled = _emailEnabled.IsChecked == true;
         c.SmtpHost = _smtpHost.Text?.Trim() ?? "";
@@ -288,8 +299,7 @@ public partial class SettingsView : UserControl, IRefreshable
         c.NotifySystemEnabled = _sysNotifyEnabled.IsChecked == true;
 
         _app.Store.SaveConfig(c);
-        if (VisualRoot is Window owner)
-            await MessageBox.Show(owner, "已保存", "设置已保存。");
+        await MessageBox.Show(this, "已保存", "设置已保存。");
         _status("设置已保存");
     }
 
@@ -338,7 +348,6 @@ public partial class SettingsView : UserControl, IRefreshable
     /// <summary>发送测试提醒：飞书 webhook + 系统通知双通道，结果弹窗汇总。</summary>
     private async Task TestNotifyAsync()
     {
-        if (VisualRoot is not Window owner) return;
         SaveNotifyConfig();
         var c = _app.Config;
 
@@ -375,29 +384,39 @@ public partial class SettingsView : UserControl, IRefreshable
         }
 
         _status("测试提醒已发送");
-        await MessageBox.Show(owner, "提醒通知 · 测试", string.Join("\n", lines));
+        await MessageBox.Show(this, "提醒通知 · 测试", string.Join("\n", lines));
     }
 
     // ── 浏览 ──
 
     private async void BrowseRoot()
     {
-        var d = await new OpenFolderDialog { Title = "选择项目根目录", Directory = _root.Text }.ShowAsync(this.VisualRoot as Window);
+        var d = await PickFolderAsync("选择项目根目录");
         if (d != null) _root.Text = d;
     }
     private async void BrowsePython()
     {
-        var d = await new OpenFileDialog
+        var sp = TopLevel.GetTopLevel(this)?.StorageProvider;
+        if (sp is not { CanOpen: true }) return;
+        var files = await sp.OpenFilePickerAsync(new FilePickerOpenOptions
         {
             Title = "选择 Python 可执行文件",
-            Filters = { new FileDialogFilter { Name = "Python", Extensions = { "exe", "python" } } },
-        }.ShowAsync(this.VisualRoot as Window);
-        if (d is { Length: > 0 }) _python.Text = d[0];
+            FileTypeFilter = new[] { new FilePickerFileType("Python") { Patterns = new[] { "*.exe", "python", "python3" } } },
+        });
+        if (files.Count > 0 && files[0].TryGetLocalPath() is { } p) _python.Text = p;
     }
     private async void BrowseData()
     {
-        var d = await new OpenFolderDialog { Title = "选择数据目录", Directory = _data.Text }.ShowAsync(this.VisualRoot as Window);
+        var d = await PickFolderAsync("选择数据目录");
         if (d != null) _data.Text = d;
+    }
+
+    private async Task<string?> PickFolderAsync(string title)
+    {
+        var sp = TopLevel.GetTopLevel(this)?.StorageProvider;
+        if (sp is not { CanPickFolder: true }) { _status("当前平台不支持选择目录"); return null; }
+        var folders = await sp.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = title });
+        return folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
     }
 
     // ── 云同步（Supabase）──
@@ -407,48 +426,45 @@ public partial class SettingsView : UserControl, IRefreshable
 
     private async Task SyncTestAsync()
     {
-        if (VisualRoot is not Window owner) return;
         SaveSupabaseConfig();
         _status("⏳ 测试 Supabase 连接…");
         var (ok, msg) = await SyncSvcFromInput().TestAsync();
         _status(msg);
-        await MessageBox.Show(owner, "云同步 · 测试连接", msg);
+        await MessageBox.Show(this, "云同步 · 测试连接", msg);
     }
 
     private async Task SyncPushAsync()
     {
-        if (VisualRoot is not Window owner) return;
         SaveSupabaseConfig();
         var snapshot = _app.Store.ExportSyncSnapshot();
         if (snapshot.Count == 0)
-        { await MessageBox.Show(owner, "云同步 · 上传", "本地没有可同步的数据"); return; }
+        { await MessageBox.Show(this, "云同步 · 上传", "本地没有可同步的数据"); return; }
         var counts = string.Join(" / ", snapshot.Select(kv => $"{kv.Key} {RowsOf(kv.Value)} 行"));
-        if (!await MessageBox.Ask(owner, "云同步 · 上传",
+        if (!await MessageBox.Ask(this, "云同步 · 上传",
             $"将把以下本地数据覆盖上传到云端：\n\n{counts}\n\n确定上传？"))
             return;
         _status("⏳ 上传到 Supabase…");
         var (ok, msg) = await SyncSvcFromInput().PushAsync(snapshot, Environment.MachineName);
         _status(msg);
-        await MessageBox.Show(owner, "云同步 · 上传", msg);
+        await MessageBox.Show(this, "云同步 · 上传", msg);
     }
 
     private async Task SyncPullAsync()
     {
-        if (VisualRoot is not Window owner) return;
         SaveSupabaseConfig();
         _status("⏳ 从 Supabase 拉取…");
         var (rows, error) = await SyncSvcFromInput().PullAsync();
         if (error.Length > 0)
-        { _status(error); await MessageBox.Show(owner, "云同步 · 恢复", error); return; }
+        { _status(error); await MessageBox.Show(this, "云同步 · 恢复", error); return; }
         if (rows.Count == 0)
-        { await MessageBox.Show(owner, "云同步 · 恢复", "云端还没有数据（先在某一端上传一次）"); return; }
+        { await MessageBox.Show(this, "云同步 · 恢复", "云端还没有数据（先在某一端上传一次）"); return; }
         var summary = string.Join("\n", rows.Select(r => $"{r.Kind,-11} {r.UpdatedAt:MM-dd HH:mm}（{r.Device}）"));
-        if (!await MessageBox.Ask(owner, "云同步 · 从云端恢复",
+        if (!await MessageBox.Ask(this, "云同步 · 从云端恢复",
             $"将用以下云端数据覆盖本地对应文件\n（原文件自动备份到 data/sync_backup/）：\n\n{summary}\n\n确定继续？"))
             return;
         var (count, details) = _app.Store.ImportSyncSnapshot(rows.ToDictionary(r => r.Kind, r => r.Payload));
         _status($"云端恢复完成：覆盖 {count} 类文件");
-        await MessageBox.Show(owner, "云同步 · 恢复", string.Join("\n", details) + $"\n\n共 {count} 类文件已覆盖（可切到各页刷新查看）");
+        await MessageBox.Show(this, "云同步 · 恢复", string.Join("\n", details) + $"\n\n共 {count} 类文件已覆盖（可切到各页刷新查看）");
     }
 
     /// <summary>payload 里行数（仅用于上传确认提示）。</summary>
@@ -458,7 +474,7 @@ public partial class SettingsView : UserControl, IRefreshable
 
     private void CopyTableSql()
     {
-        if (VisualRoot is not Window { Clipboard: { } clip } owner) return;
+        if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clip) return;
         _ = clip.SetTextAsync(CloudSyncService.CreateTableSql);
         _status("建表 SQL 已复制，粘贴到 Supabase SQL Editor 执行一次即可");
     }

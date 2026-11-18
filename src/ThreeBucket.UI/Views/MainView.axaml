@@ -3,13 +3,17 @@
              xmlns:controls="using:Avalonia.Controls"
              x:Class="ThreeBucket.UI.Views.MainView"
              x:CompileBindings="False">
-  <DockPanel>
-    <Border DockPanel.Dock="Bottom" Background="#2c3e50" Padding="8,5">
-      <StackPanel Orientation="Horizontal" Spacing="16">
-        <TextBlock x:Name="StatusText" Foreground="White" FontSize="12"
-                   Text="就绪" VerticalAlignment="Center" />
-      </StackPanel>
-    </Border>
-    <TabControl x:Name="Tabs" Margin="4" />
-  </DockPanel>
+  <Panel>
+    <DockPanel>
+      <Border DockPanel.Dock="Bottom" Background="#2c3e50" Padding="8,5">
+        <StackPanel Orientation="Horizontal" Spacing="16">
+          <TextBlock x:Name="StatusText" Foreground="White" FontSize="12"
+                     Text="就绪" VerticalAlignment="Center" />
+        </StackPanel>
+      </Border>
+      <TabControl x:Name="Tabs" Margin="4" />
+    </DockPanel>
+    <!-- 移动端弹窗宿主层（无窗口系统时 DialogHost 把对话框渲染到这里）；桌面端始终为空 -->
+    <Panel x:Name="DialogLayer" IsVisible="False" />
+  </Panel>
 </UserControl>

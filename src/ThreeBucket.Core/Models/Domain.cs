@@ -97,6 +97,9 @@ public class AppConfig
     public bool SchedulerEnabled { get; set; }
     public string SchedulerTime { get; set; } = "16:30";
     public string SchedulerTasksStr { get; set; } = "T1 T8";
+    /// <summary>尾盘/盘中第二时段（如 14:30 跑 T9）；空任务串则跳过。</summary>
+    public string IntradaySchedulerTime { get; set; } = "14:30";
+    public string IntradaySchedulerTasksStr { get; set; } = "T9";
     public int MonitorInterval { get; set; } = 60;
     public bool MonitorEmailEnabled { get; set; }
     public string SmtpHost { get; set; } = "";

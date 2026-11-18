@@ -1,0 +1,44 @@
+# T2 银行。取消统一 9% CET1、20 亿净利润、30% 净利率硬门槛。
+roe_min: 0.08                   # 低于 8% 进入复核，不直接排除
+npl_max: 0.015                  # 原则上不高于 1.5%，超标复核
+npl_hard_max: 0.030             # 仅极端不良作为硬性排除（可配置）
+npl_rise_max: 0.003             # 近三年恶化超 0.3 个百分点预警
+provision_cov_min: 1.50         # 150% 初步参考，结合贷款拨备率
+provision_full: 3.00
+# 监管最低：5% CET1 + 2.5% 储备资本 = 7.5%，另加 D-SIB/G-SIB 附加，见 bank_capital_req.csv
+cet1_reg_min_default: 0.075
+# 资本缓冲评价区间（模型，非监管标准）
+capital_buffer:
+  fail_below: 0.00
+  high_risk: 0.010
+  deduct: 0.015
+  ample: 0.025
+g_sus_rwa_ratio: 0.90
+g_cap: 0.04
+provision_pb_low: 2.5
+provision_pb_low_haircut: 0.90
+provision_pb_high: 4.0
+provision_pb_high_uplift: 1.05
+# ROE_sus = 50%×5Y + 30%×3Y + 20%×latest − 风险调整（避免与已入 ROE 的风险重复扣减）
+roe_sus_w5: 0.50
+roe_sus_w3: 0.30
+roe_sus_w1: 0.20
+roe_sus_haircut: 0.000
+roe_sus_pessimistic_cut: 0.020
+roe_sus_optimistic_add: 0.010
+score:
+  roe_avg: [0.08, 0.15]
+  npl: [0.015, 0.008]
+  provision: [1.5, 4.0]
+  payout: [0.20, 0.35]
+  buffer: [0.00, 0.025]
+  nim: [0.012, 0.025]
+  profit_scale: [500000000, 5000000000]
+  net_margin: [0.20, 0.45]
+weights:
+  profit: 20
+  asset: 25
+  capital: 20
+  efficiency: 10
+  shareholder: 15
+  growth: 10

@@ -1,0 +1,41 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:ThreeBucket.UI"
+             x:Class="ThreeBucket.UI.Views.KnowledgeView"
+             x:CompileBindings="False">
+  <DockPanel>
+    <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6" ItemSpacing="8" LineSpacing="4">
+      <TextBlock Text="📚 投资经验" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+      <ComboBox x:Name="CategoryCombo" Width="180" ToolTip.Tip="按知识库类别筛选（MACRO 宏观 / MARKET 择时 / INDUSTRY 行业 / AI 使用规则）" />
+      <TextBox x:Name="SearchBox" Width="200" Watermark="检索关键词，如 缩量 / IPO" VerticalAlignment="Center" />
+      <Button x:Name="SearchBtn" Content="🔍 检索" />
+      <Button x:Name="RefreshBtn" Content="🔄 刷新" />
+      <Button x:Name="CopyContextBtn" Content="📋 复制 LLM 上下文" Background="#9b59b6" Foreground="White"
+              ToolTip.Tip="把当前筛选/检索命中的规则拼成带使用原则的 markdown 片段，可直接粘贴给 LLM 作为分析约束" />
+      <Button x:Name="OpenFileBtn" Content="📂 打开源文件" ToolTip.Tip="用系统默认程序打开 trading-system/09_投资经验知识库.md，改完保存后点「刷新」即可生效" />
+      <TextBlock x:Name="InfoText" Text="" Foreground="#666" FontSize="11" VerticalAlignment="Center" TextWrapping="Wrap" />
+    </WrapPanel>
+
+    <Grid ColumnDefinitions="340,*" local:Responsive.NarrowRows="200,*">
+      <ListBox x:Name="ItemList" Grid.Column="0" Margin="6">
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <TextBlock Text="{Binding Display}" TextWrapping="Wrap" FontSize="12" />
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+
+      <!-- 详情区：结构化渲染（标题/小节/标签），可切换查看原文 -->
+      <DockPanel Grid.Column="1" Margin="6">
+        <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" ItemSpacing="8" Margin="0,0,0,4">
+          <TextBlock x:Name="DetailTitle" Text="" FontSize="15" FontWeight="Bold" VerticalAlignment="Center" TextWrapping="Wrap" />
+          <Button x:Name="RawToggleBtn" Content="原文" ToolTip.Tip="切换「结构化 / 原始 markdown」显示" />
+          <Button x:Name="CopyEntryBtn" Content="📋 复制本条" />
+        </WrapPanel>
+        <ScrollViewer>
+          <StackPanel x:Name="Doc" />
+        </ScrollViewer>
+      </DockPanel>
+    </Grid>
+  </DockPanel>
+</UserControl>

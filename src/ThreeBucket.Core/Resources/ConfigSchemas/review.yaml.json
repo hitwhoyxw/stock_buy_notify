@@ -1,0 +1,145 @@
+{
+  "schema": "config-contract-v1",
+  "source": "config\\quality_value\\review.yaml",
+  "baseline": {
+    "feishu_dry_run": true,
+    "daily_review_push_max": 10,
+    "daily_review_push_min_priority": "P1",
+    "default_verdict_valid_days": 90,
+    "deeper_mos_band": 0.1,
+    "valuation_change_flag": 0.15,
+    "severity_upgrade_requeue": true,
+    "earnings": {
+      "revenue_yoy_mild": -0.15,
+      "np_yoy_moderate": -0.3,
+      "deduct_yoy_moderate": -0.3,
+      "deduct_yoy_high": -0.5,
+      "gross_margin_drop_pp": 0.03,
+      "roe_drop_pp": 0.02,
+      "ocf_np_mismatch_below": 0.3,
+      "ar_minus_rev_growth": 0.2,
+      "inv_minus_rev_growth": 0.2,
+      "one_off_gap": 0.2
+    },
+    "priority": {
+      "earnings_max": 30,
+      "risk_event_max": 25,
+      "valuation_max": 20,
+      "data_quality_max": 15,
+      "price_urgency_max": 10,
+      "p0_min": 80,
+      "p1_min": 60,
+      "p2_min": 40
+    },
+    "major_announcement_keywords": [
+      "立案",
+      "处罚",
+      "退市",
+      "警示",
+      "失信",
+      "问询函",
+      "监管关注",
+      "违规",
+      "破产",
+      "重整",
+      "被实施",
+      "暂停上市"
+    ]
+  },
+  "shape": {
+    "type": "object",
+    "properties": {
+      "feishu_dry_run": {
+        "type": "boolean"
+      },
+      "daily_review_push_max": {
+        "type": "number"
+      },
+      "daily_review_push_min_priority": {
+        "type": "string"
+      },
+      "default_verdict_valid_days": {
+        "type": "number"
+      },
+      "deeper_mos_band": {
+        "type": "number"
+      },
+      "valuation_change_flag": {
+        "type": "number"
+      },
+      "severity_upgrade_requeue": {
+        "type": "boolean"
+      },
+      "earnings": {
+        "type": "object",
+        "properties": {
+          "revenue_yoy_mild": {
+            "type": "number"
+          },
+          "np_yoy_moderate": {
+            "type": "number"
+          },
+          "deduct_yoy_moderate": {
+            "type": "number"
+          },
+          "deduct_yoy_high": {
+            "type": "number"
+          },
+          "gross_margin_drop_pp": {
+            "type": "number"
+          },
+          "roe_drop_pp": {
+            "type": "number"
+          },
+          "ocf_np_mismatch_below": {
+            "type": "number"
+          },
+          "ar_minus_rev_growth": {
+            "type": "number"
+          },
+          "inv_minus_rev_growth": {
+            "type": "number"
+          },
+          "one_off_gap": {
+            "type": "number"
+          }
+        }
+      },
+      "priority": {
+        "type": "object",
+        "properties": {
+          "earnings_max": {
+            "type": "number"
+          },
+          "risk_event_max": {
+            "type": "number"
+          },
+          "valuation_max": {
+            "type": "number"
+          },
+          "data_quality_max": {
+            "type": "number"
+          },
+          "price_urgency_max": {
+            "type": "number"
+          },
+          "p0_min": {
+            "type": "number"
+          },
+          "p1_min": {
+            "type": "number"
+          },
+          "p2_min": {
+            "type": "number"
+          }
+        }
+      },
+      "major_announcement_keywords": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

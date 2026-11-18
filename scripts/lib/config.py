@@ -11,9 +11,14 @@ import functools
 import hashlib
 from typing import Any, Dict
 
-import yaml
+from lib.shared_financial import validated_config
 
 from lib.paths import CONFIG_YAML
+
+
+@functools.lru_cache(maxsize=1)
+def _validated_response():
+    return validated_config(CONFIG_YAML)
 
 
 @functools.lru_cache(maxsize=1)
@@ -23,11 +28,8 @@ def get_config() -> Dict[str, Any]:
         raise FileNotFoundError(
             f"策略配置文件缺失：{CONFIG_YAML}。请检查 trading-system 目录是否完整。"
         )
-    with CONFIG_YAML.open("r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-    if not isinstance(cfg, dict):
-        raise ValueError(f"{CONFIG_YAML} 顶层必须是 mapping，实际为 {type(cfg).__name__}")
-    return cfg
+    response = _validated_response()
+    return response["Config"]
 
 
 def get_version() -> str:
@@ -37,7 +39,7 @@ def get_version() -> str:
 
 def get_config_hash() -> str:
     """yaml 文件内容 SHA-256 前 8 位。用作参数变更的追溯锚点。"""
-    return hashlib.sha256(CONFIG_YAML.read_bytes()).hexdigest()[:8]
+    return _validated_response()["Hash"][:8]
 
 
 def get_yaml_tag() -> str:

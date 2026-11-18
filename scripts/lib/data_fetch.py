@@ -9,6 +9,7 @@
 - 缓存文件放 data/cache/，key 由函数名 + 参数生成，TTL 由调用方通过 cache_hours 控制。
 """
 from __future__ import annotations
+from lib.shared_financial import shared_yjbb_raw as _shared_yjbb_raw
 
 import datetime as dt
 import functools
@@ -769,46 +770,14 @@ def get_roe_snapshot() -> pd.DataFrame:
     return _memo("roe_snapshot", _fetch_roe_snapshot)
 
 
-@disk_cache(ttl_hours=24)
 def _fetch_roe_snapshot() -> pd.DataFrame:
-    """实际拉取。tushare fina_indicator 批量 → akshare stock_yjbb_em 兜底。"""
-    import akshare as ak
-
+    """C# EastMoney shared source only; prior Tushare parquet is retained, not silently merged."""
     for period in _report_period_candidates(dt.date.today()):
-        # 源 1: tushare fina_indicator（period 参数一次返回全市场）
-        pro = _get_tushare()
-        if pro is not None:
-            try:
-                raw = pro.fina_indicator(period=period, fields="ts_code,roe")
-                if raw is not None and not raw.empty:
-                    out = pd.DataFrame({
-                        "code": raw["ts_code"].str.split(".").str[0],
-                        "roe": pd.to_numeric(raw["roe"], errors="coerce"),
-                        "period": period,
-                    }).dropna(subset=["roe"]).drop_duplicates("code")
-                    if not out.empty:
-                        return out.reset_index(drop=True)
-            except Exception as e:
-                print(f"[data_fetch] tushare fina_indicator({period}) 失败：{e}", file=sys.stderr)
-
-        # 源 2: akshare stock_yjbb_em（东财业绩报表，一次调用全市场）
-        try:
-            raw = ak.stock_yjbb_em(date=period)
-            if raw is not None and not raw.empty:
-                c_code = next((c for c in raw.columns if "股票代码" in c), None)
-                c_roe = next((c for c in raw.columns if "净资产收益率" in c), None)
-                if c_code and c_roe:
-                    out = pd.DataFrame({
-                        "code": raw[c_code].astype(str).str.zfill(6),
-                        "roe": pd.to_numeric(raw[c_roe], errors="coerce"),
-                        "period": period,
-                    }).dropna(subset=["roe"]).drop_duplicates("code")
-                    # 披露期可能只有部分公司出数据，太稀疏就换更早的报告期
-                    if len(out) >= 500:
-                        return out.reset_index(drop=True)
-        except Exception as e:
-            print(f"[data_fetch] stock_yjbb_em({period}) 失败：{e}", file=sys.stderr)
-
+        raw = _shared_yjbb_raw(period)
+        if raw is not None and not raw.empty:
+            out = pd.DataFrame({"code": raw["股票代码"].astype(str).str.zfill(6), "roe": pd.to_numeric(raw["净资产收益率"], errors="coerce"), "period": period, "roe_source": "eastmoney/shared-financial-cli-v1"}).dropna(subset=["roe"]).drop_duplicates("code")
+            if len(out) >= 500:
+                return out.reset_index(drop=True)
     return pd.DataFrame()
 
 
@@ -847,7 +816,6 @@ def get_profit_quality_snapshot() -> pd.DataFrame:
     return _memo("profit_quality", _fetch_profit_quality_snapshot)
 
 
-@disk_cache(ttl_hours=72)
 def _fetch_profit_quality_snapshot() -> pd.DataFrame:
     """akshare stock_yjbb_em 按期批量拉取（每次调用全市场）。
 
@@ -866,7 +834,7 @@ def _fetch_profit_quality_snapshot() -> pd.DataFrame:
     ocf_map: Dict[str, float] = {}
     for p in periods:
         try:
-            raw = ak.stock_yjbb_em(date=p)
+            raw = _shared_yjbb_raw(p)
         except Exception as e:
             print(f"[data_fetch] stock_yjbb_em({p}) 失败：{e}", file=sys.stderr)
             time.sleep(1.0)
@@ -922,7 +890,6 @@ def get_yjbb_snapshot() -> pd.DataFrame:
     return _memo("yjbb_snapshot", _fetch_yjbb_snapshot)
 
 
-@disk_cache(ttl_hours=24)
 def _fetch_yjbb_snapshot() -> pd.DataFrame:
     import akshare as ak
 
@@ -936,7 +903,7 @@ def _fetch_yjbb_snapshot() -> pd.DataFrame:
     else:
         period = f"{y - 1}1231"
     try:
-        raw = ak.stock_yjbb_em(date=period)
+        raw = _shared_yjbb_raw(period)
     except Exception as e:
         print(f"[data_fetch] stock_yjbb_em({period}) 失败：{e}", file=sys.stderr)
         return pd.DataFrame()
@@ -1092,7 +1059,6 @@ def get_growth_snapshot() -> pd.DataFrame:
     return _memo("growth_snapshot", _fetch_growth_snapshot)
 
 
-@disk_cache(ttl_hours=72)
 def _fetch_growth_snapshot() -> pd.DataFrame:
     """4 次全市场 yjbb 调用（年报期），绝不逐票请求。"""
     import time
@@ -1103,7 +1069,7 @@ def _fetch_growth_snapshot() -> pd.DataFrame:
     yearly: Dict[str, pd.DataFrame] = {}
     for p in periods:
         try:
-            raw = ak.stock_yjbb_em(date=p)
+            raw = _shared_yjbb_raw(p)
         except Exception as e:
             print(f"[data_fetch] stock_yjbb_em({p}) 失败：{e}", file=sys.stderr)
             raw = None

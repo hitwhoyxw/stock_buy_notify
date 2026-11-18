@@ -1,0 +1,126 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:data="using:Avalonia.Controls"
+             x:Class="ThreeBucket.UI.Views.QualityValueView"
+             x:CompileBindings="False">
+  <Grid>
+  <DockPanel x:Name="ListPage">
+    <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6" ItemSpacing="8" LineSpacing="4">
+      <TextBlock Text="💎 优质股击球区" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+      <Button x:Name="FullBtn" Content="▶ 本地重算（不联网）" Background="#1e8449" Foreground="White"
+              ToolTip.Tip="仅使用保留原始输入重算所有缓存公司；规则改变不下载财报。缺失数据标为待核实，事件并非实时。" />
+      <Button x:Name="FinancialBtn" Content="更新财报（半年/季度）" ToolTip.Tip="显式联网：默认6个月、可配3个月；只更新缺失/到期资源，不强制全量刷新。" />
+      <Button x:Name="DailyBtn" Content="⏱ 收盘更新" Background="#2471a3" Foreground="White"
+              ToolTip.Tip="只刷新现价与成交额监控资格、除权调整三档价格、轻量事件（ST/停牌/处罚关键词等），不重算财务与评分。" />
+      <Button x:Name="NovBtn" Content="🌤 11月轻量" Background="#6c3483" Foreground="White"
+              ToolTip.Tip="11月轻量沿用行情/事件更新，只读既有财报，不补下财报；新财报请显式更新。" />
+      <Button x:Name="ConfigPreviewBtn" Content="参数校验 / 变更预览" ToolTip.Tip="只读校验与上次成功运行配置比较；不联网、不写盘、不推送。" />
+      <Button x:Name="RefreshBtn" Content="🔄 刷新" />
+      <Button x:Name="OpenDirBtn" Content="📂 打开目录" />
+      <TextBox x:Name="SearchBox" Watermark="搜索代码/名称/行业…" Width="180" />
+    </WrapPanel>
+    <Border DockPanel.Dock="Top" Margin="6,0,6,4" Padding="8,4" Background="#e8f6f3" CornerRadius="4">
+      <StackPanel>
+        <TextBlock x:Name="SummaryText" FontSize="13" FontWeight="Bold" Foreground="#0e6655" TextWrapping="Wrap"
+                   Text="尚未扫描：点「本地重算（不联网）」复用已下载输入；首次缺财报请显式更新。" />
+        <TextBlock x:Name="OverviewText" Margin="0,4,0,0" FontSize="12" Foreground="#145a32" TextWrapping="Wrap" />
+      </StackPanel>
+    </Border>
+    <TextBlock DockPanel.Dock="Bottom" Margin="10,4" FontSize="12" Foreground="#777" Text="公司质量与价格区间分开 · 好公司可等待好价格 · 低流动/缺行情仅限制价格提醒 · 点击行查看详情" />
+    <TextBlock x:Name="Stats" DockPanel.Dock="Bottom" Margin="6,0,6,2" FontSize="12" Foreground="#666" TextWrapping="Wrap" />
+    <Grid Margin="6">
+      <TabControl x:Name="Tabs">
+        <TabItem Header="击球区">
+          <data:DataGrid x:Name="StrikeGrid" Margin="4" AutoGenerateColumns="False" IsReadOnly="True"
+                         GridLinesVisibility="Horizontal" SelectionMode="Single" CanUserResizeColumns="True"
+                         HorizontalScrollBarVisibility="Auto" CanUserSortColumns="True" FrozenColumnCount="2" />
+        </TabItem>
+        <TabItem Header="关注区">
+          <data:DataGrid x:Name="ApproachGrid" Margin="4" AutoGenerateColumns="False" IsReadOnly="True"
+                         GridLinesVisibility="Horizontal" SelectionMode="Single" CanUserResizeColumns="True"
+                         HorizontalScrollBarVisibility="Auto" CanUserSortColumns="True" FrozenColumnCount="2" />
+        </TabItem>
+        <TabItem Header="公司质量池">
+          <data:DataGrid x:Name="QualGrid" Margin="4" AutoGenerateColumns="False" IsReadOnly="True"
+                         GridLinesVisibility="Horizontal" SelectionMode="Single" CanUserResizeColumns="True"
+                         HorizontalScrollBarVisibility="Auto" CanUserSortColumns="True" FrozenColumnCount="2" />
+        </TabItem>
+        <TabItem Header="待核实/观察">
+          <data:DataGrid x:Name="WatchGrid" Margin="4" AutoGenerateColumns="False" IsReadOnly="True"
+                         GridLinesVisibility="Horizontal" SelectionMode="Single" CanUserResizeColumns="True"
+                         HorizontalScrollBarVisibility="Auto" CanUserSortColumns="True" FrozenColumnCount="2" />
+        </TabItem>
+        <TabItem Header="今日提醒">
+          <ListBox x:Name="AlertList" Margin="6" FontSize="13" />
+        </TabItem>
+        <TabItem Header="用例链路">
+          <TextBox x:Name="CaseBox" Margin="4" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                   FontFamily="Consolas,Menlo,monospace" FontSize="12" ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                   ScrollViewer.VerticalScrollBarVisibility="Auto" />
+        </TabItem>
+        <TabItem Header="人工复核">
+          <data:DataGrid x:Name="ReviewGrid" Margin="4" AutoGenerateColumns="False" IsReadOnly="True"
+              GridLinesVisibility="Horizontal" SelectionMode="Single" CanUserResizeColumns="True"
+              HorizontalScrollBarVisibility="Auto" CanUserSortColumns="True" FrozenColumnCount="2" />
+        </TabItem>
+        <TabItem Header="未分型">
+          <data:DataGrid x:Name="UnmappedGrid" Margin="4" AutoGenerateColumns="False" IsReadOnly="True"
+                         GridLinesVisibility="Horizontal" CanUserResizeColumns="True"
+                         HorizontalScrollBarVisibility="Auto" CanUserSortColumns="True" FrozenColumnCount="1" />
+        </TabItem>
+      </TabControl>
+    </Grid>
+  </DockPanel>
+
+  <DockPanel x:Name="DetailPage" IsVisible="False" Margin="12">
+    <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,10">
+      <WrapPanel Orientation="Horizontal" ItemSpacing="12">
+        <Button x:Name="BackBtn" Content="← 返回列表" />
+        <TextBlock x:Name="DetailTitle" FontSize="22" FontWeight="Bold" VerticalAlignment="Center" />
+      </WrapPanel>
+      <TextBlock x:Name="DetailSummary" FontSize="14" TextWrapping="Wrap" />
+    </StackPanel>
+    <ScrollViewer x:Name="DetailScroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+      <StackPanel Spacing="16">
+        <Border Padding="14" Background="#f1f5f9" CornerRadius="6">
+          <StackPanel Spacing="6">
+            <TextBlock Text="估值与计算依据" FontSize="17" FontWeight="Bold" />
+            <TextBox x:Name="ValuationBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Background="Transparent" BorderThickness="0" />
+          </StackPanel>
+        </Border>
+        <StackPanel Spacing="6">
+          <TextBlock Text="业绩、风险与复核卡片" FontSize="17" FontWeight="Bold" />
+          <TextBox x:Name="ReviewDetailBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" BorderThickness="0" />
+        </StackPanel>
+        <StackPanel Spacing="6">
+          <TextBlock Text="完整计算链路 / 公式 / 来源" FontSize="17" FontWeight="Bold" />
+          <TextBox x:Name="DetailBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" BorderThickness="0" />
+        </StackPanel>
+        <StackPanel Spacing="6">
+          <TextBlock Text="数据质量与原始字段（只读）" FontSize="17" FontWeight="Bold" />
+          <TextBox x:Name="SourceBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" BorderThickness="0" />
+        </StackPanel>
+        <Border Padding="14" Background="#f1f5f9" CornerRadius="6">
+          <StackPanel Spacing="8">
+            <TextBlock Text="人工结论与历史" FontSize="17" FontWeight="Bold" />
+            <TextBlock Text="以下操作沿用现有复核接口；仅在点击记录、修改或撤销时保存。" TextWrapping="Wrap" />
+            <WrapPanel Orientation="Horizontal" ItemSpacing="8" LineSpacing="6">
+              <ComboBox x:Name="VerdictBox" Width="210" />
+              <TextBox x:Name="VerdictNoteBox" Watermark="人工备注" Width="280" />
+              <TextBox x:Name="VerdictDaysBox" Watermark="有效天数" Width="90" Text="90" />
+              <Button x:Name="VerdictAddBtn" Content="记录结论" />
+              <Button x:Name="VerdictEditBtn" Content="修改选中历史" />
+              <Button x:Name="VerdictRevokeBtn" Content="撤销选中历史" />
+              <Button x:Name="VerdictRefreshBtn" Content="刷新历史" />
+            </WrapPanel>
+            <data:DataGrid x:Name="HistoryGrid" Height="230" AutoGenerateColumns="False" IsReadOnly="True"
+                GridLinesVisibility="Horizontal" SelectionMode="Single" CanUserResizeColumns="True"
+                HorizontalScrollBarVisibility="Auto" CanUserSortColumns="True" />
+            <TextBox x:Name="HistoryDetailBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" BorderThickness="0" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+  </DockPanel>
+  </Grid>
+</UserControl>

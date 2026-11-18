@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using ThreeBucket.Core.Data;
@@ -106,6 +106,8 @@ public class CandidatePoolTask : IBuiltinTask
     private static readonly string[] CCols =
     {
         "code", "name", "industry", "text_score", "categories_hit_count",
+        // 时效列（2026-09-18 新增，仅排序/提示，不构成过滤；见 RulesNoteC 与 skills/t6_semantic_ranking.md）
+        "signal_days", "freshness", "text_score_fresh",
         "np_yoy", "revenue_yoy", "gross_margin",
         "pe_ttm", "pe_dynamic", "pe_method", "peg",
         // 订单积压参考列（LLM 复核用，不进排序）
@@ -164,7 +166,8 @@ public class CandidatePoolTask : IBuiltinTask
             };
             var path = ReportBuilder.WriteReport(_dataDir, "T6",
                 $"T6 候选池筛选 · {today:yyyy-MM-dd}", sections);
-            L($"报告已写入 {path}");
+            if(_th.ValidatedConfig is {} configNode)ConfigGovernance.CommitSuccessfulRun(path+".config.json",configNode,new{FinancialReportPeriod=snap.Period,RunDate=today.ToString("yyyy-MM-dd"),SourceDateSemantics="report period, not fetch date; raw source provenance retained separately"},"T6");
+            L($"报告已写入 {path}; config={_th.ConfigHash}");
             return new TaskRunResult(true, path, 0,
                 $"A {aRows.Count} / B {bRows.Count} / C {cRows.Count} 只候选就绪：{string.Join("、", outputs)}");
         }
@@ -900,6 +903,16 @@ public class CandidatePoolTask : IBuiltinTask
                     if (v.Value.ValueKind == JsonValueKind.Array)
                         catsCount += v.Value.GetArrayLength();
 
+            // 时效（T4 写入的派生值，缺失时按"未知/0 扣分"处理）：
+            // signal_days / freshness / fresh_score / fresh_penalty 由 T4 计算并回填，
+            // T6 不重算，保证与 LLM 看到的输入完全一致。
+            var kwDays = JStr(item, "signal_days");
+            var kwFreshLabel = JStr(item, "freshness");
+            var freshPenalty = double.TryParse(JStr(item, "fresh_penalty"),
+                NumberStyles.Any, Inv, out var fp) ? fp : 0;
+            var freshScore = double.TryParse(JStr(item, "fresh_score"),
+                NumberStyles.Any, Inv, out var fs) ? fs : textScore;
+
             // 业绩报表快照补充：净利同比 / 营收同比 / 毛利率
             snap.Yjbb.TryGetValue(code, out var y);
             var npYoy = y?.NpYoy;
@@ -935,10 +948,11 @@ public class CandidatePoolTask : IBuiltinTask
             // 价在 MA20 上方：仅提示，不进硬门槛/排序（列名 price_above_ma60 沿用旧契约）
             var aboveMa20 = await CheckPriceAboveMaAsync(code, 20, ct);
 
-            // 主排序值：净利润同比增速封顶 500 防极端值；机构持仓每种 +10
+            // 主排序值：净利润同比增速封顶 500 防极端值；机构持仓每种 +10；时效扣分（仅排序项）
             var sortVal = npYoy is { } ny ? Math.Min(ny, 500.0) : 0.0;
             var info = inst.GetValueOrDefault(code) ?? new InstInfo(false, false, false, false, "", 0);
             sortVal += 10 * info.Count;
+            sortVal += freshPenalty;   // 时效降权：0 / -0.5 / -1.0 / -2.0；不改 text_score 与 PASS 判定
 
             var row = new Row { Sort = sortVal };
             row.F["code"] = code;
@@ -946,6 +960,9 @@ public class CandidatePoolTask : IBuiltinTask
             row.F["industry"] = industry;
             row.F["text_score"] = textScore.ToString("0.00", Inv);
             row.F["categories_hit_count"] = catsCount.ToString(Inv);
+            row.F["signal_days"] = kwDays;
+            row.F["freshness"] = kwFreshLabel;
+            row.F["text_score_fresh"] = freshScore.ToString("0.00", Inv);
             row.F["np_yoy"] = npYoy is { } n1 ? n1.ToString("0.0", Inv) : "";
             row.F["revenue_yoy"] = revYoy is { } r1 ? r1.ToString("0.0", Inv) : "";
             row.F["gross_margin"] = gm is { } g1 ? g1.ToString("0.0", Inv) : "";
@@ -1286,6 +1303,14 @@ public class CandidatePoolTask : IBuiltinTask
         "  order_backlog_score = 0.4×DRR+0.4×DRGS+0.2×IBR（批次内min-max归一化0~100），越大越好",
         "  filter_pass = 三道过滤是否全过（毛利率同比>-3pct / 营收预告正 / 现金流改善），全过为好",
         "  contract_liability_yoy = 合同负债同比原值（验证景气文本是否被预收款数据印证）",
+        "",
+        "时效列（2026-09-18 新增，⚠️ 仅降权与提示，不构成剔除理由）:",
+        "  signal_days = 最新命中来源（业绩预告/业绩报表/投资者关系活动记录）的公告/活动日距今天数，越小越新鲜",
+        "  freshness = 时效档位（新鲜/偏旧/陈旧/极旧/未知）",
+        "  text_score_fresh = max(0, text_score + 时效扣分)，扣分分档见 02_strategy_config.yaml → bucket_C.text_signal.freshness",
+        "  排序公式已含时效扣分: sort_value = min(净利同比,500) + 机构持仓×10 + 时效扣分（最大 −2.0）",
+        "  ⚠️ 时效陈旧不得单独作为 REJECT 理由：若订单/价格/供给证据仍强（order_backlog_score 高、合同负债同比正），",
+        "     应在「推荐/中立」档保留，并在理由中写明证据所属月份，人工复核景气窗口是否仍开。",
         "需 LLM/人工复核: price_index_1y_high（行业价格指数是否创1年新高）",
     });
 
@@ -1324,10 +1349,19 @@ public class CandidatePoolTask : IBuiltinTask
                     r.F["revenue_cagr_3y"], r.F["roe_ann"], r.F["ocf_to_np"], r.F["gm_trend"],
                     r.F["pe_ttm"], r.F["sort_value"] }),
             _ => TopTable(rows,
-                new[] { "代码", "名称", "净利同比%", "动态PE", "MA20上", "排序值" },
+                new[] { "代码", "名称", "净利同比%", "动态PE", "MA20上", "时效", "排序值" },
                 r => new[] { r.F["code"], r.F["name"], r.F["np_yoy"], r.F["pe_dynamic"],
-                    r.F["price_above_ma60"], r.F["sort_value"] }),
+                    r.F["price_above_ma60"], FreshCell(r), r.F["sort_value"] }),
         });
+    }
+
+    /// <summary>C 桶报告「时效」单元格：如「143天 陈旧」；无日期显示 —。</summary>
+    private static string FreshCell(Row r)
+    {
+        var days = r.F.GetValueOrDefault("signal_days", "");
+        var label = r.F.GetValueOrDefault("freshness", "");
+        if (days.Length == 0) return label.Length > 0 ? label : "—";
+        return label.Length > 0 ? $"{days}天 {label}" : $"{days}天";
     }
 
     private static string TopTable(List<Row> rows, string[] header, Func<Row, string[]> cells, int n = 10)

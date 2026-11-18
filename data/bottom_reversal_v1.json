@@ -1,0 +1,85 @@
+{
+  "_comment": "增强版底部反转 V1（S27）参数文件。每次运行时重新读取，改这里无需重新打包。比例一律用小数（0.05=5%）。",
+  "strategy_id": "S27",
+  "strategy_name": "增强版底部反转V1",
+  "universe": {
+    "include_sh": true,
+    "include_sz": true,
+    "include_bj": true,
+    "exclude_st": true,
+    "exclude_delisting": true,
+    "min_listed_trading_days": 120,
+    "liquidity_window": 20,
+    "min_avg_amount": 50000000,
+    "min_valid_days": 15,
+    "universe_cache_days": 7
+  },
+  "data": {
+    "kline_bars": 260,
+    "concurrency": 8,
+    "retries": 4,
+    "use_incomplete_today_bar": false,
+    "market_close_time": "15:05",
+    "calendar_index_secid": "1.000985"
+  },
+  "model": {
+    "min_bars": 80,
+    "A1": {"lookback": 60, "bands": [[0.10, 2], [0.15, 4], [0.25, 5]]},
+    "A2": {"lookback": 40, "swing_window": 3, "min_separation": 5, "bands": [[0.0, 3], [0.03, 6], [0.06, 8]], "require_close_confirm": true},
+    "A3": {"window": 20, "range_max": 0.20, "converge_ratio": 0.9, "retest_tol": 0.03, "min_touches": 2, "volume_shrink_ratio": 0.9},
+    "breakout": {"search_window": 10, "episode_lookback": 20, "prior_window": 20, "event_min_volume_ratio": 1.2, "event_min_change": 0.0},
+    "B1": {"avg_window": 20, "bands": [[1.2, 3], [1.5, 6], [2.0, 8]], "min_change": 0.03, "close_pos_min": 0.7},
+    "B2": {"bands": [[0.0, 6], [0.01, 8], [0.02, 10]], "top_requires_volume_ratio": 1.5},
+    "B3": {"long_upper_shadow": 0.4, "good_upper_shadow_max": 0.25, "good_min_breakout": 0.01, "good_min_volume_ratio": 1.5, "good_min_close_pos": 0.7, "fallback_tol": 0.0},
+    "C1": {"fail_tol": 0.0, "big_drop": -0.04, "score_3d": 4, "score_5d": 6, "score_5d_rising": 8},
+    "C2": {"max_days": 10, "min_days": 2, "near_ratio": 1.0, "ratio_70": 0.7, "ratio_50": 0.5},
+    "C3": {"platform_touch_tol": 0.02, "platform_break_tol": 0.01, "ma10_touch_tol": 0.01, "ma10_break_tol": 0.02, "ma10_break_days": 2, "min_days": 2},
+    "D3": {"flat": 0.005},
+    "D4": {"slope_days": 10, "flat": 0.005},
+    "E1": {"period": 14, "rise_lookback": 3, "overheat": 75},
+    "E2": {"fast": 12, "slow": 26, "signal": 9, "cross_lookback": 10},
+    "E3": {"up_down_window": 10, "up_down_ratio": 1.2, "v5_v20_for_3": 0.9, "v5_v20_for_2": 1.0},
+    "rating_bands": [[80, "强反转"], [65, "反转初期"], [50, "反弹观察"], [0, "暂不关注"]],
+    "levels": {"observe_above_platform": 0.03, "observe_below_platform": 0.01, "risk_buffer": 0.03, "chase_max_above_platform": 0.05}
+  },
+  "abnormal": {
+    "consecutive_limit_days": 2,
+    "gap_up_pct": 0.03,
+    "gap_up_days": 2,
+    "volume_spike_ratio": 5.0,
+    "surge_5d": 0.15,
+    "surge_10d": 0.20,
+    "turnover_ratio": 4.0,
+    "turnover_abs": 0.20,
+    "ma20_deviation": 0.15
+  },
+  "market": {
+    "enabled": true,
+    "indexes": {"沪深300": "1.000300", "中证全指": "1.000985"},
+    "ma20_flat": 0.003,
+    "amount_shrink_ratio": 0.8
+  },
+  "output": {
+    "top_n": 20,
+    "detail_top_n": 20,
+    "history_min_score": 50
+  },
+  "backtest": {
+    "commission": 0.00025,
+    "commission_min": 5.0,
+    "notional": 100000,
+    "stamp_tax_sell": 0.0005,
+    "transfer_fee": 0.00001,
+    "slippage": 0.001,
+    "hold_days": [5, 10, 20, 40],
+    "stop_losses": [0.05, 0.08, 0.10],
+    "trailing_stops": [0.08, 0.10, 0.12],
+    "max_hold_for_stops": 40,
+    "entry_min_score": 50,
+    "retest_wait_min": 3,
+    "retest_wait_max": 5,
+    "retest_near_platform": 0.02,
+    "retest_volume_ratio": 0.7,
+    "oos_fraction": 0.4
+  }
+}

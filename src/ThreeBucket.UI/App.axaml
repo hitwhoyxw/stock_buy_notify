@@ -5,5 +5,10 @@
     <FluentTheme />
     <!-- DataGrid 不在 FluentTheme 内，必须显式引入控件主题，否则整个表格（含列头）不渲染 -->
     <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
+    <!-- t41：所有表格（含代码生成的）默认可拖列宽、列总宽超出时出现横向滚动条；Avalonia 的 CanUserResizeColumns 默认是 False -->
+    <Style Selector="DataGrid">
+      <Setter Property="CanUserResizeColumns" Value="True" />
+      <Setter Property="HorizontalScrollBarVisibility" Value="Auto" />
+    </Style>
   </Application.Styles>
 </Application>

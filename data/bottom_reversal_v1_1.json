@@ -1,0 +1,385 @@
+{
+  "_comment": "增强版底部反转 V1.1（S27）参数文件。每次运行重新读取，改这里无需重新打包。比例一律用小数（0.05=5%）。V1 的 100 分趋势评分参数（model/abnormal）保持不变；V1.1 新增 trade（交易阶段/B1B2B3/追涨过滤/止损/压力位/风险收益比）、position（仓位参考）、backtest_v11（三种介入方式回测）。旧文件 bottom_reversal_v1.json 保留为 V1 存档，程序优先读本文件。",
+  "version": "1.1",
+  "strategy_id": "S27",
+  "strategy_name": "增强版底部反转V1.1",
+  "universe": {
+    "include_sh": true,
+    "include_sz": true,
+    "include_bj": true,
+    "exclude_st": true,
+    "exclude_delisting": true,
+    "min_listed_trading_days": 120,
+    "liquidity_window": 20,
+    "min_avg_amount": 50000000,
+    "min_valid_days": 15,
+    "universe_cache_days": 7
+  },
+  "data": {
+    "kline_bars": 260,
+    "concurrency": 8,
+    "retries": 4,
+    "use_incomplete_today_bar": false,
+    "market_close_time": "15:05",
+    "calendar_index_secid": "1.000985"
+  },
+  "model": {
+    "min_bars": 80,
+    "A1": {
+      "lookback": 60,
+      "bands": [
+        [
+          0.1,
+          2
+        ],
+        [
+          0.15,
+          4
+        ],
+        [
+          0.25,
+          5
+        ]
+      ]
+    },
+    "A2": {
+      "lookback": 40,
+      "swing_window": 3,
+      "min_separation": 5,
+      "bands": [
+        [
+          0.0,
+          3
+        ],
+        [
+          0.03,
+          6
+        ],
+        [
+          0.06,
+          8
+        ]
+      ],
+      "require_close_confirm": true
+    },
+    "A3": {
+      "window": 20,
+      "range_max": 0.2,
+      "converge_ratio": 0.9,
+      "retest_tol": 0.03,
+      "min_touches": 2,
+      "volume_shrink_ratio": 0.9
+    },
+    "breakout": {
+      "search_window": 10,
+      "episode_lookback": 20,
+      "prior_window": 20,
+      "event_min_volume_ratio": 1.2,
+      "event_min_change": 0.0
+    },
+    "B1": {
+      "avg_window": 20,
+      "bands": [
+        [
+          1.2,
+          3
+        ],
+        [
+          1.5,
+          6
+        ],
+        [
+          2.0,
+          8
+        ]
+      ],
+      "min_change": 0.03,
+      "close_pos_min": 0.7
+    },
+    "B2": {
+      "bands": [
+        [
+          0.0,
+          6
+        ],
+        [
+          0.01,
+          8
+        ],
+        [
+          0.02,
+          10
+        ]
+      ],
+      "top_requires_volume_ratio": 1.5
+    },
+    "B3": {
+      "long_upper_shadow": 0.4,
+      "good_upper_shadow_max": 0.25,
+      "good_min_breakout": 0.01,
+      "good_min_volume_ratio": 1.5,
+      "good_min_close_pos": 0.7,
+      "fallback_tol": 0.0
+    },
+    "C1": {
+      "fail_tol": 0.0,
+      "big_drop": -0.04,
+      "score_3d": 4,
+      "score_5d": 6,
+      "score_5d_rising": 8
+    },
+    "C2": {
+      "max_days": 10,
+      "min_days": 2,
+      "near_ratio": 1.0,
+      "ratio_70": 0.7,
+      "ratio_50": 0.5
+    },
+    "C3": {
+      "platform_touch_tol": 0.02,
+      "platform_break_tol": 0.01,
+      "ma10_touch_tol": 0.01,
+      "ma10_break_tol": 0.02,
+      "ma10_break_days": 2,
+      "min_days": 2
+    },
+    "D3": {
+      "flat": 0.005
+    },
+    "D4": {
+      "slope_days": 10,
+      "flat": 0.005
+    },
+    "E1": {
+      "period": 14,
+      "rise_lookback": 3,
+      "overheat": 75
+    },
+    "E2": {
+      "fast": 12,
+      "slow": 26,
+      "signal": 9,
+      "cross_lookback": 10
+    },
+    "E3": {
+      "up_down_window": 10,
+      "up_down_ratio": 1.2,
+      "v5_v20_for_3": 0.9,
+      "v5_v20_for_2": 1.0
+    },
+    "rating_bands": [
+      [
+        80,
+        "强反转"
+      ],
+      [
+        65,
+        "反转初期"
+      ],
+      [
+        50,
+        "反弹观察"
+      ],
+      [
+        0,
+        "暂不关注"
+      ]
+    ],
+    "levels": {
+      "observe_above_platform": 0.03,
+      "observe_below_platform": 0.01,
+      "risk_buffer": 0.03,
+      "chase_max_above_platform": 0.05
+    }
+  },
+  "abnormal": {
+    "consecutive_limit_days": 2,
+    "gap_up_pct": 0.03,
+    "gap_up_days": 2,
+    "volume_spike_ratio": 5.0,
+    "surge_5d": 0.15,
+    "surge_10d": 0.2,
+    "turnover_ratio": 4.0,
+    "turnover_abs": 0.2,
+    "ma20_deviation": 0.15
+  },
+  "market": {
+    "enabled": true,
+    "indexes": {
+      "沪深300": "1.000300",
+      "中证全指": "1.000985"
+    },
+    "ma20_flat": 0.003,
+    "amount_shrink_ratio": 0.8
+  },
+  "output": {
+    "top_n": 20,
+    "detail_top_n": 20,
+    "history_min_score": 50
+  },
+  "backtest": {
+    "commission": 0.00025,
+    "commission_min": 5.0,
+    "notional": 100000,
+    "stamp_tax_sell": 0.0005,
+    "transfer_fee": 1e-05,
+    "slippage": 0.001,
+    "hold_days": [
+      5,
+      10,
+      20,
+      40
+    ],
+    "stop_losses": [
+      0.05,
+      0.08,
+      0.1
+    ],
+    "trailing_stops": [
+      0.08,
+      0.1,
+      0.12
+    ],
+    "max_hold_for_stops": 40,
+    "entry_min_score": 50,
+    "retest_wait_min": 3,
+    "retest_wait_max": 5,
+    "retest_near_platform": 0.02,
+    "retest_volume_ratio": 0.7,
+    "oos_fraction": 0.4
+  },
+  "trade": {
+    "_comment": "交易阶段识别独立于100分趋势评分。B1=放量突破，B2=突破确认，B3=缩量回踩。",
+    "walk_window": 120,
+    "episode_max_days": 60,
+    "unconfirmed_max_days": 10,
+    "recent_signal_days": 10,
+    "breakout": {
+      "min_volume_ratio": 1.5,
+      "min_change": 0.03,
+      "min_close_position": 0.7,
+      "max_upper_shadow": 0.3
+    },
+    "fail": {
+      "platform_tol": 0.01,
+      "consecutive_days": 2,
+      "deep_break": 0.05,
+      "volume_break_ratio": 1.5,
+      "big_drop": -0.05,
+      "big_drop_volume_ratio": 2.0,
+      "memory_days": 10
+    },
+    "b2": {
+      "min_days": 3,
+      "max_days": 5,
+      "big_drop": -0.04,
+      "pullback_volume_ratio": 0.7,
+      "no_pullback_volume_ratio": 1.0,
+      "far_above_platform": 0.1
+    },
+    "b3": {
+      "min_days": 2,
+      "min_depth": 0.03,
+      "near_platform": 0.03,
+      "near_ma10": 0.01,
+      "pullback_volume_ratio": 0.7,
+      "lower_shadow": 0.4,
+      "max_day_drop": -0.02,
+      "require_rr": true
+    },
+    "trend": {
+      "ma20_min_slope": 0.0,
+      "above_ma20_days": 5,
+      "up_down_volume_ratio": 1.0
+    },
+    "bottom": {
+      "min_drawdown": 0.15,
+      "min_max_drawdown": 0.2,
+      "min_separation": 5,
+      "ma20_slope_min": -0.01,
+      "ma20_slope_max": 0.015,
+      "volume_shrink_ratio": 0.8,
+      "hold_days": 10
+    },
+    "swing": {
+      "lookback": 60,
+      "window": 3
+    },
+    "chase": {
+      "surge_5d": 0.15,
+      "ma20_deviation": 0.1,
+      "rsi_overheat": 75,
+      "big_bull_count": 2,
+      "big_bull_change": 0.05,
+      "big_bull_volume_ratio": 1.5,
+      "near_resistance": 0.03
+    },
+    "stop": {
+      "_comment": "止损（t30 起）：mode=wider 时 最终止损 = min(结构止损, 介入价×(1−fixed_pct))，即二者取更宽；结构止损=结构位−max(buffer_pct×结构位, buffer_atr_mult×ATR)，距离<min_atr_mult×ATR 时按 ATR 放宽；若距离仍>max_stop_pct：too_far_action=cap 封顶为 介入价×(1−max_stop_pct)，=reject 则不生成介入建议。mode=structural 只用结构止损。T+1 按开盘价重算。 rr_basis=final：R/R 用最终止损计算（默认）；=structural：R/R 按纯结构止损评估、实际止损仍用最终止损（对比试验用）。",
+      "mode": "wider",
+      "fixed_pct": 0.08,
+      "atr_period": 14,
+      "buffer_pct": 0.02,
+      "buffer_atr_mult": 0.5,
+      "min_atr_mult": 1.0,
+      "max_stop_pct": 0.1,
+      "too_far_action": "cap",
+      "rr_basis": "final"
+    },
+    "resistance": {
+      "lookback": 60,
+      "swing_window": 3,
+      "spike_volume_ratio": 2.0,
+      "spike_upper_shadow": 0.3,
+      "profile_window": 120,
+      "profile_bins": 20,
+      "dense_ratio": 1.5,
+      "min_gap": 0.002,
+      "fallback_sigma_mult": 2.0
+    },
+    "rr": {
+      "attractive": 2.0,
+      "watch": 1.5
+    },
+    "exec": {
+      "max_gap_up": 0.03,
+      "require_rr": true,
+      "skip_far_b2": true,
+      "skip_hot": true
+    },
+    "groups": {
+      "c_min_score": 50,
+      "report_top_n": 20
+    }
+  },
+  "position": {
+    "_comment": "只输出仓位参考，不自动交易。account_equity 为 null 时只输出风险比例和公式。risk_preference: low/medium/high",
+    "risk_preference": "medium",
+    "risk_per_trade_min": 0.005,
+    "risk_per_trade_max": 0.01,
+    "b1_risk_multiplier_medium": 0.5,
+    "max_position_pct": 0.2,
+    "account_equity": null
+  },
+  "backtest_v11": {
+    "_comment": "B1/B2/B3 独立回测：T日收盘确认 → T+1 开盘按执行规则成交；持有期×止损方案；MAE/MFE/净值最大回撤。",
+    "hold_days": [
+      5,
+      10,
+      20,
+      40
+    ],
+    "stops": [
+      "default",
+      "structural",
+      0.05,
+      0.08,
+      0.1
+    ],
+    "days": 750,
+    "regime_index_secid": "1.000985",
+    "regime_ma": 60,
+    "regime_slope_days": 20,
+    "regime_slope_threshold": 0.02
+  }
+}

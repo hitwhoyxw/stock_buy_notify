@@ -35,6 +35,14 @@ public partial class StrategyView : UserControl, IRefreshable
         _rows = new ObservableCollection<Strategy>(_app.Store.ListStrategies());
         Grid.SetItemsSafe(_rows);
         _status($"共 {_rows.Count} 条策略");
+        // 两套用途分开展示：全市场扫描名单（strategy_scan_ids.txt） vs 自选监控（watchlist.csv 按股票绑定）
+        var scan = _app.Store.ListStrategyScanIds();
+        var watchIds = _app.Store.ListWatchlist()
+            .SelectMany(w => (w.Strategies ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(id => id.Length).ThenBy(id => id, StringComparer.Ordinal).ToList();
+        UsageInfo.Text = $"全市场扫描名单：{(scan.Count == 0 ? "空（不扫描）" : string.Join(",", scan))}（在「策略扫描」页维护）"
+                         + $"  |  自选监控引用：{(watchIds.Count == 0 ? "无" : string.Join(",", watchIds))}（在「监控自选」页按股票绑定）";
     }
 
     private Strategy? Selected =>
@@ -42,9 +50,8 @@ public partial class StrategyView : UserControl, IRefreshable
 
     private async Task OnAddAsync()
     {
-        if (VisualRoot is not Window owner) return;
         var dlg = new StrategyDialog(null);
-        if (await dlg.ShowAsync(owner) && dlg.GetRecord() is { } s)
+        if (await dlg.ShowAsync(this) && dlg.GetRecord() is { } s)
         {
             _app.Store.AddStrategy(s);
             Load();
@@ -54,11 +61,10 @@ public partial class StrategyView : UserControl, IRefreshable
 
     private async Task OnEditAsync()
     {
-        if (VisualRoot is not Window owner) return;
         var cur = Selected;
         if (cur == null) { _status("请先选中一条策略"); return; }
         var dlg = new StrategyDialog(cur);
-        if (await dlg.ShowAsync(owner) && dlg.GetRecord() is { } s)
+        if (await dlg.ShowAsync(this) && dlg.GetRecord() is { } s)
         {
             s.Id = cur.Id;
             _app.Store.UpdateStrategy(s);
@@ -77,10 +83,9 @@ public partial class StrategyView : UserControl, IRefreshable
 
     private async Task OnDeleteAsync()
     {
-        if (VisualRoot is not Window owner) return;
         var cur = Selected;
         if (cur == null) { _status("请先选中一条策略"); return; }
-        if (!await MessageBox.Ask(owner, "确认删除",
+        if (!await MessageBox.Ask(this, "确认删除",
             $"确定删除策略 {cur.Id}（{cur.Name}）吗？\n已应用该策略的自选会解除引用。")) return;
         _app.Store.DeleteStrategy(cur.Id);
         Load();

@@ -1,0 +1,28 @@
+# 优质股击球区 v1.1 — 全局参数（§12）。阈值全部外置，勿在业务代码中硬编码。
+# 与 data/quality_value_v1.json 并存，供验收#12 新旧参数对比。
+version: "1.1"
+qualified_min: 70
+watch_min: 65
+# T5：65 分仅作观察池研究门槛，不自动获得击球区资格；合格线与其他类型相同为 70。
+t5_qualified_min: 70
+t5_watch_min: 65
+min_re: 0.08
+gdp_g: 0.03
+concurrency: 8
+liquidity_days: 60
+liquidity_avg_amount_min: 50000000
+include_bj: true
+list_years_min: 5
+approach_fair_ratio: 0.90
+p_opt_cap: 1.40
+dispersion_flag: 0.60
+pricing_spread_avg_max: 0.40
+alert_dedupe_trading_days: 5
+full_rescan_months: [5, 9]
+full_rescan_day_to: 10
+nov_light_day_to: 10
+mos:
+  - { score_min: 85, discount: 0.15 }
+  - { score_min: 80, discount: 0.20 }
+  - { score_min: 75, discount: 0.25 }
+  - { score_min: 70, discount: 0.30 }

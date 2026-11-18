@@ -12,8 +12,10 @@ namespace ThreeBucket.Core.Services;
 /// </summary>
 public class LlmClient
 {
-    // 候选池分析可能较长（每桶≤100只、三档全量），给足超时
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(5) };
+    // 候选池分析可能较长（每桶≤100只、三档全量），给足超时。
+    // 2026-09-29：T4C 分批后单批仍可达 ~250KB 输入 + 500 只票量级的 JSON 输出，
+    // 实测推理模型单批可超 5 分钟 → 提到 10 分钟。
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(10) };
 
     static LlmClient() => Http.DefaultRequestHeaders.UserAgent.TryParseAdd("ThreeBucket/1.0");
 

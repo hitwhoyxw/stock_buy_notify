@@ -1,0 +1,120 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:data="using:Avalonia.Controls"
+             x:Class="ThreeBucket.UI.Views.BottomReversalView"
+             x:CompileBindings="False">
+  <DockPanel>
+    <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6" ItemSpacing="8" LineSpacing="4">
+      <TextBlock Text="📉 底部反转 S27 V1.2" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+      <ComboBox x:Name="GroupCombo" Width="300" />
+      <TextBox x:Name="SearchBox" Watermark="搜索代码/名称…" Width="150" />
+      <Button x:Name="RefreshBtn" Content="🔄 刷新" />
+      <Button x:Name="RunBtn" Content="▶ 运行扫描(T10)" Background="#c0392b" Foreground="White" />
+      <Button x:Name="ReportBtn" Content="📄 当日日报" />
+      <Button x:Name="Bt12Btn" Content="📊 V1.2 回测报告" />
+      <Button x:Name="OpenDirBtn" Content="📂 打开输出目录" />
+    </WrapPanel>
+    <Border DockPanel.Dock="Top" Margin="6,0,6,4" Padding="8,4" Background="#fff8e1" CornerRadius="4">
+      <TextBlock x:Name="DateText" FontSize="13" FontWeight="Bold" Foreground="#8a5a00" TextWrapping="Wrap" Text="尚未加载" />
+    </Border>
+    <TextBlock DockPanel.Dock="Bottom" Margin="6,0,6,6" FontSize="11" Foreground="#888" TextWrapping="Wrap"
+               Text="计划价为模拟计划价（信号日收盘参考；真实介入看 T+1 开盘检查），非真实成交。止损规则见 data/bottom_reversal_v1_2.json 的 trade.stop。B1分级（V1.2）：B1-A=T+1 可直接介入；B1-B=暂不追，3~10 日内观察是否出现可执行的 B3；B1-C=放弃（无可靠止损/止损过远/跌回平台/停牌涨停）。R/R ≥2 较有吸引力，1.5~2 可以观察，&lt;1.5 不建议主动介入。点一行看右侧个股报告；点表头排序。数据仅供研究，不构成投资建议。" />
+    <TextBlock x:Name="Stats" DockPanel.Dock="Bottom" Margin="6,0,6,2" FontSize="12" Foreground="#666" TextWrapping="Wrap" />
+    <TabControl x:Name="Tabs" Margin="2">
+      <TabItem Header="交易时机">
+        <Grid Margin="4">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="3*" MinWidth="300" />
+            <ColumnDefinition Width="6" />
+            <ColumnDefinition Width="2*" MinWidth="240" />
+          </Grid.ColumnDefinitions>
+          <data:DataGrid x:Name="Grid" Grid.Column="0" AutoGenerateColumns="False" IsReadOnly="True"
+                         GridLinesVisibility="All" SelectionMode="Single" CanUserResizeColumns="True"
+                         CanUserSortColumns="True" HorizontalScrollBarVisibility="Auto" FrozenColumnCount="3">
+            <data:DataGrid.Columns>
+              <data:DataGridTextColumn Header="#" Binding="{Binding Rank}" Width="42" />
+              <data:DataGridTextColumn Header="代码" Binding="{Binding Code}" Width="70" />
+              <data:DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="84" />
+              <data:DataGridTextColumn Header="组" Binding="{Binding Group}" Width="38" />
+              <data:DataGridTextColumn Header="趋势分" Binding="{Binding Total}" Width="58" />
+              <data:DataGridTextColumn Header="阶段" Binding="{Binding Stage}" Width="84" />
+              <data:DataGridTextColumn Header="信号" Binding="{Binding Signal}" Width="48" />
+              <data:DataGridTextColumn Header="信号日" Binding="{Binding SignalDate}" Width="92" />
+              <data:DataGridTextColumn Header="B1分级" Binding="{Binding B1Grade}" Width="60" />
+              <data:DataGridTextColumn Header="平台" Binding="{Binding Platform, StringFormat=F2}" Width="66" />
+              <data:DataGridTextColumn Header="收盘" Binding="{Binding Close, StringFormat=F2}" Width="66" />
+              <data:DataGridTextColumn Header="MA20乖离" Binding="{Binding Ma20Dev, StringFormat='+0.0\\%;-0.0\\%;0.0\\%'}" Width="76" />
+              <data:DataGridTextColumn Header="计划价(模拟)" Binding="{Binding Entry, StringFormat=F2}" Width="88" />
+              <data:DataGridTextColumn Header="止损" Binding="{Binding Stop, StringFormat=F2}" Width="66" />
+              <data:DataGridTextColumn Header="压力位" Binding="{Binding Resistance, StringFormat=F2}" Width="66" />
+              <data:DataGridTextColumn Header="上涨空间" Binding="{Binding RewardPct, StringFormat='+0.0\\%;-0.0\\%;0.0\\%'}" Width="72" />
+              <data:DataGridTextColumn Header="风险" Binding="{Binding RiskPct, StringFormat='0.0\\%'}" Width="58" />
+              <data:DataGridTextColumn Header="R/R" Binding="{Binding Rr, StringFormat=F2}" Width="52" />
+              <data:DataGridTextColumn Header="风险标签" Binding="{Binding Tags}" Width="160" />
+              <data:DataGridTextColumn Header="操作状态" Binding="{Binding OpStatus}" Width="84" />
+              <data:DataGridTextColumn Header="说明" Binding="{Binding OpNote}" Width="420" />
+            </data:DataGrid.Columns>
+          </data:DataGrid>
+          <GridSplitter Grid.Column="1" ResizeDirection="Columns" Background="#ddd" />
+          <ScrollViewer Grid.Column="2" Background="#fafafa" Padding="8" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel x:Name="DetailPanel" Spacing="2" />
+          </ScrollViewer>
+        </Grid>
+      </TabItem>
+      <TabItem Header="📈 跟踪表现">
+        <DockPanel>
+          <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="4" ItemSpacing="8" LineSpacing="4">
+            <ComboBox x:Name="TrackTypeCombo" Width="120" />
+            <ComboBox x:Name="TrackStatusCombo" Width="150" />
+            <ComboBox x:Name="TrackGroupCombo" Width="120" />
+            <ComboBox x:Name="TrackDateCombo" Width="150" />
+            <TextBox x:Name="TrackSearch" Watermark="搜索代码/名称…" Width="140" />
+            <Button x:Name="TrackRunBtn" Content="▶ 更新跟踪" Background="#2e86c1" Foreground="White" />
+            <Button x:Name="TrackSummaryBtn" Content="📄 跟踪汇总" />
+          </WrapPanel>
+          <TextBlock x:Name="TrackStats" DockPanel.Dock="Top" Margin="6,0,6,4" FontSize="12" Foreground="#555" TextWrapping="Wrap" />
+          <TextBlock DockPanel.Dock="Bottom" Margin="6,2,6,2" FontSize="11" Foreground="#888" TextWrapping="Wrap"
+                     Text="每个 B1/B2/B3 信号（代码+信号日+类型去重）自信号日起跟踪 30 个交易日；每次 T10 扫描后自动更新，也可点「更新跟踪」或运行 ThreeBucket.Cli --br track。收益以信号日收盘为基准（计划价收益：T+1 可介入时用 T+1 开盘，否则用信号日计划价）；价格为不复权，信号后如有除权按前复权比例调整到信号日口径。最大涨幅/回撤用窗口内最高/最低价；触及止损 = 最低价 ≤ 信号日止损价（之后继续跟踪）。不计成本，不是真实成交。点表头排序。" />
+          <Grid Margin="4">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="3*" MinWidth="300" />
+              <ColumnDefinition Width="6" />
+              <ColumnDefinition Width="2*" MinWidth="220" />
+            </Grid.ColumnDefinitions>
+            <data:DataGrid x:Name="TrackGrid" Grid.Column="0" AutoGenerateColumns="False" IsReadOnly="True"
+                           GridLinesVisibility="All" SelectionMode="Single" CanUserResizeColumns="True"
+                           CanUserSortColumns="True" HorizontalScrollBarVisibility="Auto" FrozenColumnCount="2">
+              <data:DataGrid.Columns>
+                <data:DataGridTextColumn Header="代码" Binding="{Binding Code}" Width="70" />
+                <data:DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="84" />
+                <data:DataGridTextColumn Header="信号" Binding="{Binding Signal}" Width="48" />
+                <data:DataGridTextColumn Header="信号日" Binding="{Binding SignalDate}" Width="92" />
+                <data:DataGridTextColumn Header="组" Binding="{Binding Group}" Width="38" />
+                <data:DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="72" />
+                <data:DataGridTextColumn Header="天数" Binding="{Binding Days}" Width="46" />
+                <data:DataGridTextColumn Header="T+1检查" Binding="{Binding Exec}" Width="140" />
+                <data:DataGridTextColumn Header="信号收盘" Binding="{Binding SignalClose, StringFormat=F2}" Width="70" />
+                <data:DataGridTextColumn Header="计划价" Binding="{Binding Plan, StringFormat=F2}" Width="62" />
+                <data:DataGridTextColumn Header="止损" Binding="{Binding Stop, StringFormat=F2}" Width="62" />
+                <data:DataGridTextColumn Header="现价" Binding="{Binding Cur, StringFormat=F2}" Width="62" />
+                <data:DataGridTextColumn Header="收益" Binding="{Binding Ret, StringFormat='+0.00\\%;-0.00\\%;0.00\\%'}" Width="70" />
+                <data:DataGridTextColumn Header="计划价收益" Binding="{Binding RetPlan, StringFormat='+0.00\\%;-0.00\\%;0.00\\%'}" Width="82" />
+                <data:DataGridTextColumn Header="最大涨幅" Binding="{Binding MaxGain, StringFormat='+0.00\\%;-0.00\\%;0.00\\%'}" Width="74" />
+                <data:DataGridTextColumn Header="最大回撤" Binding="{Binding MaxDd, StringFormat='+0.00\\%;-0.00\\%;0.00\\%'}" Width="74" />
+                <data:DataGridTextColumn Header="止损日" Binding="{Binding StopDate}" Width="88" />
+                <data:DataGridTextColumn Header="第5日" Binding="{Binding D5, StringFormat='+0.00\\%;-0.00\\%;0.00\\%'}" Width="66" />
+                <data:DataGridTextColumn Header="第10日" Binding="{Binding D10, StringFormat='+0.00\\%;-0.00\\%;0.00\\%'}" Width="66" />
+                <data:DataGridTextColumn Header="第20日" Binding="{Binding D20, StringFormat='+0.00\\%;-0.00\\%;0.00\\%'}" Width="66" />
+                <data:DataGridTextColumn Header="说明" Binding="{Binding Note}" Width="360" />
+              </data:DataGrid.Columns>
+            </data:DataGrid>
+            <GridSplitter Grid.Column="1" ResizeDirection="Columns" Background="#ddd" />
+            <ScrollViewer Grid.Column="2" Background="#fafafa" Padding="8" HorizontalScrollBarVisibility="Disabled">
+              <StackPanel x:Name="TrackDetail" Spacing="2" />
+            </ScrollViewer>
+          </Grid>
+        </DockPanel>
+      </TabItem>
+    </TabControl>
+  </DockPanel>
+</UserControl>

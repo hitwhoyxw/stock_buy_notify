@@ -1,0 +1,60 @@
+{
+  "schema": "config-contract-v1",
+  "source": "config\\quality_value\\monitoring.yaml",
+  "baseline": {
+    "strong_strike_requires": [
+      "pool_qualified",
+      "zone_strike",
+      "not_valuation_uncertain",
+      "not_unreviewed_red_flag",
+      "not_blocking_cycle_high",
+      "not_data_insufficient"
+    ],
+    "optimistic_alert_holdings_only": true,
+    "dedupe_trading_days": 5,
+    "cycle_high_blocks_strong_alert": true,
+    "cycle_high_downgrades_zone": false,
+    "data_coverage": {
+      "normal": 0.9,
+      "display_gap": 0.8,
+      "watch": 0.7
+    }
+  },
+  "shape": {
+    "type": "object",
+    "properties": {
+      "strong_strike_requires": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "optimistic_alert_holdings_only": {
+        "type": "boolean"
+      },
+      "dedupe_trading_days": {
+        "type": "number"
+      },
+      "cycle_high_blocks_strong_alert": {
+        "type": "boolean"
+      },
+      "cycle_high_downgrades_zone": {
+        "type": "boolean"
+      },
+      "data_coverage": {
+        "type": "object",
+        "properties": {
+          "normal": {
+            "type": "number"
+          },
+          "display_gap": {
+            "type": "number"
+          },
+          "watch": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

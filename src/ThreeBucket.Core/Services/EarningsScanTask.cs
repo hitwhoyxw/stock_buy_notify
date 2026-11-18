@@ -28,12 +28,22 @@ public class EarningsScanTask : IBuiltinTask
     private readonly string _dataDir;
     private readonly EastMoneyClient _em;
     private readonly SignalLogStore _signals;
+    private readonly PoolThresholds _th;
 
     public EarningsScanTask(string dataDir, EastMoneyClient em, SignalLogStore signals)
     {
         _dataDir = dataDir;
         _em = em;
         _signals = signals;
+        // 时效分档从 yaml 读（每次运行重载，改 yaml 即生效）；找不到项目根时用 Defaults
+        var root = dataDir;
+        for (var i = 0; i < 6 && root is not null; i++)
+        {
+            if (Directory.Exists(Path.Combine(root, "trading-system"))) break;
+            root = Path.GetDirectoryName(root);
+        }
+        _th = PoolThresholds.Load(root is null
+            ? null : Path.Combine(root, "trading-system", "02_strategy_config.yaml"));
     }
 
     // ── bucket_C.text_signal 关键词（yaml v1.0 硬编码） ─────────────
@@ -57,6 +67,7 @@ public class EarningsScanTask : IBuiltinTask
             "市场超预期拓展","新品上市持续超预期","市场占有率提升","市占率提升","市场份额提升",
             // — 量能 —
             "出货量增长","销量增长","销量大增","产销两旺",
+            "产销量增长","产销量提升","产销量大幅提升","产销量同比增长",
             // — 海外 —
             "出口增长","海外需求增长",
         }),
@@ -120,8 +131,13 @@ public class EarningsScanTask : IBuiltinTask
 
     private const double NegPenalty = -3.0;
     private const double LlmReviewScore = 6.0;  // min_weighted_score（LLM 复核口径）
-    private const double MinGain = 50.0;        // 预告/报表净利同比门槛（%）
-    private const int TopN = 300;               // 扫描池上限（安全阀）
+    /// <summary>板块热度榜门槛（%）。**仅用于渲染头部热度榜**，不再作为入池条件。</summary>
+    private const double MinGain = 50.0;
+
+    // 投资者关系活动记录写入 skill_input 的体积闸门：每票最多 3 场、每场正文最多 600 字。
+    // 实测单场正文 ~1.4k 字，300 只池若不设限会把 200KB 的输入文件推到 MB 级，白烧 token。
+    private const int MaxSurveyPerStock = 3;
+    private const int SurveyTextLimit = 600;
 
     // 赛道龙头（yaml bucket_C.text_signal.sector_leaders；CPO/光模块/PCB/AI 链）
     private static readonly string[] SectorLeaders =
@@ -216,7 +232,13 @@ public class EarningsScanTask : IBuiltinTask
                 ["信号方向"] = "买入候选",
                 ["建议动作"] = "纳入 C 桶候选池观察",
                 ["是否实际执行"] = "",
-                ["备注"] = Clip(Str(item, "reason"), 200),
+                ["备注"] = Clip(Str(item, "reason")
+                    + (Str(item, "freshness").Length > 0
+                        ? $"｜时效: {Str(item, "freshness")}"
+                          + (Str(item, "signal_days").Length > 0 ? $"（距今 {Str(item, "signal_days")} 天）" : "")
+                        : "")
+                    + (Str(item, "fresh_score").Length > 0
+                        ? $"｜时效分 {Str(item, "fresh_score")}（仅排序用）" : ""), 200),
             });
             L($"[OK] {sid} | {Str(item, "stock_code")} {Str(item, "stock_name")} score={Str(item, "weighted_score")}");
         }
@@ -280,11 +302,21 @@ public class EarningsScanTask : IBuiltinTask
         var yjygByCode = yjyg.GroupBy(r => r.Code).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
         var yjbbByCode = yjbb.GroupBy(r => r.Code).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
 
-        // 板块热度 + 关键词命中
+        // 板块热度（仅作 LLM 背景参考，不参与池发现）
         var heat = ComputeSectorHeat(yjbb, MinGain);
-        var kwMap = ScanKeywordHits(yjyg);
 
-        // 发现池：0 赛道龙头 → 1 关键词 → 2 预告增速 → 3 报表增速补足
+        // ── 扫描池发现（2026-09-20 重设计）──
+        // 原则（用户明确要求）：**业绩预告 / 投资者关系活动记录表（电话会议·调研·说明会）
+        // 是同等作用的关键词来源**；业绩报表/增速**不再作为入池来源**——
+        // 「高增长的相关信息披露自然会包含静态关键词」，靠增速入池是本末倒置。
+        //
+        // 入池 = **任一来源关键词命中**。赛道龙头也不再强制入池（用户要求）：
+        // 它们是固定的 CPO/PCB 名单，不构成本轮文本证据，占位会挤掉真正命中的票。
+        // 「只在名单里、文本却无命中」的票由 LLM 复核层按行业热度榜自行关注。
+        //
+        // 鸡生蛋问题的解法：活动记录必须逐票拉（分块会因单票数百页爆掉，见 9701 那个坑），
+        // 所以先对「有业绩预告但预告文本未命中关键词」的票去查活动记录——
+        // 这批正是广汇能源那类「预告用词不标准、调研里说得很清楚」的票。
         var pool = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         void Add(string code)
@@ -292,35 +324,38 @@ public class EarningsScanTask : IBuiltinTask
             if (seen.Add(code)) pool.Add(code);
         }
 
-        foreach (var c in SectorLeaders) Add(c);
-        L($"赛道龙头源：{SectorLeaders.Length} 只，入池 {pool.Count} 只");
-
+        // ① 预告文本关键词命中（全量入池，不受上限约束——文本命中即证据）
+        var kwMapYjyg = ScanKeywordHits(yjyg, new Dictionary<string, List<OrgSurveyRow>>(), today,
+            _th.Freshness);
         double GainOf(string code) => yjygByCode.GetValueOrDefault(code)?.GainPct ?? 0;
-        var kwSorted = kwMap.OrderByDescending(kv => kv.Value.Score)
+        var kwSorted = kwMapYjyg.OrderByDescending(kv => kv.Value.FreshScore)
             .ThenByDescending(kv => GainOf(kv.Key)).Select(kv => kv.Key).ToList();
         foreach (var code in kwSorted) Add(code);
-        L($"关键词源：预告文本命中 {kwMap.Count} 只，全部入池");
+        L($"预告关键词源：命中 {kwMapYjyg.Count} 只，全部入池（池={pool.Count}）");
 
-        var hit2 = yjyg.Where(r => r.GainPct is null || r.GainPct >= MinGain)
-            .OrderByDescending(r => Math.Min(r.GainPct ?? double.MinValue, 500.0)).ToList();
-        var before = pool.Count;
-        foreach (var r in hit2)
+        // ② 活动记录关键词命中：对「有预告但预告未命中」的票补查活动记录
+        var orgByCode = new Dictionary<string, List<OrgSurveyRow>>(StringComparer.Ordinal);
+        if (_th.Freshness.Enabled)
         {
-            if (pool.Count >= TopN) break;
-            Add(r.Code);
-        }
-        L($"预告增速源：幅度≥{MinGain:0}% 共 {hit2.Count} 只，入池 {pool.Count - before} 只（增速 clip 500%）");
+            var toProbe = yjyg.Where(r => !kwMapYjyg.ContainsKey(r.Code))
+                .Select(r => r.Code).Distinct(StringComparer.Ordinal).ToList();
+            L($"活动记录补查：{toProbe.Count} 只（有预告但预告文本无关键词命中）");
 
-        var hit3 = yjbb.Where(r => r.NpYoy is not null && r.NpYoy >= MinGain && (r.RevYoy ?? 0) > 0)
-            .OrderByDescending(r => Math.Min(r.NpYoy ?? 0, 500.0)).ToList();
-        before = pool.Count;
-        foreach (var r in hit3)
-        {
-            if (pool.Count >= TopN) break;
-            Add(r.Code);
+            var surveys = await _em.GetOrgSurveysAsync(toProbe, _th.Freshness.LookbackDays,
+                log: L, ct: ct,
+                budget: TimeSpan.FromMinutes(_th.Freshness.ActivityBudgetMinutes));
+            orgByCode = surveys.GroupBy(s => s.Code, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+
+            // 活动记录命中的票 → 入池（与预告源完全同等，不再只是"池内补充"）
+            var kwMapOrgOnly = ScanKeywordHits(
+                new List<YjygRow>(), orgByCode, today, _th.Freshness);
+            var orgSorted = kwMapOrgOnly.OrderByDescending(kv => kv.Value.FreshScore)
+                .Select(kv => kv.Key).ToList();
+            foreach (var code in orgSorted) Add(code);
+            L($"活动记录关键词源：覆盖 {orgByCode.Count}/{toProbe.Count} 只，"
+                + $"命中 {kwMapOrgOnly.Count} 只入池（池={pool.Count}）");
         }
-        if (pool.Count > before)
-            L($"报表增速源：补充 {pool.Count - before} 只（np_yoy≥{MinGain:0}% 且营收正增长，clip 500%）");
 
         if (pool.Count == 0)
         {
@@ -328,22 +363,87 @@ public class EarningsScanTask : IBuiltinTask
             return (0, 0);
         }
 
+        // 合并三源关键词（预告 + 活动记录），供排序、渲染与截断清单
+        var kwMap = ScanKeywordHits(yjyg, orgByCode, today, _th.Freshness);
+        var nYjygOnly = kwMap.Keys.Count(c => kwMapYjyg.ContainsKey(c));
+        var nOrgOnly = kwMap.Keys.Count - nYjygOnly;
+        L($"关键词命中合计 {kwMap.Count} 只（预告 {nYjygOnly} + 仅活动记录 {nOrgOnly}）");
+
+        // 安全阀：超上限时按时效分降序截断；被截断的票写入清单文件而非无声消失
+        // （它们仍是文本命中的有效候选，只是本轮 LLM 复核成本所限未纳入，下轮可回补）。
+        if (pool.Count > _th.ScanPoolTopN)
+        {
+            var ordered = pool
+                .OrderByDescending(c => kwMap.GetValueOrDefault(c)?.FreshScore ?? 0)
+                .ToList();
+            var truncated = ordered.Skip(_th.ScanPoolTopN).ToList();
+            pool = ordered.Take(_th.ScanPoolTopN).ToList();
+
+            try
+            {
+                var lns = new List<string>
+                {
+                    $"# T4 扫描池截断清单 · {today:yyyy-MM-dd}",
+                    $"池 {seen.Count} 只 > 上限 {_th.ScanPoolTopN}，截断 {truncated.Count} 只",
+                    "说明: 以下票**文本关键词已命中**（有效候选），仅因 LLM 复核成本上限未纳入本轮输入。",
+                    "      池子收缩或有预算时可在下轮回补；截断按时效分升序（先砍最低分）。",
+                    "",
+                    "| 代码 | 名称 | 行业 | 加权分 | 时效分 | 距今天数 | 时效 | 命中来源 |",
+                    "|------|------|------|--------|--------|----------|------|----------|",
+                };
+                foreach (var c in truncated)
+                {
+                    var k = kwMap.GetValueOrDefault(c);
+                    var m2 = BuildPoolMeta(c, yjygByCode, yjbbByCode, kwMap);
+                    var srcKinds = string.Join("+", (k?.Sources ?? new List<SourceHit>())
+                        .Select(s => s.Kind).Distinct(StringComparer.Ordinal));
+                    lns.Add($"| {c} | {m2.Name} | {m2.Industry} "
+                        + $"| {k?.Score.ToString("0.0", Inv) ?? ""} "
+                        + $"| {k?.FreshScore.ToString("0.0", Inv) ?? ""} "
+                        + $"| {k?.AgeDays?.ToString(Inv) ?? ""} "
+                        + $"| {FreshnessResult.Evaluate(k?.AgeDays, _th.Freshness.Tiers).Label} "
+                        + $"| {srcKinds} |");
+                }
+                File.WriteAllText(Path.Combine(_dataDir, "t4_pool_truncated.md"),
+                    string.Join("\n", lns), new UTF8Encoding(false));
+                L($"[WARN] 池 {seen.Count} 只超上限 {_th.ScanPoolTopN}，按时效分截断至 {pool.Count} 只"
+                    + $"（被截断 {truncated.Count} 只见 t4_pool_truncated.md）");
+            }
+            catch (Exception e)
+            {
+                L($"[WARN] 池超上限截断至 {pool.Count} 只，但清单写入失败: {e.Message}");
+            }
+        }
+        else
+        {
+            try { File.Delete(Path.Combine(_dataDir, "t4_pool_truncated.md")); } catch { }
+        }
+
         // 组装文件
         var sb = new StringBuilder();
-        sb.Append(BuildHeader(pool, kwMap, yjbb, heat, period, today));
+        sb.Append(BuildHeader(pool, kwMap, yjbb, heat, period, today, orgByCode.Count, _th.Freshness));
         foreach (var code in pool)
         {
             var m = BuildPoolMeta(code, yjygByCode, yjbbByCode, kwMap);
             var tags = m.Sources.Count > 0 ? " | 来源: " + string.Join("+", m.Sources) : "";
             var kwLine = FormatKwLine(m.Kw);
-            var textBlock = BuildReportText(code, yjygByCode, yjbbByCode);
+            var freshLine = FormatFreshnessLine(m.Kw, _th.Freshness);
+            var textBlock = BuildReportText(code, yjygByCode, yjbbByCode, orgByCode);
             if (textBlock.Length == 0)
                 textBlock = $"（{(m.Name.Length > 0 ? m.Name : code)} 暂无可用财报数据，请手动补充）";
+
+            // 数据来源行必须与实际取到的材料一致：活动记录被限流/失败时不得声称用了它
+            // （原「+ 巨潮互动易」就是一句从未成立的假话，这里不再重犯）
+            var hasSurvey = orgByCode.ContainsKey(code);
+            var srcLine = "数据来源: 东财业绩报表/业绩预告"
+                + (hasSurvey ? " + 东财投资者关系活动记录表（电话会议/业绩说明会/特定对象调研）" : "")
+                + (orgByCode.Count == 0 ? "（本次活动记录接口不可用，仅用预告/报表文本）" : "");
 
             sb.Append("\n\n");
             sb.Append($"=== {code} · {(m.Name.Length > 0 ? m.Name : "?")} · {(m.Industry.Length > 0 ? m.Industry : "未知")}{tags} ===\n");
             if (kwLine.Length > 0) sb.Append(kwLine + "\n");
-            sb.Append("数据来源: 东财业绩报表/业绩预告 + 巨潮互动易（批量抓取）\n");
+            if (freshLine.Length > 0) sb.Append(freshLine + "\n");
+            sb.Append(srcLine + "\n");
             sb.Append($"报告期: {period}；生成日期: {today:yyyy-MM-dd}\n");
             sb.Append("------\n");
             sb.Append(textBlock + "\n");
@@ -388,18 +488,122 @@ public class EarningsScanTask : IBuiltinTask
 
     // ── 关键词静态匹配（打分口径与 t4_c_text_scan skill 一致） ──────
 
-    private sealed record KwHit(Dictionary<string, List<string>> Hits, List<string> Neg, double Score);
+    /// <summary>
+    /// 单个文本来源的命中记录。Timestamp = 该来源的公告/活动日（时效判定用；可能为 null）。
+    /// 时效口径：**每个来源各自保留时间戳**，最终取全部来源中最新的一个作为该票的信号时间。
+    /// </summary>
+    public sealed record SourceHit(string Kind, DateTime? Timestamp, string Text);
 
-    /// <summary>对业绩预告文本（变动原因+变动描述）做 bucket_C 关键词匹配。仅返回至少命中一个正向词的票。</summary>
-    private static Dictionary<string, KwHit> ScanKeywordHits(List<YjygRow> yjyg)
+    /// <summary>一票的关键词命中结果。
+    /// Score 为**全部来源合并后**的原始加权分（口径与改动前完全一致，不因时效而变）；
+    /// AgeDays / FreshnessPenalty / FreshScore 为新增的时效派生值，**仅用于排序与展示**。
+    /// public：供 ThreeBucket.Demo 离线回归断言"时效不改变 weighted_score"这一核心不变式。</summary>
+    public sealed record KwHit(Dictionary<string, List<string>> Hits, List<string> Neg, double Score,
+        List<SourceHit> Sources, DateTime? LatestHitDate, string LatestHitKind,
+        int? AgeDays, double FreshnessPenalty)
     {
-        var outMap = new Dictionary<string, KwHit>(StringComparer.Ordinal);
-        foreach (var r in yjyg)
+        public double FreshScore => Math.Max(0.0, Math.Round(Score + FreshnessPenalty, 1));
+    }
+
+    /// <summary>
+    /// 对多个文本来源做 bucket_C 关键词匹配。仅返回至少命中一个正向词的票。
+    ///
+    /// 合并口径与改动前的单来源版**逐字一致**：把各来源正文拼在一起扫一遍，
+    /// 命中数与反向词数跨来源累加 → Score 不变 → weighted_score 与 PASS/REJECT 不受影响。
+    /// 时效另算：每个来源独立记时间戳，取最新者。
+    /// </summary>
+    private static Dictionary<string, KwHit> ScanKeywordHits(
+        List<YjygRow> yjyg, Dictionary<string, List<OrgSurveyRow>> orgByCode, DateTime today,
+        FreshnessConfig freshCfg)
+        => ScanKeywordHitsCore(yjyg, orgByCode, today, freshCfg);
+
+    /// <summary>供离线回归断言"时效不改变加权分"（Demo 程序集可见）。</summary>
+    public static Dictionary<string, KwHit> ScanKeywordHitsForTest(
+        List<YjygRow> yjyg, Dictionary<string, List<OrgSurveyRow>> orgByCode, DateTime today,
+        FreshnessConfig freshCfg)
+        => ScanKeywordHitsCore(yjyg, orgByCode, today, freshCfg);
+
+    private static Dictionary<string, KwHit> ScanKeywordHitsCore(
+        List<YjygRow> yjyg, Dictionary<string, List<OrgSurveyRow>> orgByCode, DateTime today,
+        FreshnessConfig freshCfg)
+    {
+        // 1) 汇总每个代码的全部文本来源
+        var byCode = new Dictionary<string, List<SourceHit>>(StringComparer.Ordinal);
+        void AddSource(string code, SourceHit src)
         {
-            var text = $"{r.Reason}\n{r.Excerpt}";
-            if (text.Trim().Length <= 1) continue;
-            var hit = ScanText(text);
-            if (hit is not null) outMap[r.Code] = hit;
+            if (src.Text.Trim().Length <= 1) return;
+            if (!byCode.TryGetValue(code, out var list)) byCode[code] = list = new();
+            list.Add(src);
+        }
+
+        foreach (var r in yjyg)
+            AddSource(r.Code, new SourceHit("业绩预告", r.NoticeDate, $"{r.Reason}\n{r.Excerpt}"));
+
+        foreach (var (code, surveys) in orgByCode)
+            foreach (var s in surveys)
+                AddSource(code, new SourceHit(
+                    s.Way.Length > 0 ? s.Way : "投资者关系活动", s.ReceiveDate ?? s.NoticeDate, s.Content));
+
+        // 取数窗口（2026-09-20 新增）：公告/活动日超过 N 天的来源**直接不参与扫描**，
+        // 从源头切断陈旧公告（如三季度仍在匹配一季报预告）。无日期的来源保留——
+        // 宁可放行也不误杀（旧缓存/接口缺日期时不该整票消失）。
+        // 窗口取两位配置的较大值，两个来源各自已按自己的窗口取数。
+        var maxAge = Math.Max(freshCfg.NoticeWindowDays, freshCfg.LookbackDays);
+        if (maxAge > 0)
+            byCode = byCode.ToDictionary(
+                kv => kv.Key,
+                kv => kv.Value.Where(s => s.Timestamp is null
+                    || (today.Date - s.Timestamp.Value.Date).TotalDays <= maxAge).ToList(),
+                StringComparer.Ordinal);
+        byCode = byCode.Where(kv => kv.Value.Count > 0)
+            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+
+        // 2) 逐票：合并打分（原口径）+ 逐来源归属 + 时效评定
+        var outMap = new Dictionary<string, KwHit>(StringComparer.Ordinal);
+        foreach (var (code, sources) in byCode)
+        {
+            var merged = ScanText(string.Join("\n", sources.Select(s => s.Text)));
+            if (merged is null) continue;
+
+            // 逐来源单独扫一遍，把每个命中词**归属到真正出现它的来源**。
+            // 注意 Score 仍用合并文本算出的 merged.Score（与改动前的单来源口径逐字一致），
+            // 逐来源结果只用于展示归属，不参与计分——否则同一词在多来源重复出现会被重复计分。
+            var mergedHits = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            foreach (var src in sources)
+            {
+                var own = ScanText(src.Text);
+                if (own is null) continue;
+                foreach (var (cat, words) in own.Hits)
+                {
+                    if (!mergedHits.TryGetValue(cat, out var list))
+                        mergedHits[cat] = list = new List<string>();
+                    foreach (var w in words)
+                        if (!list.Contains(w)) list.Add(w);
+                }
+            }
+            // 兜底：理论上不会差，但若某词只在合并文本里匹配到（分隔符造成的边界效应），仍保留
+            foreach (var (cat, words) in merged.Hits)
+            {
+                if (!mergedHits.TryGetValue(cat, out var list))
+                    mergedHits[cat] = list = new List<string>();
+                foreach (var w in words)
+                    if (!list.Contains(w)) list.Add(w);
+            }
+
+            var latest = sources.Where(s => s.Timestamp is not null)
+                .OrderByDescending(s => s.Timestamp).FirstOrDefault();
+            var days = latest?.Timestamp is { } ts ? (int)(today.Date - ts.Date).TotalDays : (int?)null;
+            var fresh = FreshnessResult.Evaluate(days, freshCfg.Tiers);
+
+            outMap[code] = merged with
+            {
+                Hits = mergedHits,
+                Sources = sources,
+                LatestHitDate = latest?.Timestamp,
+                LatestHitKind = latest?.Kind ?? "",
+                AgeDays = fresh.Days,
+                FreshnessPenalty = fresh.Penalty,
+            };
         }
         return outMap;
     }
@@ -419,7 +623,10 @@ public class EarningsScanTask : IBuiltinTask
         }
         var neg = NegKeywords.Where(k => text.Contains(k)).ToList();
         score += NegPenalty * neg.Count;
-        return hits.Count > 0 ? new KwHit(hits, neg, Math.Round(score, 1)) : null;
+        return hits.Count > 0
+            ? new KwHit(hits, neg, Math.Round(score, 1), new List<SourceHit>(),
+                null, "", null, 0)
+            : null;
     }
 
     // ── skill_input_T4C.md 组装辅助 ────────────────────────────────
@@ -450,15 +657,30 @@ public class EarningsScanTask : IBuiltinTask
     }
 
     private static string BuildHeader(List<string> pool, Dictionary<string, KwHit> kwMap,
-        List<YjbbRow> yjbb, List<SectorHeat> heat, string period, DateTime today)
+        List<YjbbRow> yjbb, List<SectorHeat> heat, string period, DateTime today,
+        int nSurveyCodes, FreshnessConfig freshCfg)
     {
         var nKw = pool.Count(c => kwMap.ContainsKey(c));
         var sb = new StringBuilder();
         sb.AppendLine("# T4 财报季扫描输入（自动发现）");
-        sb.AppendLine($"生成日期: {today:yyyy-MM-dd}；报告期: {period}；扫描池 {pool.Count} 只（其中关键词命中 {nKw} 只）");
+        sb.AppendLine($"生成日期: {today:yyyy-MM-dd}；报告期: {period}；扫描池 {pool.Count} 只"
+            + $"（其中关键词命中 {nKw} 只；投资者关系活动记录覆盖 {nSurveyCodes} 只）");
+        if (nSurveyCodes == 0)
+            sb.AppendLine("⚠️ 本次未取到投资者关系活动记录（接口限流或失败），文本信号仅来自业绩预告/报表，"
+                + "可能漏掉只在电话会议/调研中披露的景气表述。");
         sb.AppendLine();
-        sb.AppendLine("关键词口径: 业绩预告『变动原因/变动』文本匹配 bucket_C.text_signal 需求/价格/供给关键词；"
+        sb.AppendLine("关键词口径: 业绩预告『变动原因/变动』+ 投资者关系活动记录表（电话会议/业绩说明会/"
+            + "特定对象调研）正文，**两者同等作为信号来源**，匹配 bucket_C.text_signal 需求/价格/供给关键词；"
             + "加权分=Σ(命中数×权重)−3×反向词数，最终判定以 LLM 复核为准。");
+        sb.AppendLine("入池规则: 任一来源关键词命中即入池；业绩报表与净利增速**不作为入池条件**"
+            + "（仅用于下方数据验证与排序参考）——高增长公司的信息披露自然会包含上述关键词。");
+        sb.AppendLine();
+        sb.AppendLine("信号时效口径（⚠️ 仅影响 T6 排序，不改判定）: 按**各来源最新公告/活动日**据今天数"
+            + "（日历天）分档扣分，无日期则不扣分。");
+        sb.AppendLine("  分档: " + string.Join(" / ", freshCfg.Tiers.Select(t =>
+            $"≤{t.MaxDays}天 {t.Penalty.ToString("0.0", Inv)}")));
+        sb.AppendLine("  时效分 = 原始加权分 + 时效扣分（下限 0）。时效陈旧但景气证据明确的票**仍可 PASS**，"
+            + "请在 reason 中注明证据所属月份，供人工复核景气窗口是否仍开。");
 
         if (heat.Count > 0)
         {
@@ -482,19 +704,51 @@ public class EarningsScanTask : IBuiltinTask
         return sb.ToString();
     }
 
-    /// <summary>单票关键词命中渲染一行：命中类别[词…]、加权分、反向词。</summary>
+    /// <summary>单票关键词命中渲染一行：命中类别[词…]、加权分、反向词；时效降权有则附在末尾。</summary>
     private static string FormatKwLine(KwHit? kw)
     {
         if (kw is null) return "";
         var parts = kw.Hits.Select(kv => $"{kv.Key}[{string.Join("、", kv.Value)}]").ToList();
         var neg = kw.Neg.Count > 0 ? string.Join("、", kw.Neg) : "无";
-        return $"关键词命中: {string.Join(" ", parts)}；加权分 {kw.Score.ToString("0.0", Inv)}"
+        var line = $"关键词命中: {string.Join(" ", parts)}；加权分 {kw.Score.ToString("0.0", Inv)}"
             + $"（LLM 复核口径 ≥{LlmReviewScore:0.0} 且三类齐全）；反向词: {neg}";
+        if (kw.FreshnessPenalty < 0)
+            line += $"；⚠️ 时效 {kw.FreshnessPenalty.ToString("0.0", Inv)}"
+                + $"（距今 {kw.AgeDays} 天，最新来源 {kw.LatestHitKind} {kw.LatestHitDate:yyyy-MM-dd}）"
+                + $"；时效分 {kw.FreshScore.ToString("0.0", Inv)}";
+        return line;
     }
 
-    /// <summary>从批量快照拼出单只票的财报要点文本（业绩报表结构化数字 + 预告变动原因/描述）。</summary>
+    /// <summary>
+    /// 时效单独一行（高亮）：最新命中来源、距今天数、档位、扣分，以及各来源日期明细。
+    /// 口径为**日历天数**；无日期时渲染为「未知」并明确不做扣分。
+    /// </summary>
+    private static string FormatFreshnessLine(KwHit? kw, FreshnessConfig cfg)
+    {
+        if (kw is null) return "";
+        var srcs = "要点来源明细: " + string.Join(" · ", kw.Sources
+            .GroupBy(s => s.Kind, StringComparer.Ordinal)
+            .Select(g =>
+            {
+                var d = g.Where(x => x.Timestamp is not null)
+                    .OrderByDescending(x => x.Timestamp).FirstOrDefault();
+                return d is null ? $"{g.Key} 日期未知" : $"{g.Key} {d.Timestamp:yyyy-MM-dd}";
+            }));
+        if (kw.AgeDays is not { } days)
+            return $"❔ 信号时效: 无可用日期（无法判定新旧，扣分 0）\n{srcs}";
+
+        var label = FreshnessResult.Evaluate(days, cfg.Tiers).Label;
+        var icon = kw.FreshnessPenalty <= -1.5 ? "🔴" : kw.FreshnessPenalty < 0 ? "⚠️" : "✅";
+        return $"{icon} 信号时效: 最新来源 {kw.LatestHitKind} {kw.LatestHitDate:yyyy-MM-dd}，"
+            + $"距今 {days} 天 → {label}（扣 {kw.FreshnessPenalty.ToString("0.0", Inv)}）"
+            + $"；时效分 {kw.FreshScore.ToString("0.0", Inv)}"
+            + $"（原始加权分 {kw.Score.ToString("0.0", Inv)}，时效分仅用于 T6 排序，不改判定）\n{srcs}";
+    }
+
+    /// <summary>从批量快照拼出单只票的财报要点文本（业绩报表数字 + 预告原因 + 投资者关系活动记录）。</summary>
     private static string BuildReportText(string code,
-        Dictionary<string, YjygRow> yjygByCode, Dictionary<string, YjbbRow> yjbbByCode)
+        Dictionary<string, YjygRow> yjygByCode, Dictionary<string, YjbbRow> yjbbByCode,
+        Dictionary<string, List<OrgSurveyRow>> orgByCode)
     {
         var lines = new List<string>();
 
@@ -524,18 +778,190 @@ public class EarningsScanTask : IBuiltinTask
             if (g.Excerpt.Length > 0) lines.Add("业绩预告: " + g.Excerpt);
             if (g.Reason.Length > 0) lines.Add("变动原因: " + g.Reason);
         }
-        // 互动易问答文本：无公开稳定接口，跳过（Python 受限环境同样经常失败）
+
+        // 投资者关系活动记录表（电话会议/业绩说明会/特定对象调研）——与业绩预告**同等**的
+        // 关键词来源（2026-09-20 起参与池发现，不再只是池内补充材料）。
+        // 正文很长（~1.4k-5k 字/场），且实测 **72% 的场次前 600 字不含任何关键词**
+        // （分红/股东户数/产品闲聊等）。若按位置截断，无效文本会淹没有效证据并撑爆 LLM 输入。
+        // 故按**关键词窗口**提取：只保留命中句 ± 相邻句（保留语境），每场再设总量上限。
+        if (orgByCode.TryGetValue(code, out var surveys) && surveys.Count > 0)
+            foreach (var s in surveys.Take(MaxSurveyPerStock))
+                lines.Add($"投资者关系活动记录（{s.ReceiveDate?.ToString("yyyy-MM-dd") ?? "日期未知"} · "
+                    + $"{s.Way}{(s.Object.Length > 0 ? " · " + s.Object : "")}）: "
+                    + ExtractKeywordContext(s.Content, SurveyTextLimit));
+
         return string.Join("\n", lines);
+    }
+
+    /// <summary>截断长文本并标注截断（活动记录正文可能上千字）。</summary>
+    private static string ClipText(string s, int limit)
+        => s.Length <= limit ? s : s[..limit] + $" ...（截断，共 {s.Length} 字）";
+
+    /// <summary>全部关键词（正向含 negative），供 ExtractKeywordContext 与离线回归用。</summary>
+    public static string[] AllKeywords()
+        => Categories.SelectMany(c => c.Keywords).Concat(NegKeywords).Distinct().ToArray();
+
+    /// <summary>句切分（中英文句末标点 + 换行）。</summary>
+    private static readonly Regex SentenceSplit = new(@"(?<=[。！？；!?;\n])", RegexOptions.Compiled);
+
+    /// <summary>问答对切分：Q/A 前缀行（问题1:/问题2:/回复:/答复:/答:/Q:/A:/问: 等）。</summary>
+    private static readonly Regex QaBoundary =
+        new(@"(?=^(?:问题\d+[:：.]|回复[:：]|答复[:：]|答[:：]|问[:：]|Q[:：.]|A[:：.])\s*)",
+            RegexOptions.Compiled | RegexOptions.Multiline);
+
+    /// <summary>
+    /// 按语义粒度提取正文，只保留含关键词的部分，供 LLM 复核（2026-09-29 重写）。
+    ///
+    /// 动机（用户指出）：投资者互动平台的问答里大量与景气无关的对子
+    /// （分红/股东户数/产品闲聊/致谢）全被整段保留，输入文件里 ~60% 是这类噪音。
+    ///
+    /// 策略——两级切分，取更粗、语义更完整的粒度：
+    /// 1. 先按**问答对**切（问题1:/回复:/答复:/答:/Q:/A: 行边界）：
+    ///    问或答**本身含关键词**的问答对才保留（无关对整对丢弃，不保留语境——
+    ///    问答自成一体的语境，邻对的语境没有信息量）。
+    /// 2. 无问答边界（如业绩说明会的整段陈述）→ 退回**句窗口**切：命中句 ± 1 句。
+    ///
+    /// 细节：
+    /// - 短句（≤6 字，如"谢谢""您好"）并入相邻句，避免碎片化
+    /// - 无任何命中 → 返回空串（该场记录对景气判定无信息量，整场丢弃）
+    /// - 超出 limit 先到先得截断并标注
+    /// - 词表含 negative（反向词语境同样要给 LLM 看）
+    /// </summary>
+    public static string ExtractKeywordContext(string content, int limit)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return "";
+
+        var allKws = AllKeywords();
+        bool HasKw(string s) => allKws.Any(k => s.Contains(k));
+
+        // 全文无任何命中 → 直接丢弃（不用再按粒度切）
+        if (!HasKw(content)) return "";
+        // 短文本（≤limit）：无需拼接优化，但**仍按问答粒度过滤**（无关问答对照样要滤，
+        // 不能因为全文有命中就整段放行——短文本走同一套问答/句窗口逻辑，见下）。
+
+        // ── 1. 问答对粒度 ──
+        var qaParts = QaBoundary.Split(content).Select(s => s.Trim())
+            .Where(s => s.Length > 0).ToList();
+        if (qaParts.Count >= 2)
+        {
+            // 问答对可能出现"问题N"与"回复"分离成两段的情况——把"回复/答复/答/A"段
+            // 并回它前面的"问题"段，构成完整一问一答
+            var pairs = new List<string>();
+            foreach (var p in qaParts)
+            {
+                var isReply = p.StartsWith("回复") || p.StartsWith("答复")
+                    || p.StartsWith("答") && !p.StartsWith("答复符") || p.StartsWith("A");
+                if (isReply && pairs.Count > 0) pairs[^1] += "\n" + p;
+                else pairs.Add(p);
+            }
+
+            var kept = pairs.Where(HasKw).ToList();
+            if (kept.Count == 0) return "";   // 全部问答无关 → 整场丢弃
+
+            var sb2 = new StringBuilder();
+            var n2 = 0;
+            var cut2 = false;
+            foreach (var p in kept)
+            {
+                // pair 可能异常大（回复正文与后段无前缀文本粘连，如业绩说明会的整段陈述
+                // 接在"回复:"后）——超限时 pair 内部降级为句窗口，保住命中句而非整对丢弃
+                var piece = p;
+                if (piece.Length > limit)
+                    piece = ExtractBySentenceWindow(piece, limit, HasKw);
+                if (piece.Length == 0) continue;   // pair 内无命中句（理论上 HasKw(p) 已保证，防御）
+                if (n2 + piece.Length > limit) { cut2 = true; break; }
+                sb2.Append(piece).Append('\n');
+                n2 += piece.Length + 1;
+            }
+            var r2 = sb2.ToString().TrimEnd();
+            if (cut2) r2 += $" ...（仅保留含关键词的问答，全文 {content.Length} 字）";
+            return r2;
+        }
+
+        // ── 无问答边界 → 句窗口 ──
+        return ExtractBySentenceWindow(content, limit, HasKw);
+    }
+
+    /// <summary>
+    /// 句窗口提取：命中句完整保留，语境句（命中句±1）按命中句长度比例截短。
+    /// 供问答 pair 超限降级与整段陈述式文本两条路径复用。
+    /// </summary>
+    private static string ExtractBySentenceWindow(string content, int limit, Func<string, bool> HasKw)
+    {
+        var sentences = SentenceSplit.Split(content)
+            .Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
+        var merged = new List<string>();
+        foreach (var s in sentences)
+        {
+            if (merged.Count > 0 && (s.Length <= 6 || merged[^1].Length < 10))
+                merged[^1] += s;
+            else
+                merged.Add(s);
+        }
+        if (merged.Count == 0) return "";
+
+        // 语境句上限：命中句 ±1 的"语境句"最长不超过**命中句自身长度**（且 ≤80 字）。
+        // 语境是辅助，不该反客为主——尤其对无标点粘连的病态长句（表格粘贴/异常文本），
+        // 固定 80 字仍会拖进大量无关内容；以命中句为锚按比例收紧。
+        const int CtxCapAbs = 80;
+
+        var keep = new bool[merged.Count];
+        var anyHit = false;
+        for (var i = 0; i < merged.Count; i++)
+        {
+            if (HasKw(merged[i]))
+            {
+                anyHit = true;
+                for (var j = Math.Max(0, i - 1); j <= Math.Min(merged.Count - 1, i + 1); j++)
+                    keep[j] = true;
+            }
+        }
+        if (!anyHit) return "";
+
+        var sb = new StringBuilder();
+        var total = 0;
+        var truncated = false;
+        for (var i = 0; i < merged.Count; i++)
+        {
+            if (!keep[i]) continue;
+            if (HasKw(merged[i]))
+            {
+                // 命中句完整保留
+                if (total + merged[i].Length > limit) { truncated = true; break; }
+                sb.Append(merged[i]);
+                total += merged[i].Length;
+            }
+            else
+            {
+                // 纯语境句：≤ min(80, 该句相邻命中句的长度)（无相邻命中句信息时用 80）
+                var cap = Math.Min(CtxCapAbs,
+                    new[] { i > 0 && HasKw(merged[i - 1]) ? merged[i - 1].Length : CtxCapAbs,
+                            i < merged.Count - 1 && HasKw(merged[i + 1]) ? merged[i + 1].Length : CtxCapAbs }
+                        .Min());
+                var piece = merged[i].Length > cap ? merged[i][..cap] : merged[i];
+                if (total + piece.Length > limit) { truncated = true; break; }
+                sb.Append(piece);
+                total += piece.Length;
+            }
+        }
+        var result = sb.ToString();
+        if (truncated) result += $" ...（按关键词窗口截取，全文 {content.Length} 字）";
+        return result;
     }
 
     // ── 报告表格 ────────────────────────────────────────────────────
 
     private static string PassTable(List<JsonElement> items)
     {
-        var lines = new List<string> { "| 代码 | 名称 | 行业 | 加权分 | 关键理由 |", "|------|------|------|--------|----------|" };
+        var lines = new List<string> { "| 代码 | 名称 | 行业 | 加权分 | 时效 | 关键理由 |", "|------|------|------|--------|------|----------|" };
         lines.AddRange(items.Select(i =>
-            $"| {Str(i, "stock_code")} | {Str(i, "stock_name")} | {Str(i, "industry")} "
-            + $"| {Str(i, "weighted_score")} | {Clip(Str(i, "reason"), 50)} |"));
+        {
+            var days = Str(i, "signal_days");
+            var fresh = Str(i, "freshness");
+            var cell = days.Length > 0 ? $"{days}天 {fresh}" : (fresh.Length > 0 ? fresh : "—");
+            return $"| {Str(i, "stock_code")} | {Str(i, "stock_name")} | {Str(i, "industry")} "
+                + $"| {Str(i, "weighted_score")} | {cell} | {Clip(Str(i, "reason"), 50)} |";
+        }));
         return string.Join("\n", lines) + "\n";
     }
 

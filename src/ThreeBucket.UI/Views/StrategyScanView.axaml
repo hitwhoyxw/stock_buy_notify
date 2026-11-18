@@ -1,0 +1,76 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:data="using:Avalonia.Controls"
+             x:Class="ThreeBucket.UI.Views.StrategyScanView"
+             x:CompileBindings="False">
+  <DockPanel>
+    <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6" ItemSpacing="8" LineSpacing="4">
+      <TextBlock Text="策略扫描 T9" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+      <Button x:Name="RunBtn" Content="▶ 立即扫描" Background="#c0392b" Foreground="White" />
+      <Button x:Name="RefreshBtn" Content="刷新结果" />
+      <ComboBox x:Name="StratCombo" Width="240" />
+      <TextBox x:Name="SearchBox" Watermark="搜索代码/名称…" Width="180" />
+      <TextBlock x:Name="Stats" Foreground="#666" FontSize="12" VerticalAlignment="Center" />
+    </WrapPanel>
+
+    <DockPanel DockPanel.Dock="Bottom" Margin="6,0,6,6" Height="140">
+      <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
+        <TextBlock Text="运行日志" FontWeight="Bold" VerticalAlignment="Center" />
+        <Button x:Name="ClearLogBtn" Content="清除" />
+      </StackPanel>
+      <TextBox x:Name="Log" IsReadOnly="True" AcceptsReturn="True"
+               FontFamily="Consolas, Menlo, monospace" FontSize="11"
+               Background="#1e1e1e" Foreground="#d4d4d4" />
+    </DockPanel>
+
+    <Grid Margin="6">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="380" />
+        <ColumnDefinition Width="8" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+      </Grid.RowDefinitions>
+
+      <StackPanel Grid.Column="0" Grid.Row="0" Spacing="2" Margin="0,0,0,4">
+        <TextBlock Text="全市场扫描名单（仅 T9 全市场扫描 + 观察池使用）" FontWeight="Bold" />
+        <TextBlock Text="只扫描这里列出的策略；名单为空则不扫描。与「监控自选」里每只股票绑定的监控策略互不影响。文件：data/strategy_scan_ids.txt"
+                   FontSize="11" Foreground="#666" TextWrapping="Wrap" />
+      </StackPanel>
+      <TextBlock Grid.Column="2" Grid.Row="0" Text="扫描命中结果（按策略分组）"
+                 FontWeight="Bold" Margin="0,0,0,4" VerticalAlignment="Bottom" />
+
+      <WrapPanel Grid.Column="0" Grid.Row="1" Orientation="Horizontal" ItemSpacing="6" LineSpacing="4" Margin="0,0,0,4">
+        <ComboBox x:Name="AddCombo" Width="300" MaxDropDownHeight="420" />
+        <Button x:Name="AddBtn" Content="加入扫描" Background="#27ae60" Foreground="White" />
+        <Button x:Name="RemoveBtn" Content="移出扫描" Background="#e67e22" Foreground="White" />
+      </WrapPanel>
+
+      <data:DataGrid x:Name="StratGrid" Grid.Column="0" Grid.Row="2"
+                     AutoGenerateColumns="False" IsReadOnly="True" CanUserResizeColumns="True" HorizontalScrollBarVisibility="Auto"
+                     GridLinesVisibility="All" SelectionMode="Single">
+        <data:DataGrid.Columns>
+          <data:DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="50" />
+          <data:DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="110" />
+          <data:DataGridTextColumn Header="类型" Binding="{Binding Type}" Width="45" />
+          <data:DataGridTextColumn Header="优先级" Binding="{Binding Priority}" Width="50" />
+          <data:DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled}" Width="45" />
+          <data:DataGridTextColumn Header="动作" Binding="{Binding Action}" Width="220" />
+        </data:DataGrid.Columns>
+      </data:DataGrid>
+
+      <data:DataGrid x:Name="ResultGrid" Grid.Column="2" Grid.Row="1" Grid.RowSpan="2"
+                     AutoGenerateColumns="False" IsReadOnly="True" CanUserResizeColumns="True" HorizontalScrollBarVisibility="Auto"
+                     GridLinesVisibility="All" SelectionMode="Single">
+        <data:DataGrid.ContextMenu>
+          <ContextMenu>
+            <MenuItem x:Name="AddWatch" Header="加入监控自选" />
+          </ContextMenu>
+        </data:DataGrid.ContextMenu>
+      </data:DataGrid>
+    </Grid>
+  </DockPanel>
+</UserControl>

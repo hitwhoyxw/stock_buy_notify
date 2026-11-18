@@ -1,0 +1,129 @@
+{
+  "schema": "config-contract-v1",
+  "source": "config\\quality_value\\global.yaml",
+  "baseline": {
+    "version": "1.1",
+    "qualified_min": 70,
+    "watch_min": 65,
+    "t5_qualified_min": 70,
+    "t5_watch_min": 65,
+    "min_re": 0.08,
+    "gdp_g": 0.03,
+    "concurrency": 8,
+    "liquidity_days": 60,
+    "liquidity_avg_amount_min": 50000000,
+    "include_bj": true,
+    "list_years_min": 5,
+    "approach_fair_ratio": 0.9,
+    "p_opt_cap": 1.4,
+    "dispersion_flag": 0.6,
+    "pricing_spread_avg_max": 0.4,
+    "alert_dedupe_trading_days": 5,
+    "full_rescan_months": [
+      5,
+      9
+    ],
+    "full_rescan_day_to": 10,
+    "nov_light_day_to": 10,
+    "mos": [
+      {
+        "score_min": 85,
+        "discount": 0.15
+      },
+      {
+        "score_min": 80,
+        "discount": 0.2
+      },
+      {
+        "score_min": 75,
+        "discount": 0.25
+      },
+      {
+        "score_min": 70,
+        "discount": 0.3
+      }
+    ]
+  },
+  "shape": {
+    "type": "object",
+    "properties": {
+      "version": {
+        "type": "string"
+      },
+      "qualified_min": {
+        "type": "number"
+      },
+      "watch_min": {
+        "type": "number"
+      },
+      "t5_qualified_min": {
+        "type": "number"
+      },
+      "t5_watch_min": {
+        "type": "number"
+      },
+      "min_re": {
+        "type": "number"
+      },
+      "gdp_g": {
+        "type": "number"
+      },
+      "concurrency": {
+        "type": "number"
+      },
+      "liquidity_days": {
+        "type": "number"
+      },
+      "liquidity_avg_amount_min": {
+        "type": "number"
+      },
+      "include_bj": {
+        "type": "boolean"
+      },
+      "list_years_min": {
+        "type": "number"
+      },
+      "approach_fair_ratio": {
+        "type": "number"
+      },
+      "p_opt_cap": {
+        "type": "number"
+      },
+      "dispersion_flag": {
+        "type": "number"
+      },
+      "pricing_spread_avg_max": {
+        "type": "number"
+      },
+      "alert_dedupe_trading_days": {
+        "type": "number"
+      },
+      "full_rescan_months": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        }
+      },
+      "full_rescan_day_to": {
+        "type": "number"
+      },
+      "nov_light_day_to": {
+        "type": "number"
+      },
+      "mos": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "score_min": {
+              "type": "number"
+            },
+            "discount": {
+              "type": "number"
+            }
+          }
+        }
+      }
+    }
+  }
+}

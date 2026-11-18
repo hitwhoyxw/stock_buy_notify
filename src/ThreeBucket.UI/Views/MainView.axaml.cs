@@ -1,4 +1,8 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Layout;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using ThreeBucket.UI.Services;
 
@@ -23,6 +27,22 @@ public partial class MainView : UserControl
         _app.AutoSync.Status += msg => Dispatcher.UIThread.Post(() => SetStatus(msg));
 
         var tabs = Tabs;
+        // Fluent TabItem 默认 24px 字号 / 48 高，窄屏上 10 个标签会撑满半屏；按宽度切换紧凑样式
+        var compactTabs = new Style(x => x.OfType<TabItem>())
+        {
+            Setters =
+            {
+                new Setter(TemplatedControl.FontSizeProperty, 14.0),
+                new Setter(TemplatedControl.PaddingProperty, new Thickness(8, 4)),
+                new Setter(Layoutable.MinHeightProperty, 32.0),
+            },
+        };
+        SizeChanged += (_, e) =>
+        {
+            var narrow = e.NewSize.Width < Responsive.Breakpoint;
+            if (narrow && !tabs.Styles.Contains(compactTabs)) tabs.Styles.Add(compactTabs);
+            else if (!narrow) tabs.Styles.Remove(compactTabs);
+        };
         void Add(string header, Control content)
         {
             var item = new TabItem { Header = header, Content = content };
@@ -32,7 +52,14 @@ public partial class MainView : UserControl
         Add("📊 任务面板", new DashboardView(_app, SetStatus));
         Add("💼 持仓总览", new PortfolioView(_app, SetStatus));
         Add("📋 候选池", new CandidatesView(_app, SetStatus));
+        Add("📡 策略扫描", new StrategyScanView(_app, SetStatus));
+        Add("👀 观察池", new ObservationPoolView(_app, SetStatus));
+        Add("💎 优质股击球区", new QualityValueView(_app, SetStatus));
+        Add("📉 底部反转", new BottomReversalView(_app, SetStatus));
+        Add("📈 底部缓升", new SlowRiseView(_app, SetStatus));
         Add("🧠 LLM 分析", new AnalysisView(_app, SetStatus));
+        Add("📚 投资经验", new KnowledgeView(_app, SetStatus));
+        Add("🛡️ 纪律审核", new DisciplineView(_app, SetStatus));
         Add("🎯 监控自选", new WatchlistView(_app, SetStatus));
         Add("🧭 策略管理", new StrategyView(_app, SetStatus));
         Add("🤖 LLM 桥接", new LlmBridgeView(_app, SetStatus));

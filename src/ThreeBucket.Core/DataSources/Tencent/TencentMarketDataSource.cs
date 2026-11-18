@@ -50,6 +50,8 @@ public class TencentMarketDataSource : HttpMarketDataSourceBase
             TryDecimal(p, 10, v => q.Low = v);
             TryDecimal(p, 11, v => q.Bid1 = v);
             TryDecimal(p, 12, v => q.Ask1 = v);
+            // f[39] 市盈率TTM：腾讯对亏损股填 0/空，>0 才有效
+            TryDecimal(p, 39, v => { if (v > 0) q.PeTtm = v; });
             // 腾讯时间戳为 14 位数字（yyyyMMddHHmmss），真实响应中位置不固定，扫描匹配
             foreach (var f in p)
                 if (f.Length == 14 && long.TryParse(f, out _)

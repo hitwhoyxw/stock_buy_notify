@@ -1,10 +1,11 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:data="using:Avalonia.Controls"
+             xmlns:local="using:ThreeBucket.UI"
              x:Class="ThreeBucket.UI.Views.WatchlistView"
              x:CompileBindings="False">
   <DockPanel>
-    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="6">
+    <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6" ItemSpacing="8" LineSpacing="4">
       <TextBlock Text="🎯 监控自选" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
       <Button x:Name="AddBtn" Content="➕ 手动添加" Background="#27ae60" Foreground="White" />
       <Button x:Name="DelBtn" Content="🗑 移除" Background="#e74c3c" Foreground="White" />
@@ -14,13 +15,14 @@
       <ToggleButton x:Name="SysToggle" Content="💻 系统通知" VerticalAlignment="Center" />
       <Button x:Name="RefreshBtn" Content="🔄 拉行情+评估" Background="#3498db" Foreground="White" />
       <TextBlock Text="去设置页配置 webhook" Foreground="#999" FontSize="11" VerticalAlignment="Center" Margin="4,0,0,0" />
+      <TextBlock Text="监控策略按每只股票单独绑定（策略列），与全市场扫描名单无关" Foreground="#999" FontSize="11" VerticalAlignment="Center" />
       <TextBlock x:Name="Info" Foreground="#666" FontSize="12" VerticalAlignment="Center" />
-    </StackPanel>
+    </WrapPanel>
 
-    <Grid ColumnDefinitions="5*,Auto,4*">
+    <Grid ColumnDefinitions="5*,Auto,4*" local:Responsive.NarrowRows="3*,Auto,2*">
       <data:DataGrid x:Name="WatchGrid" Grid.Column="0" Margin="6,6,0,6" AutoGenerateColumns="False"
                      IsReadOnly="True" GridLinesVisibility="All" SelectionMode="Single"
-                     CanUserResizeColumns="True">
+                     CanUserResizeColumns="True" HorizontalScrollBarVisibility="Auto">
         <data:DataGrid.Columns>
           <data:DataGridTextColumn Header="代码" Binding="{Binding Code}" Width="90" />
           <data:DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="100" />
@@ -28,7 +30,7 @@
           <!-- 格式串必须含数字占位符；XAML 里需 \\% 双反斜杠：编译器会吃掉一层转义，
                只剩 \% 才是 .NET 的字面百分号（单层 \% 会被解析成 % 占位符使值×100，实测 +2.9% 显示成 +289.9） -->
           <data:DataGridTextColumn Header="涨跌%" Binding="{Binding ChangePct, StringFormat='+0.0\\%;-0.0\\%'}" Width="70" />
-          <data:DataGridTextColumn Header="策略" Binding="{Binding Strategies}" Width="*" />
+          <data:DataGridTextColumn Header="策略" Binding="{Binding Strategies}" Width="260" />
           <data:DataGridTextColumn Header="备注" Binding="{Binding Note}" Width="120" />
           <data:DataGridTextColumn Header="加入时间" Binding="{Binding AddedAt}" Width="150" />
         </data:DataGrid.Columns>
@@ -41,14 +43,14 @@
         <TextBlock DockPanel.Dock="Top" Text="触发历史" FontWeight="Bold" />
         <Button DockPanel.Dock="Bottom" x:Name="ClearBtn" Content="清空历史" HorizontalAlignment="Left" />
         <data:DataGrid x:Name="HistoryGrid" Margin="0,6,0,6" AutoGenerateColumns="False"
-                       IsReadOnly="True" GridLinesVisibility="All" CanUserResizeColumns="True">
+                       IsReadOnly="True" GridLinesVisibility="All" CanUserResizeColumns="True" HorizontalScrollBarVisibility="Auto">
           <data:DataGrid.Columns>
             <!-- 时间格式 yyyy-MM-dd HH:mm 共 16 字符，110px 会被截断，需 ≥140 -->
             <data:DataGridTextColumn Header="时间" Binding="{Binding Time}" Width="140" />
             <data:DataGridTextColumn Header="代码" Binding="{Binding Code}" Width="70" />
             <data:DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="100" />
             <!-- 策略名列宽不定：超长省略号截断 + 悬停看全文 -->
-            <data:DataGridTemplateColumn Header="策略" Width="*">
+            <data:DataGridTemplateColumn Header="策略" Width="220">
               <data:DataGridTemplateColumn.CellTemplate>
                 <DataTemplate>
                   <TextBlock Text="{Binding StrategyName}" VerticalAlignment="Center"

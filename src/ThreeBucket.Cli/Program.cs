@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using ThreeBucket.Core.Data;
 using ThreeBucket.Core.Services;
 
@@ -18,9 +18,15 @@ using ThreeBucket.Core.Services;
 //     --sync pull/push 失败不改变退出码（辅助操作，不阻断 CI）。
 
 var rest = Environment.GetCommandLineArgs().Skip(1).ToArray();
+if(rest.Contains("--financial-cache"))return await FinancialCacheCli.RunAsync(rest);
+if(rest.Contains("--config"))return await ConfigGovernanceCli.RunAsync(rest);
 string? taskArg = null, dataArg = null;
 var listOnly = false;
 var syncOps = new List<string>();   // "pull" / "push"，可各出现一次
+string? poolOp = null, poolCsv = null, poolDate = null;   // --pool refresh | --pool ingest <csv> [--date yyyy-MM-dd]
+string? brCmd = null, brCodes = null, brOut = null; int brDays = 0, brLimit = 0;   // --br scan|replay|backtest|selftest [--codes ..] [--days N] [--limit N] [--out dir]
+string? srCmd = null;   // --sr scan|backtest|selftest|diag（S28 底部反转缓升，共用 --codes/--days/--limit/--out）
+string? qvCmd = null;   // --qv recalc offline|refresh-financials|scan|daily|nov|cases|banks|trace|selftest|review|review-test|review-list|review-add|review-revoke|review-edit（S29 优质股击球区，共用 --codes）
 for (var i = 0; i < rest.Length; i++)
 {
     switch (rest[i])
@@ -38,6 +44,34 @@ for (var i = 0; i < rest.Length; i++)
             if (sa is not ("pull" or "push"))
             { Console.Error.WriteLine($"--sync 参数无效: {sa}（应为 pull 或 push）"); return 2; }
             syncOps.Add(sa); break;
+        case "--pool":
+            if (i + 1 >= rest.Length) { Console.Error.WriteLine("--pool 缺少参数 (refresh/ingest)"); return 2; }
+            poolOp = rest[++i].ToLowerInvariant();
+            if (poolOp is not ("refresh" or "ingest")) { Console.Error.WriteLine($"--pool 参数无效: {poolOp}"); return 2; }
+            if (poolOp == "ingest")
+            {
+                if (i + 1 >= rest.Length) { Console.Error.WriteLine("--pool ingest 缺少 csv 路径"); return 2; }
+                poolCsv = rest[++i];
+            }
+            break;
+        case "--date":
+            if (i + 1 >= rest.Length) { Console.Error.WriteLine("--date 缺少参数"); return 2; }
+            poolDate = rest[++i]; break;
+        case "--br":
+            if (i + 1 >= rest.Length) { Console.Error.WriteLine("--br 缺少子命令 (scan/replay/backtest/selftest)"); return 2; }
+            brCmd = rest[++i].ToLowerInvariant(); break;
+        case "--sr":
+            if (i + 1 >= rest.Length) { Console.Error.WriteLine("--sr 缺少子命令 (scan/backtest/selftest/diag)"); return 2; }
+            srCmd = rest[++i].ToLowerInvariant(); break;
+        case "--qv":
+            if (i + 1 >= rest.Length) { Console.Error.WriteLine("--qv 缺少子命令 (scan/daily/nov/cases/banks/trace/selftest/review/review-test/review-list/review-add/review-revoke/review-edit)"); return 2; }
+            qvCmd = rest[++i].ToLowerInvariant();
+            if(qvCmd=="recalc" && i+1<rest.Length && rest[i+1].Equals("offline",StringComparison.OrdinalIgnoreCase))i++;
+            break;
+        case "--codes": if (i + 1 >= rest.Length) { Console.Error.WriteLine("--codes 缺少参数"); return 2; } brCodes = rest[++i]; break;
+        case "--days": if (i + 1 >= rest.Length || !int.TryParse(rest[i + 1], out brDays)) { Console.Error.WriteLine("--days 需要整数"); return 2; } i++; break;
+        case "--limit": if (i + 1 >= rest.Length || !int.TryParse(rest[i + 1], out brLimit)) { Console.Error.WriteLine("--limit 需要整数"); return 2; } i++; break;
+        case "--out": if (i + 1 >= rest.Length) { Console.Error.WriteLine("--out 缺少参数"); return 2; } brOut = rest[++i]; break;
         default:
             Console.Error.WriteLine($"未知参数: {rest[i]}"); return 2;
     }
@@ -69,6 +103,18 @@ else
 Directory.CreateDirectory(dataDir);
 Console.WriteLine($"数据目录: {Path.GetFullPath(dataDir)}");
 
+// ── --br：S27 增强版底部反转（纯 C#），不需要其他服务 ──
+if (brCmd is not null)
+    return await ThreeBucket.Core.Services.BottomReversal.BrCli.RunAsync(dataDir, brCmd, brCodes, brDays, brLimit, brOut);
+
+// ── --sr：S28 底部反转缓升（纯 C#，Services/SlowRise），不需要其他服务 ──
+if (srCmd is not null)
+    return await ThreeBucket.Core.Services.SlowRise.SrCli.RunAsync(dataDir, srCmd, brCodes, brDays, brLimit, brOut);
+
+// ── --qv：S29 优质股击球区（C# 引擎 Services/QualityValue；Python 仅可选 Tushare 补充）──
+if (qvCmd is not null)
+    return await ThreeBucket.Core.Services.QualityValue.QvCli.RunAsync(dataDir, qvCmd, brCodes, brOut);
+
 // ── 组装服务与任务（与 UI AppState / Demo 相同的依赖图）──
 // 同花顺（扶摇）数据源：环境变量 THS_API_KEY（CI secrets）→ app_config.json 的 ThsApiKey（本地）；
 // 未配置时 IsConfigured=false，全部自动走免费源（腾讯/新浪/东财/中证官网），行为与接入前一致
@@ -85,7 +131,7 @@ var signals = new SignalLogStore(dataDir);
 var em = new EastMoneyClient(cacheDir, ths);
 var csi = new CsIndexClient(cacheDir, ths);
 var tencent = new TencentSnapshot();
-var emSnap = new EastMoneySnapshot();
+var emSnap = new EastMoneySnapshot(cacheDir);
 
 var tasks = new Dictionary<string, IBuiltinTask>(StringComparer.OrdinalIgnoreCase)
 {
@@ -97,6 +143,10 @@ var tasks = new Dictionary<string, IBuiltinTask>(StringComparer.OrdinalIgnoreCas
     ["T6"] = new CandidatePoolTask(dataDir, csi, em, tencent, klines, emSnap),
     ["T7"] = new BacktestTask(dataDir, em, klines),
     ["T8"] = new SignalLogTask(dataDir, signals, klines, calendar),
+    ["T9"] = new StrategyScanTask(dataDir, store, em, klines, emSnap),
+    ["T10"] = new BottomReversalTask(dataDir),   // S27 增强版底部反转（C# 引擎 Services/BottomReversal）
+    ["T11"] = new SlowRiseTask(dataDir),   // S28 底部反转缓升（C# 引擎 Services/SlowRise）
+    ["T12"] = new QualityValueTask(dataDir, em, quoteSvc, () => store.LoadConfig(), store),   // S29 优质股击球区
 };
 
 if (listOnly)
@@ -108,9 +158,9 @@ if (listOnly)
 }
 
 // 至少要有 --task 或 --sync，否则提示用法
-if (string.IsNullOrEmpty(taskArg) && syncOps.Count == 0)
+if (string.IsNullOrEmpty(taskArg) && syncOps.Count == 0 && poolOp is null)
 {
-    Console.Error.WriteLine("\n用法: ThreeBucket.Cli --task T1,T8 [--sync pull] [--sync push] [--data <dir>] | --list");
+    Console.Error.WriteLine("\n用法: ThreeBucket.Cli --task T1,T8|T12 [--sync pull] [--sync push] [--data <dir>] | --qv recalc offline|refresh-financials|scan|daily|nov|cases|banks|trace|selftest|review|review-test|review-list|review-add|review-revoke|review-edit | --list");
     return 2;
 }
 
@@ -183,6 +233,38 @@ if (taskArg is not null)
         Console.WriteLine($"{(r.Ok ? "✅" : "❌")} {key} {name}: {r.Summary}");
     failed = results.Count(x => !x.R.Ok);
     Console.WriteLine(failed == 0 ? "全部成功 ✓" : $"{failed} 个任务失败 ✗");
+}
+
+// ── --pool：观察池手动入池 / 刷新（T9 运行时已自动入池+刷新）──
+if (poolOp is not null)
+{
+    Console.WriteLine("\n──────── 👀 观察池 ────────");
+    try
+    {
+        var pool = new ObservationPool(dataDir, klines);
+        void PL(string m) => Console.WriteLine($"  {m}");
+        if (poolOp == "ingest")
+        {
+            DateTime? sd = null;
+            if (poolDate is not null)
+            {
+                if (!DateTime.TryParseExact(poolDate, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var d))
+                { Console.Error.WriteLine($"--date 格式应为 yyyy-MM-dd: {poolDate}"); return 2; }
+                sd = d;
+            }
+            var hits = ObservationPool.ReadScanCsv(poolCsv!);
+            PL($"读取 {poolCsv}：{hits.Count} 条命中");
+            var scanIds = store.ListStrategyScanIds();
+            PL($"全市场扫描名单（data/{DataStore.StrategyScanIdsFile}）：{(scanIds.Count == 0 ? "空 → 不入池" : string.Join(",", scanIds))}");
+            var ing = await pool.IngestAsync(hits, sd, PL, default, scanIds);
+            foreach (var s in ing.SkipReasons.Skip(30)) PL("  跳过 " + s);   // 前 30 条已由入池日志输出
+        }
+        var rf = await pool.RefreshAsync(PL);
+        foreach (var e in pool.Load().OrderByDescending(x => x.ReturnPct))
+            PL($"{e.Code} {e.Name,-8} {string.Join("/", e.StrategyIds),-8} 入选 {e.EntryDate} @{e.EntryPrice:0.00} 现价 {e.LastPrice:0.00} 涨跌 {e.ReturnPct:+0.00;-0.00;0.00}% 最高 {e.MaxGainPct:0.00}% 回撤 {e.MaxDrawdownPct:0.00}% 持有 {e.HoldDays} 到期 {e.ExpireDate} {e.Note}");
+        PL($"文件: {pool.PoolPath}");
+    }
+    catch (Exception ex) { Console.WriteLine($"  ❌ 观察池失败: {ex.Message}"); failed++; }
 }
 
 // ── --sync push：跑任务后推本地数据到 Supabase ──

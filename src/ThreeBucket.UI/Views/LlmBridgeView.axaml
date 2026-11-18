@@ -1,16 +1,17 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:ThreeBucket.UI"
              x:Class="ThreeBucket.UI.Views.LlmBridgeView"
              x:CompileBindings="False">
   <DockPanel>
-    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="6">
+    <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6" ItemSpacing="8" LineSpacing="4">
       <TextBlock Text="🤖 LLM 桥接" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
       <TextBlock Text="Skill:" VerticalAlignment="Center" />
       <ComboBox x:Name="SkillCombo" Width="240" />
       <Button x:Name="GenBtn" Content="⚡ 生成输入（运行脚本）" Background="#e67e22" Foreground="White" />
       <Button x:Name="AllBucketsBtn" Content="⚡ 全桶调用（T6A→C）" Background="#2980b9" Foreground="White" ToolTip.Tip="依次对 T6A/B/C 三桶调用 LLM，逐桶写入 skill_output" />
       <Button x:Name="CancelBtn" Content="✖ 取消" Background="#e74c3c" Foreground="White" IsVisible="False" ToolTip.Tip="取消正在进行的 LLM 调用（当前桶中断，已完成桶保留）" />
-    </StackPanel>
+    </WrapPanel>
 
     <!-- 进度条 + 实时状态：调用时显示「桶 [1/3] · 已用 0:45」与不确定/分步进度条，闲置时隐藏 -->
     <StackPanel x:Name="ProgressPanel" DockPanel.Dock="Top" Margin="6,0,6,4" IsVisible="False">
@@ -22,40 +23,35 @@
       <ProgressBar x:Name="ProgBar" Height="6" Minimum="0" Maximum="100" />
     </StackPanel>
 
-    <Grid DockPanel.Dock="Bottom">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*" />
-        <ColumnDefinition Width="*" />
-      </Grid.ColumnDefinitions>
+    <TextBlock DockPanel.Dock="Bottom" Margin="6"
+               Text="💡 使用方式：&#10;  1. 点击「生成输入」运行脚本生成 skill_input&#10;  2. 点击「复制」→ 粘贴到 Qoder 对话框 → 获取 LLM 分析&#10;  3. 将 LLM 回复粘贴到「LLM 输出」→ 点击「保存」&#10;  4. 外部 agent 可直接写入 skill_output 文件，点击「重载」查看"
+               Background="#e8f4fd" Padding="8" TextWrapping="Wrap" FontSize="12" Foreground="#555" />
 
+    <Grid ColumnDefinitions="*,*" local:Responsive.NarrowRows="*,*">
       <!-- 左：skill_input -->
       <DockPanel Grid.Column="0" Margin="6">
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="0,0,0,4">
+        <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" ItemSpacing="6" LineSpacing="4" Margin="0,0,0,4">
           <TextBlock Text="📥 LLM 输入 (skill_input)" FontWeight="Bold" VerticalAlignment="Center" />
           <TextBlock x:Name="InputInfo" Text="" Foreground="#999" FontSize="11" VerticalAlignment="Center" />
           <Button x:Name="CopyBtn" Content="📋 复制" />
           <Button x:Name="CallLlmBtn" Content="⚡ 调用 LLM" Background="#9b59b6" Foreground="White" />
           <Button x:Name="ReloadBtn" Content="🔄 重载" />
-        </StackPanel>
+        </WrapPanel>
         <TextBox x:Name="InputText" IsReadOnly="True" AcceptsReturn="True"
                  FontFamily="Consolas, Menlo, monospace" FontSize="12" Background="#f7f7f7" />
       </DockPanel>
 
       <!-- 右：skill_output -->
       <DockPanel Grid.Column="1" Margin="6">
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="0,0,0,4">
+        <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" ItemSpacing="6" LineSpacing="4" Margin="0,0,0,4">
           <TextBlock Text="📤 LLM 输出 (skill_output)" FontWeight="Bold" VerticalAlignment="Center" />
           <TextBlock x:Name="OutputInfo" Text="" Foreground="#999" FontSize="11" VerticalAlignment="Center" />
           <Button x:Name="ImportBtn" Content="📂 导入" />
           <Button x:Name="SaveBtn" Content="💾 保存" Background="#27ae60" Foreground="White" />
-        </StackPanel>
+        </WrapPanel>
         <TextBox x:Name="OutputText" AcceptsReturn="True" Watermark="将 LLM（Qoder）的分析结果粘贴到这里，然后点击「保存」。或点击「导入」加载外部 agent 写入的 skill_output 文件。"
                  FontFamily="Consolas, Menlo, monospace" FontSize="12" />
       </DockPanel>
     </Grid>
-
-    <TextBlock DockPanel.Dock="Bottom" Margin="6"
-               Text="💡 使用方式：&#10;  1. 点击「生成输入」运行脚本生成 skill_input&#10;  2. 点击「复制」→ 粘贴到 Qoder 对话框 → 获取 LLM 分析&#10;  3. 将 LLM 回复粘贴到右侧「LLM 输出」→ 点击「保存」&#10;  4. 外部 agent 可直接写入 skill_output 文件，点击「重载」查看"
-               Background="#e8f4fd" Padding="8" TextWrapping="Wrap" FontSize="12" Foreground="#555" />
   </DockPanel>
 </UserControl>

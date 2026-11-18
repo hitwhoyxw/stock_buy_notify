@@ -8,7 +8,7 @@ namespace ThreeBucket.UI.Dialogs;
 /// <summary>
 /// 单行/双行文本输入对话框。ShowAsync 返回 true 时 Value1/Value2 有效。
 /// </summary>
-public class InputDialog : Window
+public class InputDialog : DialogBase
 {
     private readonly TextBox _t1;
     private readonly TextBox _t2;
@@ -20,9 +20,7 @@ public class InputDialog : Window
         string? label2 = null, string? default2 = null)
     {
         Title = title;
-        Width = 380;
-        SizeToContent = SizeToContent.Height;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        DialogWidth = 380;
 
         _t1 = new TextBox { Text = default1 ?? "", Margin = new Thickness(0, 0, 0, 6), Watermark = label1 };
         _t2 = new TextBox { Text = default2 ?? "", IsVisible = label2 != null, Watermark = label2 ?? "" };
@@ -57,6 +55,4 @@ public class InputDialog : Window
         });
         Content = stack;
     }
-
-    public Task<bool> ShowAsync(Window owner) => ShowDialog<bool>(owner);
 }

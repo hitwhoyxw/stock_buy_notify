@@ -1,0 +1,808 @@
+{
+  "schema": "config-contract-v1",
+  "source": "data\\bottom_reversal_v1.json",
+  "baseline": {
+    "_comment": "增强版底部反转 V1（S27）参数文件。每次运行时重新读取，改这里无需重新打包。比例一律用小数（0.05=5%）。",
+    "strategy_id": "S27",
+    "strategy_name": "增强版底部反转V1",
+    "universe": {
+      "include_sh": true,
+      "include_sz": true,
+      "include_bj": true,
+      "exclude_st": true,
+      "exclude_delisting": true,
+      "min_listed_trading_days": 120,
+      "liquidity_window": 20,
+      "min_avg_amount": 50000000,
+      "min_valid_days": 15,
+      "universe_cache_days": 7
+    },
+    "data": {
+      "kline_bars": 260,
+      "concurrency": 8,
+      "retries": 4,
+      "use_incomplete_today_bar": false,
+      "market_close_time": "15:05",
+      "calendar_index_secid": "1.000985"
+    },
+    "model": {
+      "min_bars": 80,
+      "A1": {
+        "lookback": 60,
+        "bands": [
+          [
+            0.1,
+            2
+          ],
+          [
+            0.15,
+            4
+          ],
+          [
+            0.25,
+            5
+          ]
+        ]
+      },
+      "A2": {
+        "lookback": 40,
+        "swing_window": 3,
+        "min_separation": 5,
+        "bands": [
+          [
+            0.0,
+            3
+          ],
+          [
+            0.03,
+            6
+          ],
+          [
+            0.06,
+            8
+          ]
+        ],
+        "require_close_confirm": true
+      },
+      "A3": {
+        "window": 20,
+        "range_max": 0.2,
+        "converge_ratio": 0.9,
+        "retest_tol": 0.03,
+        "min_touches": 2,
+        "volume_shrink_ratio": 0.9
+      },
+      "breakout": {
+        "search_window": 10,
+        "episode_lookback": 20,
+        "prior_window": 20,
+        "event_min_volume_ratio": 1.2,
+        "event_min_change": 0.0
+      },
+      "B1": {
+        "avg_window": 20,
+        "bands": [
+          [
+            1.2,
+            3
+          ],
+          [
+            1.5,
+            6
+          ],
+          [
+            2.0,
+            8
+          ]
+        ],
+        "min_change": 0.03,
+        "close_pos_min": 0.7
+      },
+      "B2": {
+        "bands": [
+          [
+            0.0,
+            6
+          ],
+          [
+            0.01,
+            8
+          ],
+          [
+            0.02,
+            10
+          ]
+        ],
+        "top_requires_volume_ratio": 1.5
+      },
+      "B3": {
+        "long_upper_shadow": 0.4,
+        "good_upper_shadow_max": 0.25,
+        "good_min_breakout": 0.01,
+        "good_min_volume_ratio": 1.5,
+        "good_min_close_pos": 0.7,
+        "fallback_tol": 0.0
+      },
+      "C1": {
+        "fail_tol": 0.0,
+        "big_drop": -0.04,
+        "score_3d": 4,
+        "score_5d": 6,
+        "score_5d_rising": 8
+      },
+      "C2": {
+        "max_days": 10,
+        "min_days": 2,
+        "near_ratio": 1.0,
+        "ratio_70": 0.7,
+        "ratio_50": 0.5
+      },
+      "C3": {
+        "platform_touch_tol": 0.02,
+        "platform_break_tol": 0.01,
+        "ma10_touch_tol": 0.01,
+        "ma10_break_tol": 0.02,
+        "ma10_break_days": 2,
+        "min_days": 2
+      },
+      "D3": {
+        "flat": 0.005
+      },
+      "D4": {
+        "slope_days": 10,
+        "flat": 0.005
+      },
+      "E1": {
+        "period": 14,
+        "rise_lookback": 3,
+        "overheat": 75
+      },
+      "E2": {
+        "fast": 12,
+        "slow": 26,
+        "signal": 9,
+        "cross_lookback": 10
+      },
+      "E3": {
+        "up_down_window": 10,
+        "up_down_ratio": 1.2,
+        "v5_v20_for_3": 0.9,
+        "v5_v20_for_2": 1.0
+      },
+      "rating_bands": [
+        [
+          80,
+          "强反转"
+        ],
+        [
+          65,
+          "反转初期"
+        ],
+        [
+          50,
+          "反弹观察"
+        ],
+        [
+          0,
+          "暂不关注"
+        ]
+      ],
+      "levels": {
+        "observe_above_platform": 0.03,
+        "observe_below_platform": 0.01,
+        "risk_buffer": 0.03,
+        "chase_max_above_platform": 0.05
+      }
+    },
+    "abnormal": {
+      "consecutive_limit_days": 2,
+      "gap_up_pct": 0.03,
+      "gap_up_days": 2,
+      "volume_spike_ratio": 5.0,
+      "surge_5d": 0.15,
+      "surge_10d": 0.2,
+      "turnover_ratio": 4.0,
+      "turnover_abs": 0.2,
+      "ma20_deviation": 0.15
+    },
+    "market": {
+      "enabled": true,
+      "indexes": {
+        "沪深300": "1.000300",
+        "中证全指": "1.000985"
+      },
+      "ma20_flat": 0.003,
+      "amount_shrink_ratio": 0.8
+    },
+    "output": {
+      "top_n": 20,
+      "detail_top_n": 20,
+      "history_min_score": 50
+    },
+    "backtest": {
+      "commission": 0.00025,
+      "commission_min": 5.0,
+      "notional": 100000,
+      "stamp_tax_sell": 0.0005,
+      "transfer_fee": 1e-05,
+      "slippage": 0.001,
+      "hold_days": [
+        5,
+        10,
+        20,
+        40
+      ],
+      "stop_losses": [
+        0.05,
+        0.08,
+        0.1
+      ],
+      "trailing_stops": [
+        0.08,
+        0.1,
+        0.12
+      ],
+      "max_hold_for_stops": 40,
+      "entry_min_score": 50,
+      "retest_wait_min": 3,
+      "retest_wait_max": 5,
+      "retest_near_platform": 0.02,
+      "retest_volume_ratio": 0.7,
+      "oos_fraction": 0.4
+    }
+  },
+  "shape": {
+    "type": "object",
+    "properties": {
+      "_comment": {
+        "type": "string"
+      },
+      "strategy_id": {
+        "type": "string"
+      },
+      "strategy_name": {
+        "type": "string"
+      },
+      "universe": {
+        "type": "object",
+        "properties": {
+          "include_sh": {
+            "type": "boolean"
+          },
+          "include_sz": {
+            "type": "boolean"
+          },
+          "include_bj": {
+            "type": "boolean"
+          },
+          "exclude_st": {
+            "type": "boolean"
+          },
+          "exclude_delisting": {
+            "type": "boolean"
+          },
+          "min_listed_trading_days": {
+            "type": "number"
+          },
+          "liquidity_window": {
+            "type": "number"
+          },
+          "min_avg_amount": {
+            "type": "number"
+          },
+          "min_valid_days": {
+            "type": "number"
+          },
+          "universe_cache_days": {
+            "type": "number"
+          }
+        }
+      },
+      "data": {
+        "type": "object",
+        "properties": {
+          "kline_bars": {
+            "type": "number"
+          },
+          "concurrency": {
+            "type": "number"
+          },
+          "retries": {
+            "type": "number"
+          },
+          "use_incomplete_today_bar": {
+            "type": "boolean"
+          },
+          "market_close_time": {
+            "type": "string"
+          },
+          "calendar_index_secid": {
+            "type": "string"
+          }
+        }
+      },
+      "model": {
+        "type": "object",
+        "properties": {
+          "min_bars": {
+            "type": "number"
+          },
+          "A1": {
+            "type": "object",
+            "properties": {
+              "lookback": {
+                "type": "number"
+              },
+              "bands": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "tuple": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "A2": {
+            "type": "object",
+            "properties": {
+              "lookback": {
+                "type": "number"
+              },
+              "swing_window": {
+                "type": "number"
+              },
+              "min_separation": {
+                "type": "number"
+              },
+              "bands": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "tuple": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                }
+              },
+              "require_close_confirm": {
+                "type": "boolean"
+              }
+            }
+          },
+          "A3": {
+            "type": "object",
+            "properties": {
+              "window": {
+                "type": "number"
+              },
+              "range_max": {
+                "type": "number"
+              },
+              "converge_ratio": {
+                "type": "number"
+              },
+              "retest_tol": {
+                "type": "number"
+              },
+              "min_touches": {
+                "type": "number"
+              },
+              "volume_shrink_ratio": {
+                "type": "number"
+              }
+            }
+          },
+          "breakout": {
+            "type": "object",
+            "properties": {
+              "search_window": {
+                "type": "number"
+              },
+              "episode_lookback": {
+                "type": "number"
+              },
+              "prior_window": {
+                "type": "number"
+              },
+              "event_min_volume_ratio": {
+                "type": "number"
+              },
+              "event_min_change": {
+                "type": "number"
+              }
+            }
+          },
+          "B1": {
+            "type": "object",
+            "properties": {
+              "avg_window": {
+                "type": "number"
+              },
+              "bands": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "tuple": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                }
+              },
+              "min_change": {
+                "type": "number"
+              },
+              "close_pos_min": {
+                "type": "number"
+              }
+            }
+          },
+          "B2": {
+            "type": "object",
+            "properties": {
+              "bands": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "tuple": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                }
+              },
+              "top_requires_volume_ratio": {
+                "type": "number"
+              }
+            }
+          },
+          "B3": {
+            "type": "object",
+            "properties": {
+              "long_upper_shadow": {
+                "type": "number"
+              },
+              "good_upper_shadow_max": {
+                "type": "number"
+              },
+              "good_min_breakout": {
+                "type": "number"
+              },
+              "good_min_volume_ratio": {
+                "type": "number"
+              },
+              "good_min_close_pos": {
+                "type": "number"
+              },
+              "fallback_tol": {
+                "type": "number"
+              }
+            }
+          },
+          "C1": {
+            "type": "object",
+            "properties": {
+              "fail_tol": {
+                "type": "number"
+              },
+              "big_drop": {
+                "type": "number"
+              },
+              "score_3d": {
+                "type": "number"
+              },
+              "score_5d": {
+                "type": "number"
+              },
+              "score_5d_rising": {
+                "type": "number"
+              }
+            }
+          },
+          "C2": {
+            "type": "object",
+            "properties": {
+              "max_days": {
+                "type": "number"
+              },
+              "min_days": {
+                "type": "number"
+              },
+              "near_ratio": {
+                "type": "number"
+              },
+              "ratio_70": {
+                "type": "number"
+              },
+              "ratio_50": {
+                "type": "number"
+              }
+            }
+          },
+          "C3": {
+            "type": "object",
+            "properties": {
+              "platform_touch_tol": {
+                "type": "number"
+              },
+              "platform_break_tol": {
+                "type": "number"
+              },
+              "ma10_touch_tol": {
+                "type": "number"
+              },
+              "ma10_break_tol": {
+                "type": "number"
+              },
+              "ma10_break_days": {
+                "type": "number"
+              },
+              "min_days": {
+                "type": "number"
+              }
+            }
+          },
+          "D3": {
+            "type": "object",
+            "properties": {
+              "flat": {
+                "type": "number"
+              }
+            }
+          },
+          "D4": {
+            "type": "object",
+            "properties": {
+              "slope_days": {
+                "type": "number"
+              },
+              "flat": {
+                "type": "number"
+              }
+            }
+          },
+          "E1": {
+            "type": "object",
+            "properties": {
+              "period": {
+                "type": "number"
+              },
+              "rise_lookback": {
+                "type": "number"
+              },
+              "overheat": {
+                "type": "number"
+              }
+            }
+          },
+          "E2": {
+            "type": "object",
+            "properties": {
+              "fast": {
+                "type": "number"
+              },
+              "slow": {
+                "type": "number"
+              },
+              "signal": {
+                "type": "number"
+              },
+              "cross_lookback": {
+                "type": "number"
+              }
+            }
+          },
+          "E3": {
+            "type": "object",
+            "properties": {
+              "up_down_window": {
+                "type": "number"
+              },
+              "up_down_ratio": {
+                "type": "number"
+              },
+              "v5_v20_for_3": {
+                "type": "number"
+              },
+              "v5_v20_for_2": {
+                "type": "number"
+              }
+            }
+          },
+          "rating_bands": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "tuple": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ],
+              "items": {
+                "type": "oneOf",
+                "choices": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          },
+          "levels": {
+            "type": "object",
+            "properties": {
+              "observe_above_platform": {
+                "type": "number"
+              },
+              "observe_below_platform": {
+                "type": "number"
+              },
+              "risk_buffer": {
+                "type": "number"
+              },
+              "chase_max_above_platform": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "abnormal": {
+        "type": "object",
+        "properties": {
+          "consecutive_limit_days": {
+            "type": "number"
+          },
+          "gap_up_pct": {
+            "type": "number"
+          },
+          "gap_up_days": {
+            "type": "number"
+          },
+          "volume_spike_ratio": {
+            "type": "number"
+          },
+          "surge_5d": {
+            "type": "number"
+          },
+          "surge_10d": {
+            "type": "number"
+          },
+          "turnover_ratio": {
+            "type": "number"
+          },
+          "turnover_abs": {
+            "type": "number"
+          },
+          "ma20_deviation": {
+            "type": "number"
+          }
+        }
+      },
+      "market": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "indexes": {
+            "type": "object",
+            "properties": {
+              "沪深300": {
+                "type": "string"
+              },
+              "中证全指": {
+                "type": "string"
+              }
+            }
+          },
+          "ma20_flat": {
+            "type": "number"
+          },
+          "amount_shrink_ratio": {
+            "type": "number"
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "top_n": {
+            "type": "number"
+          },
+          "detail_top_n": {
+            "type": "number"
+          },
+          "history_min_score": {
+            "type": "number"
+          }
+        }
+      },
+      "backtest": {
+        "type": "object",
+        "properties": {
+          "commission": {
+            "type": "number"
+          },
+          "commission_min": {
+            "type": "number"
+          },
+          "notional": {
+            "type": "number"
+          },
+          "stamp_tax_sell": {
+            "type": "number"
+          },
+          "transfer_fee": {
+            "type": "number"
+          },
+          "slippage": {
+            "type": "number"
+          },
+          "hold_days": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "stop_losses": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "trailing_stops": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "max_hold_for_stops": {
+            "type": "number"
+          },
+          "entry_min_score": {
+            "type": "number"
+          },
+          "retest_wait_min": {
+            "type": "number"
+          },
+          "retest_wait_max": {
+            "type": "number"
+          },
+          "retest_near_platform": {
+            "type": "number"
+          },
+          "retest_volume_ratio": {
+            "type": "number"
+          },
+          "oos_fraction": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

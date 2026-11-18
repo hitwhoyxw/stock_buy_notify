@@ -21,6 +21,10 @@
   <!-- Android：只打真机主流 ABI，APK 体积约减半；需跑模拟器时追加 x86_64 -->
   <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
     <AndroidRuntimeIdentifiers>arm64-v8a;armeabi-v7a</AndroidRuntimeIdentifiers>
+    <!-- Debug 默认走 Fast Deployment（程序集不进 APK、靠 -t:Install 单独推送），
+         把 Debug APK 直接 adb install / 发给手机装会启动即闪退：
+         "No assemblies found ... Assuming this is part of Fast Deployment"。强制嵌入让 APK 自包含。 -->
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
   </PropertyGroup>
 
   <ItemGroup>

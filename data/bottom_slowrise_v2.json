@@ -1,0 +1,352 @@
+{
+  "version": "2.0",
+  "strategy_name": "S28 底部反转缓升 精简版 v2.0（+ t37 修订）",
+  "spec": "说明书 v2.0（t38u 精简版）+ t37 修订（④ 有序 a/b/c、观察池有效期自 D0 起 30 日、重点观察）",
+  "universe": {
+    "on": {
+      "st": true,
+      "list_days": true,
+      "amount": true,
+      "market_cap": false,
+      "suspend": true,
+      "one_word": false,
+      "price": false
+    },
+    "min_list_days": 250,
+    "min_avg_amount_20": 50000000,
+    "min_market_cap": 3000000000,
+    "max_suspend_days_20": 0,
+    "max_one_word_limit_days_20": 2,
+    "min_price": 2.0,
+    "exclude_boards": [],
+    "universe_cache_days": 7
+  },
+  "data": {
+    "adjust": "ratio",
+    "bars_scan": 420,
+    "concurrency": 8,
+    "retries": 4,
+    "use_incomplete_today_bar": false,
+    "market_close_time": "15:05",
+    "calendar_index_secid": "1.000300",
+    "benchmark2_secid": "1.000852"
+  },
+  "l1": {
+    "on": {
+      "dd": true,
+      "high_age": false,
+      "days_since_low": true,
+      "rebound": true,
+      "low_lift": true,
+      "range_pos": false
+    },
+    "dd_min": 0.4,
+    "high_window": 250,
+    "low_window": 60,
+    "high_to_now_min_days": 60,
+    "days_since_low": [
+      8,
+      40
+    ],
+    "rebound_range": [
+      0.0,
+      0.3
+    ],
+    "low_lift": 1.02,
+    "low_lift_mode": "all_after_low",
+    "range_pos_max": 0.4
+  },
+  "l2": {
+    "on": {
+      "vol": true,
+      "pct": true,
+      "close_pos": false,
+      "d0_age": false,
+      "hold_low": true,
+      "vol_after": false
+    },
+    "vol_mult": 2.0,
+    "vma_window": 20,
+    "pct_range": [
+      0.03,
+      0.095
+    ],
+    "close_pos_min": 0.6,
+    "d0_max_age": 20,
+    "bonus": {
+      "dryup_window": 10,
+      "dryup_vma": 60,
+      "dryup_ratio": 0.6,
+      "pullback_touch": 0.01
+    }
+  },
+  "l3": {
+    "on": {
+      "big_move": true,
+      "sigma": false,
+      "max_drop": false,
+      "er": true,
+      "r2": false,
+      "gain": true,
+      "up_candle": false,
+      "above_ma20": true,
+      "atr": false
+    },
+    "window_mode": "since_low",
+    "window": 20,
+    "min_window": 5,
+    "big_move_pct": 0.06,
+    "big_move_max_days": 1,
+    "sigma_max": 0.025,
+    "max_single_drop": -0.05,
+    "er_min": 0.3,
+    "r2_min": 0.5,
+    "gain_range": [
+      0.03,
+      0.25
+    ],
+    "up_candle_ratio_min": 0.5,
+    "above_ma20_ratio_min": 0.6,
+    "atr_ratio_max": 0.04,
+    "watch_min_count": 9,
+    "buy_min_count": 9,
+    "buy_mandatory": [],
+    "_note": "v2.0 ③ 只保留三项：大波动天数≤1；ER≥0.30 且窗口涨幅 3%~25%；站上MA20占比≥60%。其余五项默认关闭（关闭视为通过），所以“满足 9 项” = 开启的项全部通过"
+  },
+  "l4": {
+    "mode": "ordered",
+    "ma_short": 10,
+    "ma_long": 30,
+    "macd_cross_from_d0_offset": -3,
+    "macd_diff_ratio_max": 0.01,
+    "ma_cross_max_age": 3,
+    "require_order": true,
+    "enable_a": true,
+    "enable_b": true,
+    "enable_c": true,
+    "macd": [
+      12,
+      26,
+      9
+    ],
+    "ma_long_slope_days": 3,
+    "_legacy": "以下只在 mode=legacy（v1 / v2.0 原文 ④ 对照）时使用",
+    "on": {
+      "ma_cross": true,
+      "above_ma_long": true,
+      "ma_long_slope": true,
+      "macd_cross": true,
+      "macd_bottom": true,
+      "macd_hist": true,
+      "resonance": true
+    },
+    "cross_lookback": 5,
+    "cross_gap_max": 3
+  },
+  "watch": {
+    "valid_days_from_d0": 30,
+    "valid_days": 20,
+    "require_no_double_cross": false,
+    "allow_same_day_buy": true
+  },
+  "buy": {
+    "on": {
+      "max_pct": true,
+      "max_ma20_dev": true,
+      "vma5": false,
+      "no_limit_up_close": true,
+      "score_gate": false
+    },
+    "max_pct": 0.07,
+    "max_ma20_dev": 0.12,
+    "vma5_vs_vma20_min": 0.8,
+    "score_min": 70,
+    "market_filter": {
+      "enabled": true,
+      "logic": "ma",
+      "ma": 60,
+      "ret_days": 5,
+      "ret_min": -0.05
+    },
+    "rank_by": "er"
+  },
+  "exit": {
+    "on": {
+      "S1": true,
+      "S2": false,
+      "S3": true,
+      "S4": true,
+      "S5": false,
+      "S6": true,
+      "S7": true,
+      "S8": false
+    },
+    "stop_mode": "lower_capped",
+    "hard_stop": 0.08,
+    "max_stop": 0.12,
+    "atr_mult": 2.5,
+    "atr_apply_cap": true,
+    "struct_low_days": 10,
+    "trail_activate": 0.15,
+    "trail_drawdown": 0.1,
+    "ma20_break_days": 2,
+    "big_drop_pct": -0.05,
+    "big_drop_vol_mult": 2.0,
+    "time_stop_days": 20,
+    "time_stop_min_gain": 0.03
+  },
+  "reduce": {
+    "on": {
+      "R1": false,
+      "R2": false,
+      "R3": false,
+      "R4": false
+    },
+    "r1_ma20_dev": 0.25,
+    "r2_gain": 0.3,
+    "r2_vol_mult": 2.0,
+    "r2_shadow_body": 2.0,
+    "r2_pct_max": 0.01,
+    "r3_dif_ratio": 0.03,
+    "mode": "record",
+    "sell_fraction": 0.5,
+    "r4_mode": "raise_stop",
+    "s8_include_r4": false
+  },
+  "position": {
+    "sizing": "risk_budget",
+    "initial_capital": 1000000,
+    "risk_per_trade": 0.008,
+    "max_position_pct": 0.1,
+    "equal_weight_pct": 0.1,
+    "max_positions": 10,
+    "max_new_per_day": 3,
+    "industry_cap_enabled": false,
+    "industry_max": 3,
+    "cooldown_days": 10,
+    "weak_market_mode": "off",
+    "weak_ma": 60,
+    "weak_slope_days": 5,
+    "lot": 100
+  },
+  "cost": {
+    "commission": 0.00025,
+    "commission_min": 5,
+    "stamp_tax_sell": 0.0005,
+    "slippage": 0.001,
+    "transfer_fee": 0
+  },
+  "score": {
+    "_note": "评分只做诊断（报告分档看单调性），默认不参与选股（buy.on.score_gate=false），BUY 按 ER 排序。端点 = 作者 t37 给的初始值，不调参。[x0,x1,y0,y1] 线性插值，区间外取端点；低于起点的 DD/ER/R²/σ/放量/收盘位置记 0 分",
+    "scheme": "t37",
+    "dd": [
+      0.4,
+      0.7,
+      8,
+      15
+    ],
+    "vol_ratio": [
+      2.0,
+      4.0,
+      6,
+      12
+    ],
+    "close_pos": [
+      0.6,
+      1.0,
+      2,
+      4
+    ],
+    "dryup_points": 2,
+    "pullback_points": 2,
+    "er": [
+      0.3,
+      0.6,
+      3,
+      8
+    ],
+    "r2": [
+      0.5,
+      0.9,
+      3,
+      6
+    ],
+    "sigma": [
+      0.025,
+      0.01,
+      2,
+      6
+    ],
+    "stand_days": [
+      0,
+      5,
+      0,
+      8
+    ],
+    "ma20_up_points": 4,
+    "ma60_flat_points": 3,
+    "ma60_flat_tol": 0.002,
+    "macd_dif": [
+      0.01,
+      -0.03,
+      3,
+      9
+    ],
+    "hist_expand_points": 3,
+    "rebound": [
+      0.3,
+      0.05,
+      0,
+      8
+    ],
+    "ma20_dev": [
+      0.12,
+      0.0,
+      0,
+      7
+    ]
+  },
+  "scan": {
+    "bootstrap_days": 60
+  },
+  "selftest": {
+    "bars": 1500
+  },
+  "backtest": {
+    "start": "2015-01-01",
+    "train_end": "2021-12-31",
+    "warm_bars": 300,
+    "sample_size": 400,
+    "include_codes": [],
+    "use_market_cap": false,
+    "forward_days": [
+      5,
+      10,
+      20,
+      40
+    ],
+    "ablation": true,
+    "sample_method": "industry_stratified_random",
+    "seed": 20261110,
+    "min_buy_per_year": 20,
+    "always_relax": false,
+    "out_subdir": "backtest_v2",
+    "param_scan": true
+  },
+  "revisions_t37": [
+    "④ 改为有序三段（各自可开关）：a. [D0−3日, 今天] 内 DIF 上穿 DEA 且金叉日 DIF/C≤1%，取最近一次=T_macd；b. T_macd 当日或之后 MA10 上穿 MA30 且该金叉距今≤3日；c. 当前 DIF>DEA 且 C>MA30",
+    "观察 = 池+①②③ 满足、④ 未完成；a 已出现 b 未出现 = “重点观察”；买入 = ①②③ + a、b、c",
+    "观察池有效期 = 自 D0 起 30 个交易日（watch.valid_days_from_d0），跌破 D0 最低价仍移出",
+    "评分端点改用作者给的一套；默认无评分门槛，按 ER 排序，评分只输出、做单调性检查",
+    "均线周期在回测内按变体重算（5/20、10/30、10/60，10/60 另测有效期 40 日）"
+  ],
+  "revisions_v2": [
+    "股票池：非ST、上市≥250日、20日均成交额≥5000万、20日无停牌（关闭：总市值、一字板、股价）",
+    "①：DD≥40%、P_low 在 8~40 日前、P_low 后每日最低≥P_low×1.02、反弹≤30%（关闭：高点距今、250日区间位置、反弹下限）",
+    "②：D0 在 P_low 之后、量≥前20日均量2倍、涨幅3%~9.5%、D0后收盘不破D0最低（关闭：收盘位置、D0距今上限、启动后缩量）",
+    "③：三项（关闭：σ、最大单日跌幅、R²、阳线占比、ATR）",
+    "买入附加：当日涨幅<7%、C/MA20−1≤12%、收盘未涨停；大盘过滤 沪深300 C≥MA60 否则只记录（关闭：VMA5、评分门槛、弱市减半）；同日按 ER 取前 3",
+    "卖出五条（主因顺序 1→4→3→2→5）：止损（min(买入×0.92, D0最低)，最宽−12%）、移动止盈 15%/10%、连续2日C<MA20、放量大阴 −5%&2倍量、时间止损 20日/<3%/未新高；无 REDUCE、无均线死叉、无 S8",
+    "仓位：风险预算 0.8%/止损幅度，单只≤10%，最多10只，日新开≤3，冷却10日（关闭：同行业上限）"
+  ]
+}

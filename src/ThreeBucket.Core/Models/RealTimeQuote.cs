@@ -32,6 +32,9 @@ public class RealTimeQuote
     /// <summary>行情时间戳（交易所时间）。解析失败时为 null。</summary>
     public DateTime? Timestamp { get; set; }
 
+    /// <summary>市盈率 TTM。仅腾讯源提供（f[39]）；同花顺/新浪未解析时为 null。</summary>
+    public decimal? PeTtm { get; set; }
+
     /// <summary>本条行情来自哪个数据源。</summary>
     public MarketDataSourceId Source { get; set; }
 }

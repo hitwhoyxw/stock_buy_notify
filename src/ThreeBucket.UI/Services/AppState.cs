@@ -26,6 +26,54 @@ public class AppState
     public TaskSchedulerEngine SchedulerEngine { get; }
     public AutoSyncService AutoSync { get; }
 
+    /// <summary>
+    /// 投资经验知识库（trading-system/09_投资经验知识库.md）。懒加载 + 变更检测：
+    /// 用户直接编辑 md 后切回「投资经验」页即自动重载，无需重启。
+    /// </summary>
+    public InvestmentKnowledgeBase KnowledgeBase => _kb ??= LoadKnowledgeBase();
+
+    private InvestmentKnowledgeBase? _kb;
+    private DateTime _kbStamp;
+    private string _kbStampPath = "";
+
+    /// <summary>
+    /// 交易纪律规则集（知识库 DISCIPLINE 类别解析而来）。与知识库同步失效：
+    /// 改了 md 里的纪律条款后，切回审核页即生效。
+    /// </summary>
+    public DisciplineRuleSet DisciplineRules => _rules ??= DisciplineRuleSet.FromKnowledgeBase(KnowledgeBase);
+
+    private DisciplineRuleSet? _rules;
+
+    /// <summary>纪律审核事实采集器（行情 + 指数 + 交易日历）。</summary>
+    public DisciplineFactsCollector DisciplineFacts => _facts ??= new DisciplineFactsCollector(Quotes, Klines, Calendar);
+
+    private DisciplineFactsCollector? _facts;
+
+    private InvestmentKnowledgeBase LoadKnowledgeBase()
+    {
+        var kb = InvestmentKnowledgeBase.LoadDefault(ProjectRoot);
+        _kbStampPath = kb.SourcePath;
+        _kbStamp = kb.SourcePath.Length > 0 && kb.SourcePath != "embedded" && File.Exists(kb.SourcePath)
+            ? File.GetLastWriteTimeUtc(kb.SourcePath)
+            : DateTime.MinValue;
+        return kb;
+    }
+
+    /// <summary>文件有更新（或从未成功加载）则重载知识库；返回是否发生了重载。</summary>
+    public bool RefreshKnowledgeBaseIfChanged()
+    {
+        var path = _kbStampPath;
+        var fileChanged = path.Length > 0 && path != "embedded" && File.Exists(path)
+                          && File.GetLastWriteTimeUtc(path) != _kbStamp;
+        if (_kb is null || !_kb.IsLoaded || fileChanged)
+        {
+            _kb = LoadKnowledgeBase();
+            _rules = null;   // 知识库换了，纪律规则集必须重新解析（否则改 md 不生效）
+            return true;
+        }
+        return false;
+    }
+
     public AppState()
     {
         ProjectRoot = DetectProjectRoot();
@@ -45,7 +93,7 @@ public class AppState
         EastMoney = new EastMoneyClient(cacheDir, ths);
         CsIndex = new CsIndexClient(cacheDir, ths);
         Tencent = new TencentSnapshot();
-        EmSnapshot = new EastMoneySnapshot();
+        EmSnapshot = new EastMoneySnapshot(cacheDir);
         BuiltinTasks = new Dictionary<string, IBuiltinTask>(StringComparer.OrdinalIgnoreCase)
         {
             ["T1"] = new DailyRiskTask(Store, Quotes, Klines, Calendar, Signals, CsIndex, EastMoney),
@@ -56,6 +104,10 @@ public class AppState
             ["T6"] = new CandidatePoolTask(DataDir, CsIndex, EastMoney, Tencent, Klines, EmSnapshot),
             ["T7"] = new BacktestTask(DataDir, EastMoney, Klines),
             ["T8"] = new SignalLogTask(DataDir, Signals, Klines, Calendar),
+            ["T9"] = new StrategyScanTask(DataDir, Store, EastMoney, Klines, EmSnapshot),
+            ["T10"] = new BottomReversalTask(DataDir),   // S27 增强版底部反转（C# 引擎 Services/BottomReversal）
+            ["T11"] = new SlowRiseTask(DataDir),   // S28 底部反转缓升（C# 引擎 Services/SlowRise）
+            ["T12"] = new QualityValueTask(DataDir, EastMoney, Quotes, () => Config, Store),   // S29 优质股击球区
         };
         // Func<AppConfig> 实时取最新配置：设置页保存后调度行为立即生效，无需重启
         SchedulerEngine = new TaskSchedulerEngine(() => Config, BuiltinTasks, DataDir);

@@ -1,6 +1,7 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text;
 using Avalonia.Controls;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using ThreeBucket.Core.Services;
 using ThreeBucket.UI.Dialogs;
@@ -115,6 +116,10 @@ public partial class LlmBridgeView : UserControl, IRefreshable
         };
         try
         {
+            var sharedCli=Path.Combine(AppContext.BaseDirectory,"cli","ThreeBucket.Cli.exe");
+            if(File.Exists(sharedCli))psi.Environment["THREEBUCKET_FINANCIAL_CLI"]=sharedCli;
+            psi.Environment["THREEBUCKET_FINANCIAL_DATA"]=_app.DataDir;
+            _status("财务输入仅复用C#共享缓存；缺失不会静默下载。行情/公告仍走原有独立流程。");
             using var proc = Process.Start(psi)!;
             var err = await proc.StandardError.ReadToEndAsync();
             await proc.WaitForExitAsync();
@@ -153,6 +158,9 @@ public partial class LlmBridgeView : UserControl, IRefreshable
     /// → 直接写 skill_output 文件。不碰按钮状态、不更新右侧输出框（由调用方决定是否刷新视图）。
     /// 未配置/缺输入/缺指令文件提前拦住，不发空请求。cancellationToken 传入 LlmClient 支持取消。
     /// 返回 (是否成功, 状态文案)；取消时返回 (false, "已取消")，不抛异常。
+    ///
+    /// T4C 特殊：输入可能达 MB 级（500 只票 × 预告+活动记录正文），单请求必超模型上下文
+    /// 或撞 5 分钟超时 → 自动分批（SplitT4Input），逐批调用后合并 JSON 写盘。
     /// </summary>
     private async Task<(bool Ok, string Message)> RunOneAsync(SkillDef s, CancellationToken ct)
     {
@@ -170,12 +178,216 @@ public partial class LlmBridgeView : UserControl, IRefreshable
             return (false, $"[{s.Key}] skill 指令文件不存在: skills/{s.Prompt}");
         var instruction = await File.ReadAllTextAsync(promptPath, new UTF8Encoding(false));
 
+        // T4C：输入超阈值 → 分批跑（每批独立请求，最后合并 JSON 数组）
+        if (s.Key == "T4C" && input.Length > T4BatchThresholdChars)
+            return await RunT4BatchedAsync(s, llm, instruction, input, ct);
+
         var message = instruction + "\n\n---\n\n" + input;
         var (ok, text) = await llm.ChatAsync(message, ct);
         if (ct.IsCancellationRequested) return (false, "已取消");
         if (!ok) return (false, $"[{s.Key}] LLM 调用失败: {text}");
         if (!_app.Store.SaveText(s.Output, text)) return (false, $"[{s.Key}] 保存 skill_output 失败");
         return (true, $"✓ {s.Key} 分析完成，已写入 data/{s.Output}");
+    }
+
+    // ── T4C 分批调用 ──────────────────────────────────────────────
+
+    /// <summary>超过此字符数的 T4C 输入自动分批（~40 万 token 上下的单请求会超上下文/超时）。</summary>
+    private const int T4BatchThresholdChars = 200_000;
+
+    /// <summary>每批目标字符数（约 6-8 万 token，主流模型 128K 上下文内 comfortably）。</summary>
+    private const int T4BatchTargetChars = 250_000;
+
+    /// <summary>
+    /// 按 `=== 代码 · 名称` 单票块切分输入。返回 (header, blocks)：header 含板块热度榜等全局信息，
+    /// 每批都要带上（LLM 需要板块热度做交叉印证）。
+    /// </summary>
+    internal static (string Header, List<string> Blocks) SplitT4Input(string input)
+    {
+        var headerEnd = input.IndexOf("=== ", StringComparison.Ordinal);
+        var header = headerEnd > 0 ? input[..headerEnd] : "";
+        var blocks = new List<string>();
+        var rest = headerEnd > 0 ? input[headerEnd..] : input;
+
+        var parts = rest.Split("=== ");
+        // parts[0] 已并入 header（或为空）；其余每段以 "600256 · ..." 开头，
+        // 但 "=== " 也可能出现在正文里——用"行首 === 数字代码"校验
+        foreach (var p in parts)
+        {
+            if (p.Length == 0) continue;
+            var nl = p.IndexOf('\n');
+            var first = nl > 0 ? p[..nl] : p;
+            if (first.Length >= 6 && char.IsDigit(first[0]) && first[..6].All(char.IsDigit))
+                blocks.Add(p);
+        }
+        return (header, blocks);
+    }
+
+    /// <summary>
+    /// 分批调 LLM 判定 T4C，合并各批 JSON 数组写盘。
+    /// 单批失败不中断后续批（结果按批落盘到 part 文件，重试只补失败批）；
+    /// 全部完成后合并 → data/skill_output_T4C.md。
+    /// </summary>
+    private async Task<(bool Ok, string Message)> RunT4BatchedAsync(
+        SkillDef s, LlmClient llm, string instruction, string input, CancellationToken ct)
+    {
+        var (header, blocks) = SplitT4Input(input);
+        if (blocks.Count == 0)
+            return (false, "[T4C] 输入中未解析出单票块，无法分批");
+
+        // 分批：按目标字符数贪心装箱（单票块不跨批）
+        var batches = new List<List<string>>();
+        var cur = new List<string>();
+        var curLen = 0;
+        foreach (var b in blocks)
+        {
+            if (cur.Count > 0 && curLen + b.Length > T4BatchTargetChars)
+            {
+                batches.Add(cur);
+                cur = new List<string>();
+                curLen = 0;
+            }
+            cur.Add(b);
+            curLen += b.Length;
+        }
+        if (cur.Count > 0) batches.Add(cur);
+
+        _status($"[T4C] 输入 {input.Length / 1024}KB / {blocks.Count} 只 → 分 {batches.Count} 批"
+            + $"（每批 ≤{T4BatchTargetChars / 1000}KB，逐批调用）");
+
+        // part 文件：data/.t4_parts/part_{i}.md —— 已成功的批跳过（断点续跑）
+        var partDir = Path.Combine(_app.ProjectRoot, "data", ".t4_parts");
+        Directory.CreateDirectory(partDir);
+
+        var okCount = 0;
+        for (var i = 0; i < batches.Count; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var partFile = Path.Combine(partDir, $"part_{i}.md");
+            if (File.Exists(partFile))
+            {
+                _status($"[T4C] [{i + 1}/{batches.Count}] 已有本批结果，跳过（断点续跑）");
+                okCount++;
+                continue;
+            }
+
+            // 重组与原文格式一致：header 后每块以 "\n=== " 接续（原文块间是 "\n\n=== "，
+            // split 时首块把 "=== " 吃进去了，故这里首块也补前缀）
+            var batchInput = header + "=== " + string.Join("\n\n=== ", batches[i]);
+            _batchIndex = i;
+            SetProgressLabel($"⏳ [批 {i + 1}/{batches.Count}] 调用中（本批 {batches[i].Count} 只）");
+            _status($"⏳ [T4C] 批 {i + 1}/{batches.Count} 调用中（{batches[i].Count} 只）…");
+            _sw.Restart();
+
+            var message = instruction + "\n\n---\n\n" + batchInput;
+            var (ok, text) = await llm.ChatAsync(message, ct);
+            if (ct.IsCancellationRequested) return (false, $"已取消（完成 {okCount}/{batches.Count} 批，"
+                + "重试将从断点续跑）");
+            if (!ok)
+            {
+                _status($"[T4C] 批 {i + 1}/{batches.Count} 失败: {text}");
+                continue;   // 单批失败不中断，继续下一批
+            }
+
+            File.WriteAllText(partFile, text, new UTF8Encoding(false));
+            okCount++;
+            SetProgressDetail($"✓ 批 {i + 1}/{batches.Count} 完成");
+            _status($"✓ [T4C] 批 {i + 1}/{batches.Count} 完成（{batches[i].Count} 只）");
+        }
+
+        if (okCount < batches.Count)
+            return (false, $"[T4C] {okCount}/{batches.Count} 批完成（失败批已跳过，"
+                + "重试将从断点续跑；全部完成后才写正式输出）");
+
+        // ── 合并各批 JSON 数组 → skill_output_T4C.md ──
+        var merged = new List<string>();
+        for (var i = 0; i < batches.Count; i++)
+        {
+            var raw = File.ReadAllText(Path.Combine(partDir, $"part_{i}.md"));
+            var arr = ExtractJsonArray(raw);
+            if (arr is null)
+            {
+                return (false, $"[T4C] 批 {i + 1} 输出无法解析为 JSON 数组（part_{i}.md），"
+                    + "可在输出框检查该批原文");
+            }
+            if (merged.Count > 0) merged.Add(",");
+            merged.Add(arr.Trim().TrimStart('[').TrimEnd(']'));
+        }
+        var final = "[\n" + string.Join("\n", merged) + "\n]";
+        if (!_app.Store.SaveText(s.Output, final))
+            return (false, "[T4C] 合并结果保存失败");
+
+        // 清理 part 文件（合并成功后）
+        try { Directory.Delete(partDir, true); } catch { }
+
+        return (true, $"✓ [T4C] 分批分析完成：{batches.Count} 批 × {blocks.Count} 只，"
+            + $"已合并写入 data/{s.Output}");
+    }
+
+    /// <summary>从 LLM 回复中提取 JSON 数组（复用 EarningsScanTask 的三级降级思路，独立实现以避免 UI↔Core 反向依赖）。</summary>
+    private static string? ExtractJsonArray(string text)
+    {
+        text = text.Trim();
+        // 1. 整体是数组
+        if (text.StartsWith('[') && text.EndsWith(']')) return text;
+        // 2. ```json 围栏
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+                     text, @"```(?:json)?\s*\n(.*?)\n```", System.Text.RegularExpressions.RegexOptions.Singleline))
+            if (m.Groups[1].Value.TrimStart().StartsWith('[')) return m.Groups[1].Value.Trim();
+        // 3. [ .. ] 最大区间
+        var s = text.IndexOf('[');
+        var e = text.LastIndexOf(']');
+        if (s >= 0 && e > s) return text[s..(e + 1)];
+        return null;
+    }
+
+    /// <summary>
+    /// T6B 输出末尾若带「巴菲特观察」块，弹勾选列表供用户挑选导入监控页
+    /// （默认全选、可逐条取消）。解析为空/用户取消均静默返回，不打断主流程。
+    /// 两道防 LLM 张冠李戴：① skill_input 候选行 name→code 反查纠正抄错的代码
+    /// （实测 002050 三花智控被写成 002001 新和成）；② 行情官方名终验拦截池外幻觉。
+    /// </summary>
+    private async Task TryOfferBuffettWatchAsync(SkillDef s)
+    {
+        if (s.Key != "T6B") return;
+        try
+        {
+            // 候选池反查表：skill_input 每行 "code,name,industry,..." → name→code
+            var codeByName = new Dictionary<string, string>();
+            foreach (var line in _app.Store.LoadText(s.Input).Split('\n'))
+            {
+                var csv = line.Trim();
+                if (csv.Length < 8 || !char.IsDigit(csv[0])) continue;
+                var parts = csv.Split(',');
+                if (parts.Length >= 2 && parts[0].Length == 6 && parts[0].All(char.IsDigit) && parts[1].Length >= 2)
+                    codeByName[parts[1].Trim()] = parts[0];
+            }
+
+            var (items, discarded) = BuffettWatchImporter.Parse(_app.Store.LoadText(s.Output), codeByName);
+            if (items.Count == 0)
+            {
+                if (discarded.Count > 0) _status($"⚠️ 巴菲特观察 {discarded.Count} 行格式非法未导入");
+                return;
+            }
+            // 行情官方名终验（失败静默放行，不阻断导入主流程）
+            var (kept, quoteRejected) = await BuffettWatchImporter.VerifyByQuotesAsync(
+                codes => _app.Quotes.FetchAsync(codes), items);
+            discarded.AddRange(quoteRejected);
+            if (kept.Count == 0) { _status($"⚠️ 巴菲特观察全部条目校验未过，未导入"); return; }
+
+            var dlg = new BuffettWatchDialog(kept, discarded);
+            if (await dlg.ShowAsync(this))
+            {
+                var results = BuffettWatchImporter.Import(_app.Store, dlg.Selected);
+                _status(results.Count > 0
+                    ? "🎯 " + string.Join("；", results)
+                    : "未勾选任何条目，跳过导入");
+            }
+        }
+        catch (Exception ex)
+        {
+            _status($"⚠️ 巴菲特观察解析异常: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -194,10 +406,20 @@ public partial class LlmBridgeView : UserControl, IRefreshable
         CallLlmBtn.Content = "⏳ 调用中…";
         AllBucketsBtn.IsEnabled = false;
         CancelBtn.IsVisible = true;
-        _batchTotal = 0; // 单桶：不分步
+        // T4C 输入超阈值会自动分批 → 进度条按批推进（RunT4BatchedAsync 更新 _batchIndex）；
+        // 预先按输入大小估算批数，让进度条上限正确
+        _batchTotal = 0;
+        if (s.Key == "T4C")
+        {
+            var inputLen = _app.Store.LoadText(s.Input).Length;
+            if (inputLen > T4BatchThresholdChars)
+                _batchTotal = Math.Max(1, (int)Math.Ceiling((double)inputLen / T4BatchTargetChars));
+        }
         BeginProgress();
-        SetProgressLabel($"⏳ 调用 LLM 分析 {s.Key}");
-        _status($"⏳ 调用 LLM 分析 {s.Key}（可能需 1–3 分钟）…");
+        SetProgressLabel($"⏳ 调用 LLM 分析 {s.Key}" + (_batchTotal > 0 ? $"（约 {_batchTotal} 批）" : ""));
+        _status($"⏳ 调用 LLM 分析 {s.Key}" + (_batchTotal > 0
+            ? $"（输入 {_batchTotal} 批量级，每批 1-3 分钟，全程可能 10-30 分钟）…"
+            : "（可能需 1–3 分钟）…"));
 
         var heartbeat = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
         heartbeat.Tick += (_, _) =>
@@ -214,6 +436,7 @@ public partial class LlmBridgeView : UserControl, IRefreshable
             {
                 OutputText.Text = _app.Store.LoadText(s.Output);
                 OutputInfo.Text = $"已保存 | {_app.Store.FileMtime(s.Output)}";
+                await TryOfferBuffettWatchAsync(s);
             }
             _status(msg);
         }
@@ -277,6 +500,7 @@ public partial class LlmBridgeView : UserControl, IRefreshable
                         OutputText.Text = _app.Store.LoadText(s.Output);
                         OutputInfo.Text = $"已保存 | {_app.Store.FileMtime(s.Output)}";
                     }
+                    await TryOfferBuffettWatchAsync(s);
                 }
                 else
                 {
@@ -356,7 +580,7 @@ public partial class LlmBridgeView : UserControl, IRefreshable
     /// <summary>秒级耗时格式 mm:ss（单桶最长 5min 超时，全桶最长约 15min，mm:ss 足够）。</summary>
     private static string FormatElapsed(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:D2}";
 
-    private void SaveOutput()
+    private async void SaveOutput()
     {
         var s = Cur;
         var text = OutputText.Text;
@@ -366,6 +590,8 @@ public partial class LlmBridgeView : UserControl, IRefreshable
             var mo = _app.Store.FileMtime(s.Output);
             OutputInfo.Text = $"已保存 | {mo}";
             _status($"已保存到 data/{s.Output}");
+            // 手动工作流（Qoder 粘贴→保存）同样触发巴菲特观察导入弹窗
+            await TryOfferBuffettWatchAsync(s);
         }
         else
         {
@@ -375,17 +601,26 @@ public partial class LlmBridgeView : UserControl, IRefreshable
 
     private async void ImportFile()
     {
-        var dlg = new OpenFileDialog
+        var sp = TopLevel.GetTopLevel(this)?.StorageProvider;
+        if (sp is not { CanOpen: true }) { _status("当前平台不支持选择文件"); return; }
+        var files = await sp.OpenFilePickerAsync(new FilePickerOpenOptions
         {
             Title = "导入 skill_output",
-            Filters = { new FileDialogFilter { Name = "Markdown", Extensions = { "md" } }, new FileDialogFilter { Name = "All", Extensions = { "*" } } },
-        };
-        var owner = this.VisualRoot as Window;
-        var files = owner != null ? await dlg.ShowAsync(owner) : null;
-        if (files is { Length: > 0 })
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Markdown") { Patterns = new[] { "*.md" }, MimeTypes = new[] { "text/markdown", "text/plain" } },
+                FilePickerFileTypes.All,
+            },
+        });
+        if (files.Count == 0) return;
+        // 移动端返回的是 content:// URI，没有本地路径，统一走流读取
+        try
         {
-            try { OutputText.Text = File.ReadAllText(files[0], new System.Text.UTF8Encoding(false)); _status($"已从 {Path.GetFileName(files[0])} 导入"); }
-            catch (Exception ex) { _status($"导入失败: {ex.Message}"); }
+            await using var stream = await files[0].OpenReadAsync();
+            using var reader = new StreamReader(stream, new UTF8Encoding(false));
+            OutputText.Text = await reader.ReadToEndAsync();
+            _status($"已从 {files[0].Name} 导入");
         }
+        catch (Exception ex) { _status($"导入失败: {ex.Message}"); }
     }
 }

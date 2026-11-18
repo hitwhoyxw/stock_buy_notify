@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -19,4 +19,16 @@
     <PackageReference Include="ExcelDataReader.DataSet" Version="3.7.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 投资经验知识库：链接仓库内 trading-system/09_投资经验知识库.md 作为内嵌资源（单一真源，
+         不复制文件）。运行期优先读磁盘文件（人工编辑即时生效），回退到这份内嵌副本，
+         保证单文件发布与移动端（无项目目录结构）也能加载。 -->
+    <EmbeddedResource Include="..\..\trading-system\09_投资经验知识库.md"
+                      LogicalName="ThreeBucket.Core.Resources.InvestmentKnowledgeBase.md"
+                      Link="Resources\InvestmentKnowledgeBase.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\ConfigSchemas\*.json" />
+  </ItemGroup>
 </Project>

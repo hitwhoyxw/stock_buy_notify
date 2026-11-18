@@ -1,0 +1,15 @@
+{
+  "schema": "config-contract-v1",
+  "source": "config\\financial_cache.yaml",
+  "baseline": {
+    "cycle_months": 6
+  },
+  "shape": {
+    "type": "object",
+    "properties": {
+      "cycle_months": {
+        "type": "number"
+      }
+    }
+  }
+}

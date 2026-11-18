@@ -11,7 +11,7 @@ namespace ThreeBucket.UI.Dialogs;
 /// 交易录入/编辑对话框（纯代码构建，无 XAML）。
 /// 只填代码时自动拉取名称（名称框留空触发，对应 Python TradeDialog 的 editingFinished 行为）。
 /// </summary>
-public class TradeDialog : Window
+public class TradeDialog : DialogBase
 {
     private readonly TextBox _code = new() { Watermark = "6 位数字，如 600519" };
     private readonly TextBox _name = new() { Watermark = "名称（可选，只填代码可自动获取）" };
@@ -33,9 +33,7 @@ public class TradeDialog : Window
     {
         _quotes = quotes;
         Title = "记一笔交易";
-        Width = 460;
-        SizeToContent = SizeToContent.Height;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        DialogWidth = 460;
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("90,*") };
         for (var i = 0; i < 11; i++)
@@ -166,6 +164,4 @@ public class TradeDialog : Window
             Reason = (_reason.Text ?? "").Trim(),
         };
     }
-
-    public Task<bool> ShowAsync(Window owner) => ShowDialog<bool>(owner);
 }

@@ -1,0 +1,23 @@
+# T3 类金融（v1 主要支持金融租赁）。不得直接套用银行净息差/不良贷款率全部规则。
+roe_min: 0.08
+npl_max: 0.020
+npl_hard_max: 0.040
+provision_cov_min: 1.50
+leverage_max: 10
+leverage_pb_haircut_at: 8
+leverage_pb_haircut: 0.90
+payout_min: 0.30
+g_cap: 0.04
+roe_sus_w5: 0.50
+roe_sus_w3: 0.30
+roe_sus_w1: 0.20
+roe_sus_haircut: 0.000
+roe_sus_pessimistic_cut: 0.020
+roe_sus_optimistic_add: 0.010
+weights:
+  profit: 20
+  asset: 25
+  capital: 20
+  efficiency: 10
+  shareholder: 15
+  growth: 10

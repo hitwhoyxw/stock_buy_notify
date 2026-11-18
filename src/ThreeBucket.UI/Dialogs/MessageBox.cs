@@ -9,14 +9,12 @@ namespace ThreeBucket.UI.Dialogs;
 /// 极简确认/提示对话框（Avalonia 无内建 MessageBox）。
 /// 必须通过 Ask/Show 静态方法异步等待，同步阻塞 UI 线程会死锁。
 /// </summary>
-public class MessageBox : Window
+public class MessageBox : DialogBase
 {
     private MessageBox(string title, string message, bool yesNo)
     {
         Title = title;
-        Width = 400;
-        SizeToContent = SizeToContent.Height;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        DialogWidth = 400;
 
         var yes = new Button
         {
@@ -53,11 +51,11 @@ public class MessageBox : Window
         };
     }
 
-    /// <summary>是/否确认框，返回 true=确定。</summary>
-    public static Task<bool> Ask(Window owner, string title, string message)
-        => new MessageBox(title, message, true).ShowDialog<bool>(owner);
+    /// <summary>是/否确认框，返回 true=确定。anchor 为发起弹窗的任意视图控件。</summary>
+    public static Task<bool> Ask(Visual anchor, string title, string message)
+        => new MessageBox(title, message, true).ShowAsync(anchor);
 
     /// <summary>仅提示框（单按钮）。</summary>
-    public static Task Show(Window owner, string title, string message)
-        => new MessageBox(title, message, false).ShowDialog<bool>(owner);
+    public static Task Show(Visual anchor, string title, string message)
+        => new MessageBox(title, message, false).ShowAsync(anchor);
 }

@@ -1,0 +1,24 @@
+# T4 重资产类债资产。双通道：A 盈利型 / B 现金流及分红型。满足任一即可进入评分。
+roe_min: 0.08                   # A 通道
+ocf_to_np_min: 1.00
+ocf_to_np_b: 0.90               # B 通道可略低但仍须经营现金流覆盖利润或分红
+capex_ocf_max: 0.70
+net_debt_ebitda_max: 4
+net_debt_ebitda_hydro_max: 6
+interest_coverage_min: 3
+interest_coverage_b: 2.5
+payout_min: 0.30
+div_years_min: 3
+dps_drop_max: 0.20
+g_div: 0.01
+g_pb: 0.015
+# 维持性 capex：优先折旧；缺折旧时用 capex × 本比例。扩张性 capex 不用于约束可持续分红。
+maint_capex_ratio: 0.50
+div_fcf_cap: 0.90
+weights:
+  cash: 25
+  debt: 20
+  profit_stab: 15
+  shareholder: 25
+  moat: 10
+  gov: 5

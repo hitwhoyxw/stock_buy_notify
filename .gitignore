@@ -51,3 +51,16 @@ data/sync_backup/
 
 # 应用本地配置（含 Supabase/LLM/SMTP 密钥，禁止入库）
 app_config.json
+
+# 本地备份与调试/大快照（不入库）
+.bak_code/
+/_probe*.py
+/_check*.py
+/_orgonly.py
+/_src.py
+data/bak_obs_pool_*/
+data/*.bak_*
+data/*.bak-*
+data/quality_value/state*.json
+data/quality_value/t45_official_state.json
+data/quality_value/cache/

@@ -11,7 +11,7 @@ namespace ThreeBucket.UI.Dialogs;
 /// 策略编辑对话框：简单模式（指标+操作符+阈值）+ 复合条件 JSON 文本框。
 /// 保存前经 StrategyEngine.ValidateStrategy 结构校验；条件树 Schema 与 Python 端一致。
 /// </summary>
-public class StrategyDialog : Window
+public class StrategyDialog : DialogBase
 {
     private readonly TextBlock _error = new() { Foreground = Brushes.Red, FontSize = 11, TextWrapping = TextWrapping.Wrap };
 
@@ -35,9 +35,7 @@ public class StrategyDialog : Window
     public StrategyDialog(Strategy? existing = null)
     {
         Title = existing == null ? "➕ 新建策略" : "编辑策略";
-        Width = 480;
-        SizeToContent = SizeToContent.Height;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        DialogWidth = 480;
 
         var grid = new Grid
         {
@@ -141,6 +139,4 @@ public class StrategyDialog : Window
     }
 
     public Strategy? GetRecord() => GetRecord(dryRun: false);
-
-    public Task<bool> ShowAsync(Window owner) => ShowDialog<bool>(owner);
 }

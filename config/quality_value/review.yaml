@@ -1,0 +1,53 @@
+# v1.5.2 击球区智能复核与人工工作量控制
+# 只用于风险识别、任务排序、提醒分流和人工结论管理。
+# 不得修改基本面评分或估值结果；不得用提高门槛或删周期股来减少工作量。
+# 下列阈值为初始值，须经样本验证，不得作为一票否决。
+
+feishu_dry_run: true          # 测试默认不向飞书发送复核任务；正式启用可改为 false
+daily_review_push_max: 10
+daily_review_push_min_priority: P1   # 只推 P0/P1
+default_verdict_valid_days: 90
+deeper_mos_band: 0.10         # 现价相对 P_safe 再低 10% 视为进入更深安全边际，可重新入队
+valuation_change_flag: 0.15   # P_fair 变化超过 15% 视为估值模型实质变化
+severity_upgrade_requeue: true
+
+earnings:
+  revenue_yoy_mild: -0.15
+  np_yoy_moderate: -0.30
+  deduct_yoy_moderate: -0.30
+  deduct_yoy_high: -0.50
+  gross_margin_drop_pp: 0.03
+  roe_drop_pp: 0.02
+  ocf_np_mismatch_below: 0.30
+  ar_minus_rev_growth: 0.20
+  inv_minus_rev_growth: 0.20
+  one_off_gap: 0.20           # 归母同比与扣非同比相差超过 20 个百分点，提示一次性损益
+
+priority:
+  earnings_max: 30
+  risk_event_max: 25
+  valuation_max: 20
+  data_quality_max: 15
+  price_urgency_max: 10
+  p0_min: 80
+  p1_min: 60
+  p2_min: 40
+
+# 重大公告标题关键词（有命中才记为风险事件；拉不到公告则标记缺失，不编造）
+major_announcement_keywords:
+  - 立案
+  - 处罚
+  - 退市
+  - 警示
+  - 失信
+  - 问询函
+  - 监管关注
+  - 违规
+  - 破产
+  - 重整
+  - 被实施
+  - 暂停上市
+
+# 公告分流（代码内置，避免把并购审核问询函误升为 C）：
+# 强制 C：立案、处罚决定、监管处罚、退市、暂停上市、破产、重整、被实施、失信、违规立案
+# 仅记录不升 C：问询函、监管关注、警示、处罚

@@ -1,0 +1,211 @@
+{
+  "schema": "config-contract-v1",
+  "source": "config\\quality_value\\T1.yaml",
+  "baseline": {
+    "roe_min": 0.08,
+    "roe_review_below": 0.1,
+    "interest_coverage_min": 5,
+    "interest_debt_review": 0.25,
+    "ocf_to_np_min": 0.8,
+    "div_years_min": 4,
+    "payout_min": 0.3,
+    "fcf_g": 0.03,
+    "earn_pessimistic": 0.8,
+    "earn_optimistic": 1.15,
+    "maint_capex_ratio": 0.6,
+    "cash_asset_high": 0.2,
+    "interest_debt_high": 0.2,
+    "score": {
+      "roe_avg": [
+        0.08,
+        0.18
+      ],
+      "roe_min_year": [
+        0.05,
+        0.12
+      ],
+      "net_margin": [
+        0.04,
+        0.15
+      ],
+      "np_scale": [
+        200000000,
+        2000000000
+      ],
+      "roic": [
+        0.06,
+        0.15
+      ],
+      "ocf_np": [
+        0.7,
+        1.1
+      ],
+      "fcf_np": [
+        0.5,
+        1.0
+      ],
+      "debt_ratio": [
+        0.25,
+        0.05
+      ],
+      "interest_coverage": [
+        5,
+        20
+      ],
+      "payout": [
+        0.3,
+        0.6
+      ],
+      "np_cagr": [
+        0.0,
+        0.1
+      ]
+    },
+    "weights": {
+      "profit": 25,
+      "cash": 20,
+      "capital": 15,
+      "shareholder": 15,
+      "growth": 15,
+      "gov": 10
+    }
+  },
+  "shape": {
+    "type": "object",
+    "properties": {
+      "roe_min": {
+        "type": "number"
+      },
+      "roe_review_below": {
+        "type": "number"
+      },
+      "interest_coverage_min": {
+        "type": "number"
+      },
+      "interest_debt_review": {
+        "type": "number"
+      },
+      "ocf_to_np_min": {
+        "type": "number"
+      },
+      "div_years_min": {
+        "type": "number"
+      },
+      "payout_min": {
+        "type": "number"
+      },
+      "fcf_g": {
+        "type": "number"
+      },
+      "earn_pessimistic": {
+        "type": "number"
+      },
+      "earn_optimistic": {
+        "type": "number"
+      },
+      "maint_capex_ratio": {
+        "type": "number"
+      },
+      "cash_asset_high": {
+        "type": "number"
+      },
+      "interest_debt_high": {
+        "type": "number"
+      },
+      "score": {
+        "type": "object",
+        "properties": {
+          "roe_avg": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "roe_min_year": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "net_margin": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "np_scale": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "roic": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "ocf_np": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "fcf_np": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "debt_ratio": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "interest_coverage": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "payout": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "np_cagr": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "weights": {
+        "type": "object",
+        "properties": {
+          "profit": {
+            "type": "number"
+          },
+          "cash": {
+            "type": "number"
+          },
+          "capital": {
+            "type": "number"
+          },
+          "shareholder": {
+            "type": "number"
+          },
+          "growth": {
+            "type": "number"
+          },
+          "gov": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

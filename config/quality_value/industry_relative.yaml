@@ -1,0 +1,44 @@
+# v1.5.4 行业相对质量准入；没有股票准入白名单。原始质量评分/估值不抬高。
+enabled: true
+window_years: 5
+min_peers: 10
+composite_min: 80
+dimension_min: 80
+supporting_dimensions: 2
+core_min: 90
+other_min: 60
+eligible_types: [T1, T4, T5]
+operating_gate_allowlist: [ROE, T4 双通道, 10 年盈利]
+profit_positive_years: 4
+ocf_positive_years: 4
+interest_coverage_min: 2.5
+payout_ratio_max: 1.0
+# 五年审计和实际现金安全证据强制核验，不提供关闭开关。
+block_strong_until_review: true
+# 港口原始OCF/NP低且无五年实际股息桥接：只能待核实，原始分位不冒充经济现金质量。
+cash_semantics_review_groups: [港口运营]
+fallback_exact_industry: true
+ambiguous_industries: [电力, 航运港口, 公用事业, 综合, 银行, 多元金融]
+# 三个独立维度等权：五年平均ROE、五年平均OCF/合并NP、五年平均现金DPS×股本/归母。
+# 分位采用中位秩；缺项剔除该指标分母，不按0；同业包含excluded/低流动/缺价，不只取合格股。
+groups:
+  - name: 港口运营
+    industries: [航运港口, 港口]
+    types: [T4]
+    name_contains_any: [港, 码头]
+    exclude_name_contains: [轮船, 海运, 航运]
+  - name: 核电运营
+    industries: [电力]
+    types: [T4, T5]
+    name_contains_any: [核电, 广核]
+  - name: 航运运输
+    industries: [航运港口]
+    types: [T5]
+    name_contains_any: [轮船, 海运, 航运, 海控, 海能, 海特, 海发]
+# 证据以证券代码作主键（不是准入白名单）；数组逐年report_date必须对应五年完整年度。
+# 每条需要source(https官方报告)、total_net_profit、external_recurring_dividends_received、
+# minority_dividends_paid、cash_interest_paid、restricted_cash、cash_available、debt_due、
+# cash_dividends_to_parent_shareholders_paid（实付归母股东股利，不用DPS×年末股本代理）。
+# 仅实际收到、经核验经常性外部股息，不得填权益法账面收益/理财本金；缺失只能待核实。
+# 审计证据仍读现有supplement/fina_audit.csv；证据填入不替代分位/安全检查。
+evidence: {}

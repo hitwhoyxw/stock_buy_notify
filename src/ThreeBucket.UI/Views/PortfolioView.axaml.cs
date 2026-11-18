@@ -51,6 +51,7 @@ public partial class PortfolioView : UserControl, IRefreshable
 
         BuildPosColumns();
         BuildTradesColumns();
+        SizeChanged += (_, e) => Cards.Columns = e.NewSize.Width < Responsive.Breakpoint ? 3 : 5;
 
         ViewCombo.SelectionChanged += (_, _) =>
         {
@@ -205,7 +206,7 @@ public partial class PortfolioView : UserControl, IRefreshable
         var dd = nav.Count > 0 ? nav[0].GetValueOrDefault("drawdown_pct", "0") : "0";
         Card("总成本", $"{totalCost:#,0}");
         Card("总市值", $"{totalMv:#,0}");
-        Card("浮盈亏", $"{pnl:+#,0} ({pnlPct:+0.0}%)", pnl > 0 ? "#e74c3c" : pnl < 0 ? "#27ae60" : "#2c3e50");
+        Card("浮盈亏", $"{pnl:+#,0;-#,0;0} ({pnlPct:+0.0;-0.0;0.0}%)", pnl > 0 ? "#e74c3c" : pnl < 0 ? "#27ae60" : "#2c3e50");
         Card("净值", navVal);
         Card("回撤", $"{dd}%");
     }
@@ -327,13 +328,12 @@ public partial class PortfolioView : UserControl, IRefreshable
 
     private async Task OnAddTradeAsync()
     {
-        if (VisualRoot is not Window owner) return;
         var dlg = new TradeDialog(_app.Quotes) { Title = "➕ 记一笔交易" };
-        if (await dlg.ShowAsync(owner) && dlg.GetRecord() is { } rec)
+        if (await dlg.ShowAsync(this) && dlg.GetRecord() is { } rec)
         {
             if (rec.Direction == "卖出" && rec.Shares > _store.SharesOf(rec.Code))
             {
-                if (!await MessageBox.Ask(owner, "负持仓确认",
+                if (!await MessageBox.Ask(this, "负持仓确认",
                     $"{rec.Code} 当前净持仓 {_store.SharesOf(rec.Code):F0} 股，本次卖出 {rec.Shares:F0} 股，将出现负持仓。仍要保存？")) return;
             }
             _store.AppendTrade(rec); AfterTradeChanged();
@@ -342,7 +342,6 @@ public partial class PortfolioView : UserControl, IRefreshable
 
     private async Task QuickTradeAsync(string direction, double defaultShares)
     {
-        if (VisualRoot is not Window owner) return;
         if (PosGrid.SelectedItem is not Position pos) { _status("请先选中一行持仓"); return; }
         var dlg = new TradeDialog(_app.Quotes) { Title = direction == "买入" ? "📈 加仓" : "📉 减仓" };
         dlg.Prefill(new Trade
@@ -353,10 +352,10 @@ public partial class PortfolioView : UserControl, IRefreshable
             Amount = pos.CurrentPrice * defaultShares,
             Reason = direction == "买入" ? "右键加仓" : "右键减仓",
         });
-        if (await dlg.ShowAsync(owner) && dlg.GetRecord() is { } rec)
+        if (await dlg.ShowAsync(this) && dlg.GetRecord() is { } rec)
         {
             if (rec.Direction == "卖出" && rec.Shares > _store.SharesOf(rec.Code))
-                if (!await MessageBox.Ask(owner, "负持仓确认",
+                if (!await MessageBox.Ask(this, "负持仓确认",
                     $"卖出 {rec.Shares:F0} 股超过持仓 {_store.SharesOf(rec.Code):F0} 股，仍要保存？")) return;
             _store.AppendTrade(rec); AfterTradeChanged();
         }
@@ -364,9 +363,8 @@ public partial class PortfolioView : UserControl, IRefreshable
 
     private async Task QuickClearAsync()
     {
-        if (VisualRoot is not Window owner) return;
         if (PosGrid.SelectedItem is not Position pos || pos.Shares <= 0) { _status("请先选中一行持仓"); return; }
-        if (!await MessageBox.Ask(owner, "清仓确认",
+        if (!await MessageBox.Ask(this, "清仓确认",
             $"确定清仓 {pos.Code} {pos.Name}？\n当前持仓 {pos.Shares:F0} 股，将追加一笔卖出记录归零。")) return;
         var dlg = new TradeDialog(_app.Quotes) { Title = "🗑 清仓" };
         dlg.Prefill(new Trade
@@ -376,10 +374,10 @@ public partial class PortfolioView : UserControl, IRefreshable
             Price = pos.CurrentPrice, Shares = pos.Shares,
             Amount = pos.CurrentPrice * pos.Shares, Reason = "右键清仓",
         });
-        if (await dlg.ShowAsync(owner) && dlg.GetRecord() is { } rec)
+        if (await dlg.ShowAsync(this) && dlg.GetRecord() is { } rec)
         {
             if (rec.Shares > _store.SharesOf(rec.Code))
-                if (!await MessageBox.Ask(owner, "负持仓确认",
+                if (!await MessageBox.Ask(this, "负持仓确认",
                     $"清仓 {rec.Shares:F0} 股超过持仓 {_store.SharesOf(rec.Code):F0} 股，仍要保存？")) return;
             _store.AppendTrade(rec); AfterTradeChanged();
         }
@@ -413,11 +411,10 @@ public partial class PortfolioView : UserControl, IRefreshable
 
     private async Task OnEditTradeAsync()
     {
-        if (VisualRoot is not Window owner) return;
         if (TradesGrid.SelectedItem is not Trade t) { _status("请先选中一行"); return; }
         var dlg = new TradeDialog(_app.Quotes) { Title = "编辑交易" };
         dlg.Prefill(t);
-        if (await dlg.ShowAsync(owner) && dlg.GetRecord() is { } rec)
+        if (await dlg.ShowAsync(this) && dlg.GetRecord() is { } rec)
         {
             var idx = _trades.IndexOf(t);
             _store.UpdateTradeAt(idx, rec); AfterTradeChanged();
@@ -426,9 +423,8 @@ public partial class PortfolioView : UserControl, IRefreshable
 
     private async Task OnDeleteTradeAsync()
     {
-        if (VisualRoot is not Window owner) return;
         if (TradesGrid.SelectedItem is not Trade t) { _status("请先选中一行"); return; }
-        if (!await MessageBox.Ask(owner, "删除确认",
+        if (!await MessageBox.Ask(this, "删除确认",
             $"确定删除这条交易？\n{t.Date} {t.Direction} {t.Code} {t.Name} {t.Shares:F0} 股")) return;
         var idx = _trades.IndexOf(t);
         _store.DeleteTradeAt(idx); AfterTradeChanged();
@@ -456,8 +452,7 @@ public partial class PortfolioView : UserControl, IRefreshable
         {
             e.Cancel = true; // 阻止绑定写回
             tb.Text = oldVal;
-            if (VisualRoot is Window owner)
-                await MessageBox.Show(owner, "修改无效", $"【{header}】{err}");
+            await MessageBox.Show(this, "修改无效", $"【{header}】{err}");
             return;
         }
 

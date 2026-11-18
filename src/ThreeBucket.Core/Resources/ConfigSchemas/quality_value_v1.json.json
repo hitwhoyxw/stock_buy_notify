@@ -1,0 +1,999 @@
+{
+  "schema": "config-contract-v1",
+  "source": "data\\quality_value_v1.json",
+  "baseline": {
+    "version": "1.0",
+    "strategy": "S29 优质股击球区",
+    "note": "全部阈值为可配置初始值，需回测校准。§12 为实现决议，与前文冲突以 §12 为准。",
+    "global": {
+      "risk_free_source": "cn_10y_bond",
+      "min_re": 0.08,
+      "window_years": 5,
+      "t5_window_years": 10,
+      "gdp_g": 0.03,
+      "liquidity_avg_amount_min": 50000000,
+      "liquidity_days": 60,
+      "observe_list_years": 5,
+      "qualified_min": 70,
+      "t5_qualified_min": 65,
+      "core_score_min": 80,
+      "downgrade_score_drop": 10,
+      "valuation_gap_flag": 0.4,
+      "dispersion_flag": 0.6,
+      "p_opt_cap": 1.4,
+      "approach_fair_ratio": 0.9,
+      "alert_dedupe_trading_days": 5,
+      "concurrency": 8,
+      "full_rescan_months": [
+        5,
+        9
+      ],
+      "full_rescan_day_to": 10,
+      "nov_light_day_to": 10,
+      "exclude_boards": [],
+      "include_bj": true,
+      "mos": [
+        {
+          "score_min": 85,
+          "discount": 0.15
+        },
+        {
+          "score_min": 75,
+          "discount": 0.25
+        },
+        {
+          "score_min": 65,
+          "discount": 0.35
+        }
+      ]
+    },
+    "screen": {
+      "audit_years": 5,
+      "penalty_years": 3,
+      "loss_years_max": 2,
+      "t5_loss_years_window": 10,
+      "t5_loss_years_max": 3,
+      "quality_deduct_np_min": 0.7,
+      "pledge_ctrl_max": 0.5,
+      "goodwill_equity_max": 0.3,
+      "cash_and_debt_high": 0.2,
+      "share_dilution_cagr_max": 0.03,
+      "penalty_keywords": [
+        "立案调查",
+        "行政处罚",
+        "虚假记载",
+        "财务造假",
+        "重大遗漏"
+      ],
+      "fraud_keywords": [
+        "虚假记载",
+        "财务造假"
+      ]
+    },
+    "re_premium": {
+      "T1": {
+        "optimistic": 0.055,
+        "base": 0.07,
+        "conservative": 0.09
+      },
+      "T2": {
+        "optimistic": 0.055,
+        "base": 0.07,
+        "conservative": 0.09
+      },
+      "T3": {
+        "optimistic": 0.055,
+        "base": 0.07,
+        "conservative": 0.09
+      },
+      "T4": {
+        "optimistic": 0.035,
+        "base": 0.045,
+        "conservative": 0.06
+      },
+      "T5": {
+        "optimistic": 0.065,
+        "base": 0.08,
+        "conservative": 0.1
+      }
+    },
+    "div_yield_premium": {
+      "T1": {
+        "optimistic": 0.015,
+        "base": 0.025,
+        "conservative": 0.035
+      },
+      "T2": {
+        "optimistic": 0.025,
+        "base": 0.035,
+        "conservative": 0.045
+      },
+      "T3": {
+        "optimistic": 0.025,
+        "base": 0.035,
+        "conservative": 0.045
+      },
+      "T4": {
+        "optimistic": 0.025,
+        "base": 0.035,
+        "conservative": 0.05
+      },
+      "T5": {
+        "optimistic": 0.05,
+        "base": 0.065,
+        "conservative": 0.085
+      }
+    },
+    "div_yield_floor": {
+      "optimistic": 0.03,
+      "base": 0.04,
+      "conservative": 0.05
+    },
+    "T1": {
+      "scale_margin_matrix": [
+        {
+          "profit_min": 10000000000,
+          "margin_min": 0.05
+        },
+        {
+          "profit_min": 5000000000,
+          "margin_min": 0.07
+        },
+        {
+          "profit_min": 2000000000,
+          "margin_min": 0.1
+        },
+        {
+          "profit_min": 500000000,
+          "margin_min": 0.15
+        }
+      ],
+      "roe_min": 0.1,
+      "roe_soft_min": 0.08,
+      "soft_debt_max": 0.1,
+      "soft_payout_min": 0.5,
+      "soft_fcf_np_min": 0.8,
+      "interest_bearing_debt_ratio_max": 0.25,
+      "interest_coverage_min": 8,
+      "ocf_to_np_min": 0.8,
+      "fcf_positive_years_min": 4,
+      "div_years_min": 4,
+      "payout_min": 0.3,
+      "fcf_g": 0.03,
+      "maint_capex_ratio": 0.8,
+      "earn_pessimistic": 0.8,
+      "earn_optimistic": 1.15,
+      "score": {
+        "roe_avg": [
+          0.08,
+          0.18
+        ],
+        "roe_min_year": [
+          0.05,
+          0.12
+        ],
+        "ocf_np": [
+          0.7,
+          1.1
+        ],
+        "fcf_np": [
+          0.5,
+          1.0
+        ],
+        "debt_ratio": [
+          0.25,
+          0.05
+        ],
+        "interest_coverage": [
+          8,
+          30
+        ],
+        "payout": [
+          0.3,
+          0.6
+        ],
+        "np_cagr": [
+          0.0,
+          0.1
+        ]
+      },
+      "weights": {
+        "profit": 25,
+        "cash": 20,
+        "capital": 20,
+        "shareholder": 20,
+        "growth": 10,
+        "gov": 5
+      }
+    },
+    "T2": {
+      "net_margin_min": 0.3,
+      "profit_min": 2000000000,
+      "roe_min": 0.1,
+      "roe_year_min": 0.08,
+      "npl_max": 0.015,
+      "npl_rise_max": 0.003,
+      "provision_cov_min": 2.0,
+      "provision_full": 3.0,
+      "cet1_min": 0.09,
+      "cet1_vs_reg_buffer": 0.015,
+      "cet1_reg_min_default": 0.075,
+      "g_sus_rwa_ratio": 0.9,
+      "provision_pb_low": 2.5,
+      "provision_pb_low_haircut": 0.9,
+      "provision_pb_high": 4.0,
+      "provision_pb_high_uplift": 1.05,
+      "roe_sus_haircut": 0.005,
+      "roe_sus_pessimistic_cut": 0.02,
+      "g_cap": 0.04,
+      "score": {
+        "roe_avg": [
+          0.1,
+          0.15
+        ],
+        "npl": [
+          0.015,
+          0.008
+        ],
+        "provision": [
+          2.0,
+          4.0
+        ],
+        "payout": [
+          0.2,
+          0.35
+        ]
+      },
+      "weights": {
+        "profit": 25,
+        "asset": 25,
+        "capital": 20,
+        "efficiency": 10,
+        "shareholder": 15,
+        "growth": 5
+      }
+    },
+    "T3": {
+      "net_margin_min": 0.3,
+      "profit_min": 1000000000,
+      "roe_min": 0.1,
+      "npl_max": 0.015,
+      "provision_cov_min": 1.5,
+      "leverage_max": 10,
+      "leverage_pb_haircut_at": 8,
+      "leverage_pb_haircut": 0.9,
+      "payout_min": 0.3
+    },
+    "T4": {
+      "roe_min": 0.08,
+      "net_margin_min": 0.12,
+      "profit_alt_min": 2000000000,
+      "ocf_to_np_min": 1.2,
+      "capex_ocf_max": 0.7,
+      "net_debt_ebitda_max": 4,
+      "net_debt_ebitda_hydro_max": 6,
+      "interest_coverage_min": 4,
+      "payout_min": 0.4,
+      "dps_drop_max": 0.2,
+      "g_div": 0.01,
+      "g_pb": 0.015
+    },
+    "T5": {
+      "roe_min": 0.07,
+      "profit_years_min": 7,
+      "net_debt_ebitda_max": 2.5,
+      "interest_coverage_min": 5,
+      "payout_min": 0.3,
+      "cycle_high": 1.5,
+      "cycle_cold": 1.0,
+      "fair_pe": 10,
+      "fair_pe_min": 8,
+      "fair_pe_max": 11,
+      "opt_pe": 12,
+      "pb_safe_percentile": 0.2,
+      "pb_safe_cap": 1.0,
+      "opt_vs_peak_cap": 0.6,
+      "fine_chem_upgrade_gm_range_max": 0.06,
+      "fine_chem_upgrade_roe_min": 0.08
+    }
+  },
+  "shape": {
+    "type": "object",
+    "properties": {
+      "version": {
+        "type": "string"
+      },
+      "strategy": {
+        "type": "string"
+      },
+      "note": {
+        "type": "string"
+      },
+      "global": {
+        "type": "object",
+        "properties": {
+          "risk_free_source": {
+            "type": "string"
+          },
+          "min_re": {
+            "type": "number"
+          },
+          "window_years": {
+            "type": "number"
+          },
+          "t5_window_years": {
+            "type": "number"
+          },
+          "gdp_g": {
+            "type": "number"
+          },
+          "liquidity_avg_amount_min": {
+            "type": "number"
+          },
+          "liquidity_days": {
+            "type": "number"
+          },
+          "observe_list_years": {
+            "type": "number"
+          },
+          "qualified_min": {
+            "type": "number"
+          },
+          "t5_qualified_min": {
+            "type": "number"
+          },
+          "core_score_min": {
+            "type": "number"
+          },
+          "downgrade_score_drop": {
+            "type": "number"
+          },
+          "valuation_gap_flag": {
+            "type": "number"
+          },
+          "dispersion_flag": {
+            "type": "number"
+          },
+          "p_opt_cap": {
+            "type": "number"
+          },
+          "approach_fair_ratio": {
+            "type": "number"
+          },
+          "alert_dedupe_trading_days": {
+            "type": "number"
+          },
+          "concurrency": {
+            "type": "number"
+          },
+          "full_rescan_months": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "full_rescan_day_to": {
+            "type": "number"
+          },
+          "nov_light_day_to": {
+            "type": "number"
+          },
+          "exclude_boards": {
+            "type": "array",
+            "items": {
+              "type": "any"
+            }
+          },
+          "include_bj": {
+            "type": "boolean"
+          },
+          "mos": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "score_min": {
+                  "type": "number"
+                },
+                "discount": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      },
+      "screen": {
+        "type": "object",
+        "properties": {
+          "audit_years": {
+            "type": "number"
+          },
+          "penalty_years": {
+            "type": "number"
+          },
+          "loss_years_max": {
+            "type": "number"
+          },
+          "t5_loss_years_window": {
+            "type": "number"
+          },
+          "t5_loss_years_max": {
+            "type": "number"
+          },
+          "quality_deduct_np_min": {
+            "type": "number"
+          },
+          "pledge_ctrl_max": {
+            "type": "number"
+          },
+          "goodwill_equity_max": {
+            "type": "number"
+          },
+          "cash_and_debt_high": {
+            "type": "number"
+          },
+          "share_dilution_cagr_max": {
+            "type": "number"
+          },
+          "penalty_keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fraud_keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "re_premium": {
+        "type": "object",
+        "properties": {
+          "T1": {
+            "type": "object",
+            "properties": {
+              "optimistic": {
+                "type": "number"
+              },
+              "base": {
+                "type": "number"
+              },
+              "conservative": {
+                "type": "number"
+              }
+            }
+          },
+          "T2": {
+            "type": "object",
+            "properties": {
+              "optimistic": {
+                "type": "number"
+              },
+              "base": {
+                "type": "number"
+              },
+              "conservative": {
+                "type": "number"
+              }
+            }
+          },
+          "T3": {
+            "type": "object",
+            "properties": {
+              "optimistic": {
+                "type": "number"
+              },
+              "base": {
+                "type": "number"
+              },
+              "conservative": {
+                "type": "number"
+              }
+            }
+          },
+          "T4": {
+            "type": "object",
+            "properties": {
+              "optimistic": {
+                "type": "number"
+              },
+              "base": {
+                "type": "number"
+              },
+              "conservative": {
+                "type": "number"
+              }
+            }
+          },
+          "T5": {
+            "type": "object",
+            "properties": {
+              "optimistic": {
+                "type": "number"
+              },
+              "base": {
+                "type": "number"
+              },
+              "conservative": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "div_yield_premium": {
+        "type": "object",
+        "properties": {
+          "T1": {
+            "type": "object",
+            "properties": {
+              "optimistic": {
+                "type": "number"
+              },
+              "base": {
+                "type": "number"
+              },
+              "conservative": {
+                "type": "number"
+              }
+            }
+          },
+          "T2": {
+            "type": "object",
+            "properties": {
+              "optimistic": {
+                "type": "number"
+              },
+              "base": {
+                "type": "number"
+              },
+              "conservative": {
+                "type": "number"
+              }
+            }
+          },
+          "T3": {
+            "type": "object",
+            "properties": {
+              "optimistic": {
+                "type": "number"
+              },
+              "base": {
+                "type": "number"
+              },
+              "conservative": {
+                "type": "number"
+              }
+            }
+          },
+          "T4": {
+            "type": "object",
+            "properties": {
+              "optimistic": {
+                "type": "number"
+              },
+              "base": {
+                "type": "number"
+              },
+              "conservative": {
+                "type": "number"
+              }
+            }
+          },
+          "T5": {
+            "type": "object",
+            "properties": {
+              "optimistic": {
+                "type": "number"
+              },
+              "base": {
+                "type": "number"
+              },
+              "conservative": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "div_yield_floor": {
+        "type": "object",
+        "properties": {
+          "optimistic": {
+            "type": "number"
+          },
+          "base": {
+            "type": "number"
+          },
+          "conservative": {
+            "type": "number"
+          }
+        }
+      },
+      "T1": {
+        "type": "object",
+        "properties": {
+          "scale_margin_matrix": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "profit_min": {
+                  "type": "number"
+                },
+                "margin_min": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "roe_min": {
+            "type": "number"
+          },
+          "roe_soft_min": {
+            "type": "number"
+          },
+          "soft_debt_max": {
+            "type": "number"
+          },
+          "soft_payout_min": {
+            "type": "number"
+          },
+          "soft_fcf_np_min": {
+            "type": "number"
+          },
+          "interest_bearing_debt_ratio_max": {
+            "type": "number"
+          },
+          "interest_coverage_min": {
+            "type": "number"
+          },
+          "ocf_to_np_min": {
+            "type": "number"
+          },
+          "fcf_positive_years_min": {
+            "type": "number"
+          },
+          "div_years_min": {
+            "type": "number"
+          },
+          "payout_min": {
+            "type": "number"
+          },
+          "fcf_g": {
+            "type": "number"
+          },
+          "maint_capex_ratio": {
+            "type": "number"
+          },
+          "earn_pessimistic": {
+            "type": "number"
+          },
+          "earn_optimistic": {
+            "type": "number"
+          },
+          "score": {
+            "type": "object",
+            "properties": {
+              "roe_avg": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "roe_min_year": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "ocf_np": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "fcf_np": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "debt_ratio": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "interest_coverage": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "payout": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "np_cagr": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "weights": {
+            "type": "object",
+            "properties": {
+              "profit": {
+                "type": "number"
+              },
+              "cash": {
+                "type": "number"
+              },
+              "capital": {
+                "type": "number"
+              },
+              "shareholder": {
+                "type": "number"
+              },
+              "growth": {
+                "type": "number"
+              },
+              "gov": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "T2": {
+        "type": "object",
+        "properties": {
+          "net_margin_min": {
+            "type": "number"
+          },
+          "profit_min": {
+            "type": "number"
+          },
+          "roe_min": {
+            "type": "number"
+          },
+          "roe_year_min": {
+            "type": "number"
+          },
+          "npl_max": {
+            "type": "number"
+          },
+          "npl_rise_max": {
+            "type": "number"
+          },
+          "provision_cov_min": {
+            "type": "number"
+          },
+          "provision_full": {
+            "type": "number"
+          },
+          "cet1_min": {
+            "type": "number"
+          },
+          "cet1_vs_reg_buffer": {
+            "type": "number"
+          },
+          "cet1_reg_min_default": {
+            "type": "number"
+          },
+          "g_sus_rwa_ratio": {
+            "type": "number"
+          },
+          "provision_pb_low": {
+            "type": "number"
+          },
+          "provision_pb_low_haircut": {
+            "type": "number"
+          },
+          "provision_pb_high": {
+            "type": "number"
+          },
+          "provision_pb_high_uplift": {
+            "type": "number"
+          },
+          "roe_sus_haircut": {
+            "type": "number"
+          },
+          "roe_sus_pessimistic_cut": {
+            "type": "number"
+          },
+          "g_cap": {
+            "type": "number"
+          },
+          "score": {
+            "type": "object",
+            "properties": {
+              "roe_avg": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "npl": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "provision": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "payout": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "weights": {
+            "type": "object",
+            "properties": {
+              "profit": {
+                "type": "number"
+              },
+              "asset": {
+                "type": "number"
+              },
+              "capital": {
+                "type": "number"
+              },
+              "efficiency": {
+                "type": "number"
+              },
+              "shareholder": {
+                "type": "number"
+              },
+              "growth": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "T3": {
+        "type": "object",
+        "properties": {
+          "net_margin_min": {
+            "type": "number"
+          },
+          "profit_min": {
+            "type": "number"
+          },
+          "roe_min": {
+            "type": "number"
+          },
+          "npl_max": {
+            "type": "number"
+          },
+          "provision_cov_min": {
+            "type": "number"
+          },
+          "leverage_max": {
+            "type": "number"
+          },
+          "leverage_pb_haircut_at": {
+            "type": "number"
+          },
+          "leverage_pb_haircut": {
+            "type": "number"
+          },
+          "payout_min": {
+            "type": "number"
+          }
+        }
+      },
+      "T4": {
+        "type": "object",
+        "properties": {
+          "roe_min": {
+            "type": "number"
+          },
+          "net_margin_min": {
+            "type": "number"
+          },
+          "profit_alt_min": {
+            "type": "number"
+          },
+          "ocf_to_np_min": {
+            "type": "number"
+          },
+          "capex_ocf_max": {
+            "type": "number"
+          },
+          "net_debt_ebitda_max": {
+            "type": "number"
+          },
+          "net_debt_ebitda_hydro_max": {
+            "type": "number"
+          },
+          "interest_coverage_min": {
+            "type": "number"
+          },
+          "payout_min": {
+            "type": "number"
+          },
+          "dps_drop_max": {
+            "type": "number"
+          },
+          "g_div": {
+            "type": "number"
+          },
+          "g_pb": {
+            "type": "number"
+          }
+        }
+      },
+      "T5": {
+        "type": "object",
+        "properties": {
+          "roe_min": {
+            "type": "number"
+          },
+          "profit_years_min": {
+            "type": "number"
+          },
+          "net_debt_ebitda_max": {
+            "type": "number"
+          },
+          "interest_coverage_min": {
+            "type": "number"
+          },
+          "payout_min": {
+            "type": "number"
+          },
+          "cycle_high": {
+            "type": "number"
+          },
+          "cycle_cold": {
+            "type": "number"
+          },
+          "fair_pe": {
+            "type": "number"
+          },
+          "fair_pe_min": {
+            "type": "number"
+          },
+          "fair_pe_max": {
+            "type": "number"
+          },
+          "opt_pe": {
+            "type": "number"
+          },
+          "pb_safe_percentile": {
+            "type": "number"
+          },
+          "pb_safe_cap": {
+            "type": "number"
+          },
+          "opt_vs_peak_cap": {
+            "type": "number"
+          },
+          "fine_chem_upgrade_gm_range_max": {
+            "type": "number"
+          },
+          "fine_chem_upgrade_roe_min": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

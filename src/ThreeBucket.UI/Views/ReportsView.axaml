@@ -1,18 +1,15 @@
 ﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:ThreeBucket.UI"
              x:Class="ThreeBucket.UI.Views.ReportsView"
              x:CompileBindings="False">
   <DockPanel>
-    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="6">
+    <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6" ItemSpacing="8" LineSpacing="4">
       <TextBlock Text="📥 报告与日志" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
       <ComboBox x:Name="TypeCombo" Width="260" />
       <Button x:Name="RefreshBtn" Content="🔄 刷新" />
-    </StackPanel>
-    <Grid>
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="320" />
-        <ColumnDefinition Width="*" />
-      </Grid.ColumnDefinitions>
+    </WrapPanel>
+    <Grid ColumnDefinitions="320,*" local:Responsive.NarrowRows="160,*">
       <ListBox x:Name="FileList" Grid.Column="0" Margin="6">
         <ListBox.ItemTemplate>
           <DataTemplate>

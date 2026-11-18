@@ -112,6 +112,7 @@ public partial class WatchlistView : UserControl, IRefreshable
                 if (!map.TryGetValue(DataStore.NormalizeCode(r.Code), out var q)) continue;
                 r.Price = (double)q.Price;
                 r.ChangePct = q.ChangePct;
+                r.PeTtm = q.PeTtm; // pe_ttm 类监控策略依赖实时 PE（腾讯源/快照兜底）
                 if (string.IsNullOrWhiteSpace(r.Name) && !string.IsNullOrWhiteSpace(q.Name))
                 {
                     r.Name = q.Name;
@@ -145,7 +146,7 @@ public partial class WatchlistView : UserControl, IRefreshable
 
         // 待评估行 → 并发拉日K（仅绑定了需要 K 线的策略才拉）
         var pending = _rows
-            .Select(r => (Row: r, Ids: r.Strategies.Split(';', StringSplitOptions.RemoveEmptyEntries).ToList()))
+            .Select(r => (Row: r, Ids: r.Strategies.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()))
             .Where(x => x.Ids.Count > 0 && x.Ids.Any(id => all.Any(s => s.Id == id)))
             .ToList();
         if (pending.Count == 0) return;
@@ -168,6 +169,7 @@ public partial class WatchlistView : UserControl, IRefreshable
         }
 
         var alerts = new List<AlertEntry>();
+        var peMissingHinted = 0; // 本轮 PE 缺失提示计数（最多一次）
         var now = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
         foreach (var (r, ids) in pending)
         {
@@ -175,12 +177,16 @@ public partial class WatchlistView : UserControl, IRefreshable
             var ctx = new IndicatorContext(
                 r.Price > 0 ? r.Price : null, r.ChangePct,
                 klineMap.GetValueOrDefault(r.Code) ?? klineMap.GetValueOrDefault(code),
-                costs.GetValueOrDefault(code));
+                costs.GetValueOrDefault(code), r.PeTtm);
             foreach (var s in all.Where(s => ids.Contains(s.Id)))
             {
                 try
                 {
-                    if (StrategyEngine.EvaluateStrategy(s, ctx) is not true) continue;
+                    var hit = StrategyEngine.EvaluateStrategy(s, ctx);
+                    // pe_ttm 依赖实时 PE：行情未带回时引擎返回 null（数据不足），本轮提示一次避免静默漏报
+                    if (hit is null && UsesPeTtm(s) && ctx.QuotePeTtm is null && peMissingHinted++ == 0)
+                        _status("⚠️ [监控] PE(TTM) 行情缺失，pe_ttm 类策略本轮跳过");
+                    if (hit is not true) continue;
                 }
                 catch (StrategyConfigError e)
                 {
@@ -200,12 +206,28 @@ public partial class WatchlistView : UserControl, IRefreshable
         {
             // 只对当日首次触发的提醒外发通知（同策略同股票每天最多提醒一次，防骚扰）
             var fresh = _app.Store.RecordAlerts(alerts);
-            _status(fresh.Count > 0
-                ? $"🔔 触发 {alerts.Count} 条策略提醒（新增 {fresh.Count} 条，已推送通知）"
-                : $"🔔 触发 {alerts.Count} 条策略提醒（今日已提醒过，不重复推送）");
-            if (fresh.Count > 0) _ = NotifyExternalAsync(fresh);
+            if (fresh.Count == 0)
+                _status($"🔔 触发 {alerts.Count} 条策略提醒（今日已提醒过，不重复推送）");
+            else
+            {
+                var cfg = _app.Config;
+                var channels = new List<string>();
+                if (cfg.NotifyLarkEnabled && LarkNotifier.IsValidWebhook(cfg.LarkWebhook))
+                    channels.Add("飞书");
+                if (cfg.NotifySystemEnabled)
+                    channels.Add("系统通知");
+                _status(channels.Count > 0
+                    ? $"🔔 触发 {alerts.Count} 条策略提醒（新增 {fresh.Count} 条，已推送：{string.Join("/", channels)}）"
+                    : $"🔔 触发 {alerts.Count} 条策略提醒（新增 {fresh.Count} 条，已记入历史；外发通道未开启）");
+                _ = NotifyExternalAsync(fresh);
+            }
         }
     }
+
+    /// <summary>策略是否依赖 pe_ttm（旧三列或 condition 树含该指标）。</summary>
+    private static bool UsesPeTtm(Strategy s)
+        => string.Equals((s.Indicator ?? "").Trim(), "pe_ttm", StringComparison.Ordinal)
+           || (s.Condition ?? "").Contains("\"pe_ttm\"", StringComparison.Ordinal);
 
     /// <summary>
     /// 从 _app.Config 同步两个通知开关的 IsChecked（构造期与每次 OnShown 调用）。
@@ -276,9 +298,8 @@ public partial class WatchlistView : UserControl, IRefreshable
 
     private async Task AddManualAsync()
     {
-        if (VisualRoot is not Window owner) return;
         var input = new InputDialog("手动添加自选", "代码（6 位数字）", "", "名称（可选，留空自动获取）", "");
-        if (await input.ShowAsync(owner))
+        if (await input.ShowAsync(this))
         {
             var (ok, msg) = _app.Store.AddWatch(input.Value1, input.Value2);
             _status(msg);
@@ -301,11 +322,10 @@ public partial class WatchlistView : UserControl, IRefreshable
     private async Task BindStrategiesAsync()
     {
         if (Selected is not { } w) { _status("请先选中一行"); return; }
-        if (VisualRoot is not Window owner) return;
         var all = _app.Store.ListStrategies();
-        var current = w.Strategies.Split(';', StringSplitOptions.RemoveEmptyEntries).ToList();
+        var current = w.Strategies.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
         var dlg = new StrategyPickDialog(w.Code, w.Name, all, current);
-        if (await dlg.ShowAsync(owner))
+        if (await dlg.ShowAsync(this))
         {
             _app.Store.SetStrategies(w.Code, dlg.SelectedIds);
             Load();
@@ -316,9 +336,8 @@ public partial class WatchlistView : UserControl, IRefreshable
     private async Task EditNoteAsync()
     {
         if (Selected is not { } w) { _status("请先选中一行"); return; }
-        if (VisualRoot is not Window owner) return;
         var input = new InputDialog("编辑备注", $"备注（{w.Code} {w.Name}）", w.Note);
-        if (await input.ShowAsync(owner))
+        if (await input.ShowAsync(this))
         {
             _app.Store.SetNote(w.Code, input.Value1);
             Load();
@@ -331,6 +350,7 @@ public partial class WatchlistView : UserControl, IRefreshable
         public string Name { get; set; } = "";
         public double Price { get; set; }
         public double ChangePct { get; set; }
+        public double? PeTtm { get; set; } // 实时 PE(TTM)：巴菲特观察 pe_ttm 策略评估用
         public string Strategies { get; set; } = "";
         public string Note { get; set; } = "";
         public string AddedAt { get; set; } = "";

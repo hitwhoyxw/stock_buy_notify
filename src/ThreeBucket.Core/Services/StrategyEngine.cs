@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using ThreeBucket.Core.Models;
 
 namespace ThreeBucket.Core.Services;
@@ -266,6 +266,19 @@ public static class StrategyEngine
         if (node.ValueKind != JsonValueKind.Object)
             throw new StrategyConfigError($"条件节点必须是对象: {node}");
 
+        if(node.EnumerateObject().Select(p=>p.Name).Distinct(StringComparer.Ordinal).Count()!=node.EnumerateObject().Count())throw new StrategyConfigError("duplicate condition key");
+        var allowed=node.TryGetProperty("logic",out _)?new[]{"logic","children"}:new[]{"indicator","params","operator","value"};
+        foreach(var p in node.EnumerateObject())if(!allowed.Contains(p.Name))throw new StrategyConfigError("unknown condition key "+p.Name);
+        if(node.TryGetProperty("params",out var pars))
+        {
+            if(pars.ValueKind!=JsonValueKind.Object)throw new StrategyConfigError("params mapping required");
+            if(pars.EnumerateObject().Select(p=>p.Name).Distinct(StringComparer.Ordinal).Count()!=pars.EnumerateObject().Count())throw new StrategyConfigError("duplicate params key");
+            foreach(var p in pars.EnumerateObject())
+            {
+                if(p.Name=="field"){if(p.Value.ValueKind!=JsonValueKind.String)throw new StrategyConfigError("params.field string required");continue;}
+                if(p.Value.ValueKind!=JsonValueKind.Number||!p.Value.TryGetInt32(out var number)||number<0||number==0&&p.Name is "period" or "window" or "n" or "fast" or "slow" or "signal")throw new StrategyConfigError("positive integer parameter required: "+p.Name);
+            }
+        }
         if (node.TryGetProperty("logic", out var logicEl))
         {
             var logic = (logicEl.GetString() ?? "").ToLowerInvariant();

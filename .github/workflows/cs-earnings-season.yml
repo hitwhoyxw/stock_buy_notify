@@ -56,7 +56,7 @@ jobs:
         run: |
           git config user.name "trading-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add data/skill_input_T4C.md data/live_signal_log.csv data/report_*.md data/strategies.csv data/live_trade_log.csv data/watchlist.csv || true
+          git add data/skill_input_T4C.md data/live_signal_log.csv data/report_*.md data/strategies.csv data/live_trade_log.csv data/watchlist.csv data/org_survey_cache.json || true
           git diff --cached --quiet && echo "no changes" && exit 0
           git commit -m "chore(cs-t4): $(date +%F) earnings scan"
           git push

@@ -1,0 +1,6 @@
+# All C# strategies share raw financial responses; rule execution never invalidates them.
+# Only 6 (default half-year) or 3 (quarterly) is accepted. No force-all bypass.
+cycle_months: 6
+
+# Corporate-action/ex-right events have a separate 1-day cache; announcements/forecasts 1-hour.
+# These are daily event inputs, NOT financial-statement refreshes. Offline recalc disables all.

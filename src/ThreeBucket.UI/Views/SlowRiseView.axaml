@@ -1,0 +1,63 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:data="using:Avalonia.Controls"
+             x:Class="ThreeBucket.UI.Views.SlowRiseView"
+             x:CompileBindings="False">
+  <DockPanel>
+    <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6" ItemSpacing="8" LineSpacing="4">
+      <TextBlock Text="📈 底部缓升 S28 v2.0" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+      <ComboBox x:Name="SignalCombo" Width="240" />
+      <TextBox x:Name="SearchBox" Watermark="搜索代码/名称…" Width="150" />
+      <Button x:Name="RefreshBtn" Content="🔄 刷新" />
+      <Button x:Name="RunBtn" Content="▶ 运行扫描(T11)" Background="#1e8449" Foreground="White" />
+      <Button x:Name="ReportBtn" Content="📄 当日信号报告" />
+      <Button x:Name="BtBtn" Content="📊 回测报告" />
+      <Button x:Name="OpenDirBtn" Content="📂 打开输出目录" />
+    </WrapPanel>
+    <Border DockPanel.Dock="Top" Margin="6,0,6,4" Padding="8,4" Background="#eafaf1" CornerRadius="4">
+      <TextBlock x:Name="DateText" FontSize="13" FontWeight="Bold" Foreground="#145a32" TextWrapping="Wrap" Text="尚未加载" />
+    </Border>
+    <TextBlock DockPanel.Dock="Bottom" Margin="6,0,6,6" FontSize="11" Foreground="#888" TextWrapping="Wrap"
+               Text="信号分级（精简版 v2.0 + t37）：WATCH=①深跌企稳 ②放量D0 ③缓升 通过进入观察池（有效期自 D0 起 30 个交易日；收盘跌破 D0 最低价移出）；★重点观察=④a MACD 底部金叉（T_macd）已出现、④b 均线 MA10/30 金叉未出现；BUY=①②③ + ④a→b→c 全部满足 + 当日涨幅&lt;7%、MA20 乖离≤12%、收盘未涨停，沪深300 收盘≥MA60 才开仓（否则只记录），同日按 ER 取前 3，次日开盘买。无评分门槛（评分仅展示）。HOLD/SELL=模拟组合（不是真实持仓）。止损 = min(D0 最低价, −8%)，最宽 −12%。参数 data/bottom_slowrise_v2.json（v1 保留在 bottom_slowrise_v1.json）。数据仅供研究，不构成投资建议。" />
+    <TextBlock x:Name="Stats" DockPanel.Dock="Bottom" Margin="6,0,6,2" FontSize="12" Foreground="#666" TextWrapping="Wrap" />
+    <Grid Margin="6">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="3*" MinWidth="300" />
+        <ColumnDefinition Width="6" />
+        <ColumnDefinition Width="2*" MinWidth="240" />
+      </Grid.ColumnDefinitions>
+      <data:DataGrid x:Name="Grid" Grid.Column="0" AutoGenerateColumns="False" IsReadOnly="True"
+                     GridLinesVisibility="All" SelectionMode="Single" CanUserResizeColumns="True"
+                     CanUserSortColumns="True" HorizontalScrollBarVisibility="Auto" FrozenColumnCount="3">
+        <data:DataGrid.Columns>
+          <data:DataGridTextColumn Header="信号" Binding="{Binding Signal}" Width="62" />
+          <data:DataGridTextColumn Header="代码" Binding="{Binding Code}" Width="70" />
+          <data:DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="84" />
+          <data:DataGridTextColumn Header="重点" Binding="{Binding Key}" Width="44" />
+          <data:DataGridTextColumn Header="评分" Binding="{Binding Score, StringFormat=F1}" Width="52" />
+          <data:DataGridTextColumn Header="收盘" Binding="{Binding Close, StringFormat=F2}" Width="62" />
+          <data:DataGridTextColumn Header="涨跌" Binding="{Binding Pct, StringFormat='+0.0\\%;-0.0\\%;0.0\\%'}" Width="60" />
+          <data:DataGridTextColumn Header="调整DD" Binding="{Binding Dd, StringFormat='0.0\\%'}" Width="62" />
+          <data:DataGridTextColumn Header="反弹" Binding="{Binding Rebound, StringFormat='+0.0\\%;-0.0\\%;0.0\\%'}" Width="60" />
+          <data:DataGridTextColumn Header="D0" Binding="{Binding D0Date}" Width="88" />
+          <data:DataGridTextColumn Header="放量" Binding="{Binding D0Vol, StringFormat=F2}" Width="48" />
+          <data:DataGridTextColumn Header="MA金叉(4b)" Binding="{Binding MaCross}" Width="88" />
+          <data:DataGridTextColumn Header="T_macd(4a)" Binding="{Binding MacdCross}" Width="88" />
+          <data:DataGridTextColumn Header="ER" Binding="{Binding Er, StringFormat=F2}" Width="46" />
+          <data:DataGridTextColumn Header="R²" Binding="{Binding R2, StringFormat=F2}" Width="46" />
+          <data:DataGridTextColumn Header="σ" Binding="{Binding Sigma, StringFormat='0.0\\%'}" Width="50" />
+          <data:DataGridTextColumn Header="L3" Binding="{Binding L3}" Width="36" />
+          <data:DataGridTextColumn Header="参考价" Binding="{Binding Entry}" Width="66" />
+          <data:DataGridTextColumn Header="止损" Binding="{Binding Stop, StringFormat=F2}" Width="62" />
+          <data:DataGridTextColumn Header="行业" Binding="{Binding Industry}" Width="80" />
+          <data:DataGridTextColumn Header="入池日" Binding="{Binding PoolDate}" Width="88" />
+          <data:DataGridTextColumn Header="缺少条件 / 说明" Binding="{Binding Note}" Width="460" />
+        </data:DataGrid.Columns>
+      </data:DataGrid>
+      <GridSplitter Grid.Column="1" ResizeDirection="Columns" Background="#ddd" />
+      <ScrollViewer Grid.Column="2" Background="#fafafa" Padding="8" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel x:Name="DetailPanel" Spacing="2" />
+      </ScrollViewer>
+    </Grid>
+  </DockPanel>
+</UserControl>

@@ -1,0 +1,163 @@
+{
+  "schema": "config-contract-v1",
+  "source": "config\\quality_value\\T5.yaml",
+  "baseline": {
+    "roe_min": 0.07,
+    "profit_years_min": 7,
+    "net_debt_ebitda_max": 2.5,
+    "interest_coverage_min": 5,
+    "payout_min": 0.3,
+    "cycle_high": 1.5,
+    "cycle_cold": 1.0,
+    "fair_pe": 10,
+    "fair_pe_min": 8,
+    "fair_pe_max": 11,
+    "opt_pe": 12,
+    "pb_safe_percentile": 0.2,
+    "pb_safe_cap": 1.0,
+    "opt_vs_peak_cap": 0.6,
+    "fine_chem_upgrade_gm_range_max": 0.06,
+    "fine_chem_upgrade_roe_min": 0.08,
+    "score": {
+      "roe_10y": [
+        0.06,
+        0.14
+      ],
+      "profit_year_ratio": [
+        0.6,
+        1.0
+      ],
+      "payout": [
+        0.2,
+        0.5
+      ],
+      "interest_coverage": [
+        4,
+        12
+      ],
+      "gm_stability": [
+        0.2,
+        0.05
+      ]
+    },
+    "weights": {
+      "profit": 20,
+      "balance": 25,
+      "cycle": 20,
+      "shareholder": 15,
+      "cost": 10,
+      "gov": 10
+    }
+  },
+  "shape": {
+    "type": "object",
+    "properties": {
+      "roe_min": {
+        "type": "number"
+      },
+      "profit_years_min": {
+        "type": "number"
+      },
+      "net_debt_ebitda_max": {
+        "type": "number"
+      },
+      "interest_coverage_min": {
+        "type": "number"
+      },
+      "payout_min": {
+        "type": "number"
+      },
+      "cycle_high": {
+        "type": "number"
+      },
+      "cycle_cold": {
+        "type": "number"
+      },
+      "fair_pe": {
+        "type": "number"
+      },
+      "fair_pe_min": {
+        "type": "number"
+      },
+      "fair_pe_max": {
+        "type": "number"
+      },
+      "opt_pe": {
+        "type": "number"
+      },
+      "pb_safe_percentile": {
+        "type": "number"
+      },
+      "pb_safe_cap": {
+        "type": "number"
+      },
+      "opt_vs_peak_cap": {
+        "type": "number"
+      },
+      "fine_chem_upgrade_gm_range_max": {
+        "type": "number"
+      },
+      "fine_chem_upgrade_roe_min": {
+        "type": "number"
+      },
+      "score": {
+        "type": "object",
+        "properties": {
+          "roe_10y": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "profit_year_ratio": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "payout": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "interest_coverage": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "gm_stability": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "weights": {
+        "type": "object",
+        "properties": {
+          "profit": {
+            "type": "number"
+          },
+          "balance": {
+            "type": "number"
+          },
+          "cycle": {
+            "type": "number"
+          },
+          "shareholder": {
+            "type": "number"
+          },
+          "cost": {
+            "type": "number"
+          },
+          "gov": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

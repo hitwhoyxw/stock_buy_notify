@@ -1,0 +1,35 @@
+# T1 盈利型实业。取消阶梯净利率硬矩阵；规模与净利率分别评分。
+roe_min: 0.08
+roe_review_below: 0.10          # ROE<10% 强化复核，不直接排除
+interest_coverage_min: 5        # <5 触发风险复核
+interest_debt_review: 0.25      # 有息负债率>25% 扣分并复核，不自动淘汰
+ocf_to_np_min: 0.80
+div_years_min: 4
+payout_min: 0.30
+fcf_g: 0.03
+earn_pessimistic: 0.80
+earn_optimistic: 1.15
+# 维持性资本开支：优先用折旧；否则 capex × 本比例。不得把全部 capex 当维持性。
+maint_capex_ratio: 0.60
+cash_asset_high: 0.20
+interest_debt_high: 0.20
+# 规模/净利率评分锚点（不是硬门槛）
+score:
+  roe_avg: [0.08, 0.18]
+  roe_min_year: [0.05, 0.12]
+  net_margin: [0.04, 0.15]
+  np_scale: [200000000, 2000000000]   # 2 亿 → 0 分锚，20 亿 → 满分锚（评分，非淘汰）
+  roic: [0.06, 0.15]
+  ocf_np: [0.70, 1.10]
+  fcf_np: [0.50, 1.00]
+  debt_ratio: [0.25, 0.05]
+  interest_coverage: [5, 20]
+  payout: [0.30, 0.60]
+  np_cagr: [0.00, 0.10]
+weights:
+  profit: 25
+  cash: 20
+  capital: 15
+  shareholder: 15
+  growth: 15
+  gov: 10

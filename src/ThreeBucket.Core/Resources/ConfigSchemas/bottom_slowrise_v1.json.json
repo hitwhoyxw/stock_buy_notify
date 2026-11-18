@@ -1,0 +1,1197 @@
+{
+  "schema": "config-contract-v1",
+  "source": "data\\bottom_slowrise_v1.json",
+  "baseline": {
+    "version": "1.0",
+    "strategy_name": "底部反转缓升 S28",
+    "spec": "底部反转缓升策略 · 量化策略说明书 v1.0 + 作者 t34 修订（见 data/bottom_slowrise/spec_revisions_t34.md）；每个子条件 on.* 可单独关闭（关闭 = 视为通过）",
+    "revisions_t34": [
+      "1. L1 1.3 days_since_low = [8,40]；1.5 = 近 10 个交易日中、T_low 之后每天的最低价 ≥ P_low×1.02（l1.low_lift_mode=after_low_last10；备选 all_after_low = T_low 之后全部天 / literal = 说明书原文近10日最低价）",
+      "2. L3 窗口 = 自 T_low 起、最多 20 日，排除 D0（l3.window_mode=since_low；备选 fixed）",
+      "3. 评分 ≥70 是 BUY 必要条件并用于排序；评分 = 绝对阈值线性插值，不用横截面分位数",
+      "4. WATCH 不再要求“尚未双金叉”（watch.require_no_double_cross=false）；允许同日 WATCH→BUY（watch.allow_same_day_buy=true）",
+      "5. BUY：L3 9 项满足 ≥7 且 3.1/3.2/3.3 必须满足；WATCH 仍为 ≥6",
+      "6. 4.7 双金叉相差 ≤3 日（4.1/4.4 回看仍 5 日）",
+      "7. 止损 = D0 最低价与 买入价×(1−8%) 取较低者，最宽不超过 −12%（exit.stop_mode=lower_capped；备选 atr / higher）",
+      "8. 仓位 = 风险预算 0.8%/笔，单票 ≤10%，最多 10 只，每日新开 ≤3",
+      "9. R2 = V≥2×VMA20 且 累计涨幅≥30% 且（上影线>2×实体 或 当日涨幅<1%）",
+      "10. REDUCE R1~R3 回测实际卖出 50%；R4 只上移止损：新止损 = max(原止损, R4 当日最低价, 若当日收盘高于买入价则买入价)",
+      "11. 报告写入 §15 第一版数据限制与范围"
+    ],
+    "universe": {
+      "on": {
+        "st": true,
+        "list_days": true,
+        "amount": true,
+        "market_cap": true,
+        "suspend": true,
+        "one_word": true,
+        "price": true
+      },
+      "min_list_days": 250,
+      "min_avg_amount_20": 50000000,
+      "min_market_cap": 3000000000,
+      "max_suspend_days_20": 0,
+      "max_one_word_limit_days_20": 2,
+      "min_price": 2.0,
+      "exclude_boards": [],
+      "universe_cache_days": 7
+    },
+    "data": {
+      "adjust": "ratio",
+      "bars_scan": 420,
+      "concurrency": 8,
+      "retries": 4,
+      "use_incomplete_today_bar": false,
+      "market_close_time": "15:05",
+      "calendar_index_secid": "1.000300",
+      "benchmark2_secid": "1.000852"
+    },
+    "l1": {
+      "on": {
+        "dd": true,
+        "high_age": true,
+        "days_since_low": true,
+        "rebound": true,
+        "low_lift": true,
+        "range_pos": true
+      },
+      "dd_min": 0.4,
+      "high_window": 250,
+      "low_window": 60,
+      "high_to_now_min_days": 60,
+      "days_since_low": [
+        8,
+        40
+      ],
+      "rebound_range": [
+        0.05,
+        0.3
+      ],
+      "low_lift": 1.02,
+      "low_lift_mode": "after_low_last10",
+      "range_pos_max": 0.4
+    },
+    "l2": {
+      "on": {
+        "vol": true,
+        "pct": true,
+        "close_pos": true,
+        "d0_age": true,
+        "hold_low": true,
+        "vol_after": true
+      },
+      "vol_mult": 2.0,
+      "vma_window": 20,
+      "pct_range": [
+        0.03,
+        0.095
+      ],
+      "close_pos_min": 0.6,
+      "d0_max_age": 20,
+      "bonus": {
+        "dryup_window": 10,
+        "dryup_vma": 60,
+        "dryup_ratio": 0.6,
+        "pullback_touch": 0.01
+      }
+    },
+    "l3": {
+      "on": {
+        "big_move": true,
+        "sigma": true,
+        "max_drop": true,
+        "er": true,
+        "r2": true,
+        "gain": true,
+        "up_candle": true,
+        "above_ma20": true,
+        "atr": true
+      },
+      "window_mode": "since_low",
+      "window": 20,
+      "min_window": 5,
+      "big_move_pct": 0.06,
+      "big_move_max_days": 1,
+      "sigma_max": 0.025,
+      "max_single_drop": -0.05,
+      "er_min": 0.3,
+      "r2_min": 0.5,
+      "gain_range": [
+        0.03,
+        0.25
+      ],
+      "up_candle_ratio_min": 0.5,
+      "above_ma20_ratio_min": 0.6,
+      "atr_ratio_max": 0.04,
+      "watch_min_count": 6,
+      "buy_min_count": 7,
+      "buy_mandatory": [
+        "big_move",
+        "sigma",
+        "max_drop"
+      ]
+    },
+    "l4": {
+      "on": {
+        "ma_cross": true,
+        "above_ma_long": true,
+        "ma_long_slope": true,
+        "macd_cross": true,
+        "macd_bottom": true,
+        "macd_hist": true,
+        "resonance": true
+      },
+      "ma_short": 10,
+      "ma_long": 30,
+      "cross_lookback": 5,
+      "ma_long_slope_days": 3,
+      "macd": [
+        12,
+        26,
+        9
+      ],
+      "macd_diff_ratio_max": 0.01,
+      "cross_gap_max": 3,
+      "mode": "legacy"
+    },
+    "watch": {
+      "valid_days": 20,
+      "require_no_double_cross": false,
+      "allow_same_day_buy": true,
+      "valid_days_from_d0": 0
+    },
+    "buy": {
+      "on": {
+        "max_pct": true,
+        "max_ma20_dev": true,
+        "vma5": true,
+        "no_limit_up_close": true,
+        "score_gate": true
+      },
+      "max_pct": 0.07,
+      "max_ma20_dev": 0.12,
+      "vma5_vs_vma20_min": 0.8,
+      "score_min": 70,
+      "market_filter": {
+        "enabled": true,
+        "logic": "or",
+        "ma": 60,
+        "ret_days": 5,
+        "ret_min": -0.05
+      },
+      "rank_by": "score"
+    },
+    "exit": {
+      "on": {
+        "S1": true,
+        "S2": true,
+        "S3": true,
+        "S4": true,
+        "S5": true,
+        "S6": true,
+        "S7": true,
+        "S8": true
+      },
+      "stop_mode": "lower_capped",
+      "hard_stop": 0.08,
+      "max_stop": 0.12,
+      "atr_mult": 2.5,
+      "atr_apply_cap": true,
+      "struct_low_days": 10,
+      "trail_activate": 0.15,
+      "trail_drawdown": 0.1,
+      "ma20_break_days": 2,
+      "big_drop_pct": -0.05,
+      "big_drop_vol_mult": 2.0,
+      "time_stop_days": 20,
+      "time_stop_min_gain": 0.03
+    },
+    "reduce": {
+      "on": {
+        "R1": true,
+        "R2": true,
+        "R3": true,
+        "R4": true
+      },
+      "r1_ma20_dev": 0.25,
+      "r2_gain": 0.3,
+      "r2_vol_mult": 2.0,
+      "r2_shadow_body": 2.0,
+      "r2_pct_max": 0.01,
+      "r3_dif_ratio": 0.03,
+      "mode": "sell_half",
+      "sell_fraction": 0.5,
+      "r4_mode": "raise_stop",
+      "s8_include_r4": false
+    },
+    "position": {
+      "sizing": "risk_budget",
+      "initial_capital": 1000000,
+      "risk_per_trade": 0.008,
+      "max_position_pct": 0.1,
+      "equal_weight_pct": 0.1,
+      "max_positions": 10,
+      "max_new_per_day": 3,
+      "industry_cap_enabled": true,
+      "industry_max": 3,
+      "cooldown_days": 10,
+      "weak_market_mode": "half",
+      "weak_ma": 60,
+      "weak_slope_days": 5,
+      "lot": 100
+    },
+    "cost": {
+      "commission": 0.00025,
+      "commission_min": 5,
+      "stamp_tax_sell": 0.0005,
+      "slippage": 0.001,
+      "transfer_fee": 0
+    },
+    "score": {
+      "_note": "绝对阈值线性插值 [x0, x1, y0, y1]：x 从 x0 到 x1 线性得 y0→y1，区间外取端点。说明书只规定了 dd（40%→70% 给 8→15 分），其余端点为实现设定。",
+      "dd": [
+        0.4,
+        0.7,
+        8,
+        15
+      ],
+      "dd_low": [
+        0.2,
+        0.4,
+        0,
+        8
+      ],
+      "vol_ratio": [
+        2.0,
+        4.0,
+        4,
+        8
+      ],
+      "close_pos": [
+        0.6,
+        1.0,
+        2,
+        4
+      ],
+      "dryup_points": 4,
+      "pullback_points": 4,
+      "er": [
+        0.3,
+        0.7,
+        3.5,
+        7
+      ],
+      "r2": [
+        0.5,
+        0.9,
+        3.5,
+        7
+      ],
+      "sigma": [
+        0.025,
+        0.01,
+        3,
+        6
+      ],
+      "stand_days": [
+        0,
+        5,
+        3,
+        7
+      ],
+      "ma20_up_points": 4,
+      "ma60_flat_points": 4,
+      "ma60_flat_tol": 0.002,
+      "macd_near_points": 10,
+      "macd_near_low": -0.02,
+      "macd_below": [
+        -0.05,
+        -0.02,
+        5,
+        10
+      ],
+      "macd_above": [
+        0,
+        0.01,
+        10,
+        4
+      ],
+      "hist_days": [
+        0,
+        3,
+        0,
+        5
+      ],
+      "rebound": [
+        0.05,
+        0.3,
+        8,
+        4
+      ],
+      "ma20_dev": [
+        0,
+        0.12,
+        7,
+        3.5
+      ]
+    },
+    "scan": {
+      "bootstrap_days": 60
+    },
+    "selftest": {
+      "bars": 1500
+    },
+    "backtest": {
+      "start": "2015-01-01",
+      "train_end": "2021-12-31",
+      "warm_bars": 300,
+      "sample_size": 400,
+      "include_codes": [],
+      "use_market_cap": false,
+      "forward_days": [
+        5,
+        10,
+        20,
+        40
+      ],
+      "ablation": true,
+      "sample_method": "industry_stratified_random",
+      "seed": 20261110,
+      "min_buy_per_year": 20,
+      "always_relax": false
+    },
+    "revisions_t36": [
+      "市值：回测用 20 日均成交额代替（无历史市值），实盘扫描用当前总市值 ≥30 亿",
+      "幸存者偏差：只含当前在市股票，回测收益视为上限；同时输出同池等权买入持有基准（训练期/样本外）",
+      "所有涨跌幅类阈值（2.2、3.1、3.2、3.3、S6、BUY 当日涨幅、R2）与涨跌停/一字板判断用不复权（交易所口径）数据",
+      "样本：约 400 只，2015 至今，训练 ≤2021、样本外 2022+；按行业分层随机抽样（固定种子），不按近期表现、不强制加入任何股票",
+      "信号数检查：报告每年 WATCH/BUY 数；若 400 样本年均 BUY <20，先跑放宽实验（L3 项数 6/9、DD_MIN 30%/35%），不加条件"
+    ]
+  },
+  "shape": {
+    "type": "object",
+    "properties": {
+      "version": {
+        "type": "string"
+      },
+      "strategy_name": {
+        "type": "string"
+      },
+      "spec": {
+        "type": "string"
+      },
+      "revisions_t34": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "universe": {
+        "type": "object",
+        "properties": {
+          "on": {
+            "type": "object",
+            "properties": {
+              "st": {
+                "type": "boolean"
+              },
+              "list_days": {
+                "type": "boolean"
+              },
+              "amount": {
+                "type": "boolean"
+              },
+              "market_cap": {
+                "type": "boolean"
+              },
+              "suspend": {
+                "type": "boolean"
+              },
+              "one_word": {
+                "type": "boolean"
+              },
+              "price": {
+                "type": "boolean"
+              }
+            }
+          },
+          "min_list_days": {
+            "type": "number"
+          },
+          "min_avg_amount_20": {
+            "type": "number"
+          },
+          "min_market_cap": {
+            "type": "number"
+          },
+          "max_suspend_days_20": {
+            "type": "number"
+          },
+          "max_one_word_limit_days_20": {
+            "type": "number"
+          },
+          "min_price": {
+            "type": "number"
+          },
+          "exclude_boards": {
+            "type": "array",
+            "items": {
+              "type": "any"
+            }
+          },
+          "universe_cache_days": {
+            "type": "number"
+          }
+        }
+      },
+      "data": {
+        "type": "object",
+        "properties": {
+          "adjust": {
+            "type": "string"
+          },
+          "bars_scan": {
+            "type": "number"
+          },
+          "concurrency": {
+            "type": "number"
+          },
+          "retries": {
+            "type": "number"
+          },
+          "use_incomplete_today_bar": {
+            "type": "boolean"
+          },
+          "market_close_time": {
+            "type": "string"
+          },
+          "calendar_index_secid": {
+            "type": "string"
+          },
+          "benchmark2_secid": {
+            "type": "string"
+          }
+        }
+      },
+      "l1": {
+        "type": "object",
+        "properties": {
+          "on": {
+            "type": "object",
+            "properties": {
+              "dd": {
+                "type": "boolean"
+              },
+              "high_age": {
+                "type": "boolean"
+              },
+              "days_since_low": {
+                "type": "boolean"
+              },
+              "rebound": {
+                "type": "boolean"
+              },
+              "low_lift": {
+                "type": "boolean"
+              },
+              "range_pos": {
+                "type": "boolean"
+              }
+            }
+          },
+          "dd_min": {
+            "type": "number"
+          },
+          "high_window": {
+            "type": "number"
+          },
+          "low_window": {
+            "type": "number"
+          },
+          "high_to_now_min_days": {
+            "type": "number"
+          },
+          "days_since_low": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "rebound_range": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "low_lift": {
+            "type": "number"
+          },
+          "low_lift_mode": {
+            "type": "string"
+          },
+          "range_pos_max": {
+            "type": "number"
+          }
+        }
+      },
+      "l2": {
+        "type": "object",
+        "properties": {
+          "on": {
+            "type": "object",
+            "properties": {
+              "vol": {
+                "type": "boolean"
+              },
+              "pct": {
+                "type": "boolean"
+              },
+              "close_pos": {
+                "type": "boolean"
+              },
+              "d0_age": {
+                "type": "boolean"
+              },
+              "hold_low": {
+                "type": "boolean"
+              },
+              "vol_after": {
+                "type": "boolean"
+              }
+            }
+          },
+          "vol_mult": {
+            "type": "number"
+          },
+          "vma_window": {
+            "type": "number"
+          },
+          "pct_range": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "close_pos_min": {
+            "type": "number"
+          },
+          "d0_max_age": {
+            "type": "number"
+          },
+          "bonus": {
+            "type": "object",
+            "properties": {
+              "dryup_window": {
+                "type": "number"
+              },
+              "dryup_vma": {
+                "type": "number"
+              },
+              "dryup_ratio": {
+                "type": "number"
+              },
+              "pullback_touch": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "l3": {
+        "type": "object",
+        "properties": {
+          "on": {
+            "type": "object",
+            "properties": {
+              "big_move": {
+                "type": "boolean"
+              },
+              "sigma": {
+                "type": "boolean"
+              },
+              "max_drop": {
+                "type": "boolean"
+              },
+              "er": {
+                "type": "boolean"
+              },
+              "r2": {
+                "type": "boolean"
+              },
+              "gain": {
+                "type": "boolean"
+              },
+              "up_candle": {
+                "type": "boolean"
+              },
+              "above_ma20": {
+                "type": "boolean"
+              },
+              "atr": {
+                "type": "boolean"
+              }
+            }
+          },
+          "window_mode": {
+            "type": "string"
+          },
+          "window": {
+            "type": "number"
+          },
+          "min_window": {
+            "type": "number"
+          },
+          "big_move_pct": {
+            "type": "number"
+          },
+          "big_move_max_days": {
+            "type": "number"
+          },
+          "sigma_max": {
+            "type": "number"
+          },
+          "max_single_drop": {
+            "type": "number"
+          },
+          "er_min": {
+            "type": "number"
+          },
+          "r2_min": {
+            "type": "number"
+          },
+          "gain_range": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "up_candle_ratio_min": {
+            "type": "number"
+          },
+          "above_ma20_ratio_min": {
+            "type": "number"
+          },
+          "atr_ratio_max": {
+            "type": "number"
+          },
+          "watch_min_count": {
+            "type": "number"
+          },
+          "buy_min_count": {
+            "type": "number"
+          },
+          "buy_mandatory": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "l4": {
+        "type": "object",
+        "properties": {
+          "on": {
+            "type": "object",
+            "properties": {
+              "ma_cross": {
+                "type": "boolean"
+              },
+              "above_ma_long": {
+                "type": "boolean"
+              },
+              "ma_long_slope": {
+                "type": "boolean"
+              },
+              "macd_cross": {
+                "type": "boolean"
+              },
+              "macd_bottom": {
+                "type": "boolean"
+              },
+              "macd_hist": {
+                "type": "boolean"
+              },
+              "resonance": {
+                "type": "boolean"
+              }
+            }
+          },
+          "ma_short": {
+            "type": "number"
+          },
+          "ma_long": {
+            "type": "number"
+          },
+          "cross_lookback": {
+            "type": "number"
+          },
+          "ma_long_slope_days": {
+            "type": "number"
+          },
+          "macd": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "macd_diff_ratio_max": {
+            "type": "number"
+          },
+          "cross_gap_max": {
+            "type": "number"
+          },
+          "mode": {
+            "type": "string"
+          }
+        }
+      },
+      "watch": {
+        "type": "object",
+        "properties": {
+          "valid_days": {
+            "type": "number"
+          },
+          "require_no_double_cross": {
+            "type": "boolean"
+          },
+          "allow_same_day_buy": {
+            "type": "boolean"
+          },
+          "valid_days_from_d0": {
+            "type": "number"
+          }
+        }
+      },
+      "buy": {
+        "type": "object",
+        "properties": {
+          "on": {
+            "type": "object",
+            "properties": {
+              "max_pct": {
+                "type": "boolean"
+              },
+              "max_ma20_dev": {
+                "type": "boolean"
+              },
+              "vma5": {
+                "type": "boolean"
+              },
+              "no_limit_up_close": {
+                "type": "boolean"
+              },
+              "score_gate": {
+                "type": "boolean"
+              }
+            }
+          },
+          "max_pct": {
+            "type": "number"
+          },
+          "max_ma20_dev": {
+            "type": "number"
+          },
+          "vma5_vs_vma20_min": {
+            "type": "number"
+          },
+          "score_min": {
+            "type": "number"
+          },
+          "market_filter": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "logic": {
+                "type": "string"
+              },
+              "ma": {
+                "type": "number"
+              },
+              "ret_days": {
+                "type": "number"
+              },
+              "ret_min": {
+                "type": "number"
+              }
+            }
+          },
+          "rank_by": {
+            "type": "string"
+          }
+        }
+      },
+      "exit": {
+        "type": "object",
+        "properties": {
+          "on": {
+            "type": "object",
+            "properties": {
+              "S1": {
+                "type": "boolean"
+              },
+              "S2": {
+                "type": "boolean"
+              },
+              "S3": {
+                "type": "boolean"
+              },
+              "S4": {
+                "type": "boolean"
+              },
+              "S5": {
+                "type": "boolean"
+              },
+              "S6": {
+                "type": "boolean"
+              },
+              "S7": {
+                "type": "boolean"
+              },
+              "S8": {
+                "type": "boolean"
+              }
+            }
+          },
+          "stop_mode": {
+            "type": "string"
+          },
+          "hard_stop": {
+            "type": "number"
+          },
+          "max_stop": {
+            "type": "number"
+          },
+          "atr_mult": {
+            "type": "number"
+          },
+          "atr_apply_cap": {
+            "type": "boolean"
+          },
+          "struct_low_days": {
+            "type": "number"
+          },
+          "trail_activate": {
+            "type": "number"
+          },
+          "trail_drawdown": {
+            "type": "number"
+          },
+          "ma20_break_days": {
+            "type": "number"
+          },
+          "big_drop_pct": {
+            "type": "number"
+          },
+          "big_drop_vol_mult": {
+            "type": "number"
+          },
+          "time_stop_days": {
+            "type": "number"
+          },
+          "time_stop_min_gain": {
+            "type": "number"
+          }
+        }
+      },
+      "reduce": {
+        "type": "object",
+        "properties": {
+          "on": {
+            "type": "object",
+            "properties": {
+              "R1": {
+                "type": "boolean"
+              },
+              "R2": {
+                "type": "boolean"
+              },
+              "R3": {
+                "type": "boolean"
+              },
+              "R4": {
+                "type": "boolean"
+              }
+            }
+          },
+          "r1_ma20_dev": {
+            "type": "number"
+          },
+          "r2_gain": {
+            "type": "number"
+          },
+          "r2_vol_mult": {
+            "type": "number"
+          },
+          "r2_shadow_body": {
+            "type": "number"
+          },
+          "r2_pct_max": {
+            "type": "number"
+          },
+          "r3_dif_ratio": {
+            "type": "number"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "sell_fraction": {
+            "type": "number"
+          },
+          "r4_mode": {
+            "type": "string"
+          },
+          "s8_include_r4": {
+            "type": "boolean"
+          }
+        }
+      },
+      "position": {
+        "type": "object",
+        "properties": {
+          "sizing": {
+            "type": "string"
+          },
+          "initial_capital": {
+            "type": "number"
+          },
+          "risk_per_trade": {
+            "type": "number"
+          },
+          "max_position_pct": {
+            "type": "number"
+          },
+          "equal_weight_pct": {
+            "type": "number"
+          },
+          "max_positions": {
+            "type": "number"
+          },
+          "max_new_per_day": {
+            "type": "number"
+          },
+          "industry_cap_enabled": {
+            "type": "boolean"
+          },
+          "industry_max": {
+            "type": "number"
+          },
+          "cooldown_days": {
+            "type": "number"
+          },
+          "weak_market_mode": {
+            "type": "string"
+          },
+          "weak_ma": {
+            "type": "number"
+          },
+          "weak_slope_days": {
+            "type": "number"
+          },
+          "lot": {
+            "type": "number"
+          }
+        }
+      },
+      "cost": {
+        "type": "object",
+        "properties": {
+          "commission": {
+            "type": "number"
+          },
+          "commission_min": {
+            "type": "number"
+          },
+          "stamp_tax_sell": {
+            "type": "number"
+          },
+          "slippage": {
+            "type": "number"
+          },
+          "transfer_fee": {
+            "type": "number"
+          }
+        }
+      },
+      "score": {
+        "type": "object",
+        "properties": {
+          "_note": {
+            "type": "string"
+          },
+          "dd": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "dd_low": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "vol_ratio": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "close_pos": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "dryup_points": {
+            "type": "number"
+          },
+          "pullback_points": {
+            "type": "number"
+          },
+          "er": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "r2": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "sigma": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "stand_days": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "ma20_up_points": {
+            "type": "number"
+          },
+          "ma60_flat_points": {
+            "type": "number"
+          },
+          "ma60_flat_tol": {
+            "type": "number"
+          },
+          "macd_near_points": {
+            "type": "number"
+          },
+          "macd_near_low": {
+            "type": "number"
+          },
+          "macd_below": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "macd_above": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "hist_days": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "rebound": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "ma20_dev": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "scan": {
+        "type": "object",
+        "properties": {
+          "bootstrap_days": {
+            "type": "number"
+          }
+        }
+      },
+      "selftest": {
+        "type": "object",
+        "properties": {
+          "bars": {
+            "type": "number"
+          }
+        }
+      },
+      "backtest": {
+        "type": "object",
+        "properties": {
+          "start": {
+            "type": "string"
+          },
+          "train_end": {
+            "type": "string"
+          },
+          "warm_bars": {
+            "type": "number"
+          },
+          "sample_size": {
+            "type": "number"
+          },
+          "include_codes": {
+            "type": "array",
+            "items": {
+              "type": "any"
+            }
+          },
+          "use_market_cap": {
+            "type": "boolean"
+          },
+          "forward_days": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "ablation": {
+            "type": "boolean"
+          },
+          "sample_method": {
+            "type": "string"
+          },
+          "seed": {
+            "type": "number"
+          },
+          "min_buy_per_year": {
+            "type": "number"
+          },
+          "always_relax": {
+            "type": "boolean"
+          }
+        }
+      },
+      "revisions_t36": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

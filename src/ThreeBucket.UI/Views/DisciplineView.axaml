@@ -1,0 +1,67 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:ThreeBucket.UI"
+             x:Class="ThreeBucket.UI.Views.DisciplineView"
+             x:CompileBindings="False">
+  <DockPanel>
+    <!-- 顶部：输入区 -->
+    <Border DockPanel.Dock="Top" Margin="6" Background="#f7f9fc" BorderBrush="#dde5f0" BorderThickness="1"
+            CornerRadius="4" Padding="8">
+      <StackPanel Spacing="6">
+        <WrapPanel Orientation="Horizontal" ItemSpacing="8" LineSpacing="6">
+          <TextBlock Text="🛡️ 交易纪律审核" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+          <TextBlock x:Name="RulesInfo" Text="" Foreground="#666" FontSize="11" VerticalAlignment="Center" />
+        </WrapPanel>
+
+        <WrapPanel Orientation="Horizontal" ItemSpacing="8" LineSpacing="6">
+          <TextBlock Text="股票代码" VerticalAlignment="Center" />
+          <TextBox x:Name="CodeBox" Width="120" Watermark="600519 / sh600519"
+                   ToolTip.Tip="6 位代码，可带 sh/sz 前缀" />
+          <TextBlock Text="操作" VerticalAlignment="Center" />
+          <ComboBox x:Name="ActionCombo" Width="100"
+                    ToolTip.Tip="买入 / 加仓 / 卖出 / 减仓 —— 决定哪些纪律适用" />
+          <TextBlock Text="数量/金额" VerticalAlignment="Center" />
+          <TextBox x:Name="AmountBox" Width="130" Watermark="如 2000股 / 2万元" />
+          <Button x:Name="CollectBtn" Content="① 拉取事实 + 生成问题" Background="#2980b9" Foreground="White"
+                  ToolTip.Tip="拉取实时行情/指数/时间等客观数据，并让 LLM 列出需要你确认的问题" />
+          <Button x:Name="ReviewBtn" Content="② 出结论" Background="#9b59b6" Foreground="White"
+                  ToolTip.Tip="根据客观事实 + 你的回答，逐条判定是否符合纪律" />
+          <Button x:Name="CancelBtn" Content="✖ 取消" Background="#e74c3c" Foreground="White" IsVisible="False" />
+        </WrapPanel>
+
+        <!-- 用户补充说明：LLM 提问后可在这里回答 -->
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Text="③ 你的补充回答（针对上面的提问；没有就留空）"
+                     FontSize="11" Foreground="#888" Margin="0,2,0,2" />
+          <TextBox x:Name="AnswersBox" Height="90" AcceptsReturn="True" TextWrapping="Wrap"
+                   Watermark="例如：&#10;1. 该股无重大利空，只是跟随板块回调&#10;2. 大盘没有系统性风险&#10;3. 资金来自弹药库，止损设在 -3%" />
+        </DockPanel>
+      </StackPanel>
+    </Border>
+
+    <TextBlock x:Name="StatusText" DockPanel.Dock="Bottom" Margin="8,2,8,6" FontSize="11" Foreground="#888"
+               TextWrapping="Wrap" Text="" />
+
+    <!-- 主体：左问题 / 右结论 -->
+    <Grid ColumnDefinitions="380,*" local:Responsive.NarrowRows="240,*" Margin="0,0,0,0">
+      <DockPanel Grid.Column="0" Margin="6">
+        <TextBlock DockPanel.Dock="Top" Text="❓ 待确认问题（LLM 依纪律逐条提问）"
+                   FontWeight="Bold" FontSize="12" Margin="0,0,0,4" />
+        <ScrollViewer>
+          <StackPanel x:Name="QuestionPanel" Spacing="2" />
+        </ScrollViewer>
+      </DockPanel>
+
+      <DockPanel Grid.Column="1" Margin="6">
+        <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" ItemSpacing="6" Margin="0,0,0,4">
+          <TextBlock Text="📋 审核结论" FontWeight="Bold" FontSize="12" VerticalAlignment="Center" />
+          <Button x:Name="CopyBtn" Content="📋 复制结论" />
+          <Button x:Name="SaveBtn" Content="💾 存档" ToolTip.Tip="保存到 data/discipline_review_日期_代码.md" />
+        </WrapPanel>
+        <ScrollViewer>
+          <StackPanel x:Name="ResultPanel" Spacing="4" />
+        </ScrollViewer>
+      </DockPanel>
+    </Grid>
+  </DockPanel>
+</UserControl>

@@ -24,11 +24,12 @@
     </Style>
   </UserControl.Styles>
   <DockPanel>
-    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="10" Margin="6">
+    <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6" ItemSpacing="10" LineSpacing="4">
       <TextBlock Text="📊 任务面板" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
       <Button x:Name="DailyBtn" Content="▶ 风控+台账 (T1→T8)" Background="#27ae60" Foreground="White" />
       <Button x:Name="T6Btn" Content="▶ 候选池 ABC" Background="#8e44ad" Foreground="White" />
-    </StackPanel>
+      <Button x:Name="T9Btn" Content="策略扫描 T9" Background="#c0392b" Foreground="White" />
+    </WrapPanel>
 
     <Grid>
       <Grid.RowDefinitions>

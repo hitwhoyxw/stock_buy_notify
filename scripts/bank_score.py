@@ -11,7 +11,8 @@ import time
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-import akshare as ak
+raise SystemExit("OFFLINE_LEGACY_UNSUPPORTED: historical bank_score.py contains dated manual inputs. Direct financial fetching disabled; use C# S29 bank analysis with traceable shared data. File retained unchanged below for history.")
+# import akshare as ak  # unreachable historical implementation
 
 banks = {
     "600036": "招商银行", "601838": "成都银行", "600919": "江苏银行",

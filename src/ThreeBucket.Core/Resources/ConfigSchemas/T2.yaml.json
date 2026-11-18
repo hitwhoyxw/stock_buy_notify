@@ -1,0 +1,228 @@
+{
+  "schema": "config-contract-v1",
+  "source": "config\\quality_value\\T2.yaml",
+  "baseline": {
+    "roe_min": 0.08,
+    "npl_max": 0.015,
+    "npl_hard_max": 0.03,
+    "npl_rise_max": 0.003,
+    "provision_cov_min": 1.5,
+    "provision_full": 3.0,
+    "cet1_reg_min_default": 0.075,
+    "capital_buffer": {
+      "fail_below": 0.0,
+      "high_risk": 0.01,
+      "deduct": 0.015,
+      "ample": 0.025
+    },
+    "g_sus_rwa_ratio": 0.9,
+    "g_cap": 0.04,
+    "provision_pb_low": 2.5,
+    "provision_pb_low_haircut": 0.9,
+    "provision_pb_high": 4.0,
+    "provision_pb_high_uplift": 1.05,
+    "roe_sus_w5": 0.5,
+    "roe_sus_w3": 0.3,
+    "roe_sus_w1": 0.2,
+    "roe_sus_haircut": 0.0,
+    "roe_sus_pessimistic_cut": 0.02,
+    "roe_sus_optimistic_add": 0.01,
+    "score": {
+      "roe_avg": [
+        0.08,
+        0.15
+      ],
+      "npl": [
+        0.015,
+        0.008
+      ],
+      "provision": [
+        1.5,
+        4.0
+      ],
+      "payout": [
+        0.2,
+        0.35
+      ],
+      "buffer": [
+        0.0,
+        0.025
+      ],
+      "nim": [
+        0.012,
+        0.025
+      ],
+      "profit_scale": [
+        500000000,
+        5000000000
+      ],
+      "net_margin": [
+        0.2,
+        0.45
+      ]
+    },
+    "weights": {
+      "profit": 20,
+      "asset": 25,
+      "capital": 20,
+      "efficiency": 10,
+      "shareholder": 15,
+      "growth": 10
+    }
+  },
+  "shape": {
+    "type": "object",
+    "properties": {
+      "roe_min": {
+        "type": "number"
+      },
+      "npl_max": {
+        "type": "number"
+      },
+      "npl_hard_max": {
+        "type": "number"
+      },
+      "npl_rise_max": {
+        "type": "number"
+      },
+      "provision_cov_min": {
+        "type": "number"
+      },
+      "provision_full": {
+        "type": "number"
+      },
+      "cet1_reg_min_default": {
+        "type": "number"
+      },
+      "capital_buffer": {
+        "type": "object",
+        "properties": {
+          "fail_below": {
+            "type": "number"
+          },
+          "high_risk": {
+            "type": "number"
+          },
+          "deduct": {
+            "type": "number"
+          },
+          "ample": {
+            "type": "number"
+          }
+        }
+      },
+      "g_sus_rwa_ratio": {
+        "type": "number"
+      },
+      "g_cap": {
+        "type": "number"
+      },
+      "provision_pb_low": {
+        "type": "number"
+      },
+      "provision_pb_low_haircut": {
+        "type": "number"
+      },
+      "provision_pb_high": {
+        "type": "number"
+      },
+      "provision_pb_high_uplift": {
+        "type": "number"
+      },
+      "roe_sus_w5": {
+        "type": "number"
+      },
+      "roe_sus_w3": {
+        "type": "number"
+      },
+      "roe_sus_w1": {
+        "type": "number"
+      },
+      "roe_sus_haircut": {
+        "type": "number"
+      },
+      "roe_sus_pessimistic_cut": {
+        "type": "number"
+      },
+      "roe_sus_optimistic_add": {
+        "type": "number"
+      },
+      "score": {
+        "type": "object",
+        "properties": {
+          "roe_avg": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "npl": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "provision": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "payout": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "buffer": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "nim": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "profit_scale": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "net_margin": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "weights": {
+        "type": "object",
+        "properties": {
+          "profit": {
+            "type": "number"
+          },
+          "asset": {
+            "type": "number"
+          },
+          "capital": {
+            "type": "number"
+          },
+          "efficiency": {
+            "type": "number"
+          },
+          "shareholder": {
+            "type": "number"
+          },
+          "growth": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

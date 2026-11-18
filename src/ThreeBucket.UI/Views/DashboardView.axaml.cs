@@ -27,6 +27,10 @@ public partial class DashboardView : UserControl, IRefreshable
         ["T6"] = new("T6", "候选池筛选", "scripts/t6_candidate_pool.py", "三桶筛选 → LLM 排序", "周一 08:30", true, "--bucket ABC --top 200", Builtin: true),
         ["T7"] = new("T7", "回测验证", "scripts/t7_backtest.py", "策略回测", "月度/季度", false, "", Builtin: true),
         ["T8"] = new("T8", "信号台账", "scripts/t8_signal_log.py", "信号记录与台账更新", "工作日 17:00", false, "", Builtin: true),
+        ["T9"] = new("T9", "策略全市场扫描", "", "尾盘按买入条件树全市场扫描 + 三季报同比环比", "尾盘/手动", false, "", Builtin: true),
+        ["T10"] = new("T10", "增强版底部反转 S27 V1.2", "", "100分评分+交易时机（六阶段/B1·B2·B3/止损·压力位·R/R）：全市场A/B/C分组+前20+个股详情，V1.2 新增 B1 分级 A/B/C 与 --br backtest12 止损实验（参数 data/bottom_reversal_v1_2.json）", "收盘后/手动", false, "", Builtin: true),
+        ["T11"] = new("T11", "底部反转缓升 S28", "", "精简版 v2.0 + t37：①深跌企稳→②放量D0→③缓升→④MACD底部金叉→均线金叉（有序 a/b/c，★重点观察）+ 观察池/模拟持仓（持久化 data/bottom_slowrise/state）+ 每日信号表（含 fail_reason）；--sr backtest 回测（参数 data/bottom_slowrise_v2.json，v1 保留）", "收盘后/手动", false, "", Builtin: true),
+        ["T12"] = new("T12", "优质股击球区 S29", "", "排雷→分型 T1–T5→准入→评分→三档估值（安全/合理/乐观）→击球与关注提醒。全量重扫每年 5 月初、9 月初或手动；日常收盘后只更新现价、除权与轻量事件。参数 data/quality_value_v1.json。请把 T12 加入收盘任务列表。", "5月/9月初全量 + 收盘后轻量 / 手动", false, "", Builtin: true),
     };
 
     private class CardRefs
@@ -48,6 +52,7 @@ public partial class DashboardView : UserControl, IRefreshable
 
         DailyBtn.Click += (_, _) => _ = RunChainAsync();
         T6Btn.Click += (_, _) => _ = RunTaskAsync("T6", "");
+        T9Btn.Click += (_, _) => _ = RunTaskAsync("T9", "");
         ClearLogBtn.Click += (_, _) => Log.Text = "";
 
         BuildCards();

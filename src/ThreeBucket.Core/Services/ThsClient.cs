@@ -26,6 +26,7 @@ public class ThsClient
     private static readonly HttpClient Client = new();
 
     private readonly string _apiKey;
+    private readonly string _financialCacheDir;
 
     static ThsClient()
     {
@@ -39,6 +40,7 @@ public class ThsClient
     /// <param name="cacheDir">data/cache 目录（用于向上定位项目根的 app_config.json）。</param>
     public ThsClient(string? apiKey = null, string? cacheDir = null)
     {
+        _financialCacheDir = cacheDir ?? Path.Combine("data","cache");
         _apiKey = (string.IsNullOrWhiteSpace(apiKey) ? ResolveApiKey(cacheDir) : apiKey).Trim();
         IsConfigured = _apiKey.Length > 0;
     }
@@ -108,7 +110,11 @@ public class ThsClient
         CancellationToken ct = default)
     {
         var url = $"{DefaultBaseUrl}/api/a-share/corporate-actions/adjustment-factors?thscode={ToThsCode(code)}";
-        var data = await GetDataAsync(url, ct);
+        using var shared = await new FinancialRawStore(_financialCacheDir).GetAsync("ths","adjustment-factors",ToThsCode(code),url,async()=>
+        {
+            var native=await GetDataAsync(url,ct);return JsonDocument.Parse(native.GetRawText());
+        },ct);
+        var data=shared.RootElement;
         if (!data.TryGetProperty("item", out var item) || item.ValueKind != JsonValueKind.Array)
             return new List<DividendRow>();
 
@@ -229,6 +235,7 @@ public class ThsClient
 
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.Add("X-api-key", _apiKey);
+        FinancialAccess.Current?.BeforeNetwork("ths:"+(url.Contains("adjustment-factors")?"corporate-actions":"market"),false);
         using var resp = await Client.SendAsync(req, ct);
         resp.EnsureSuccessStatusCode();
 
